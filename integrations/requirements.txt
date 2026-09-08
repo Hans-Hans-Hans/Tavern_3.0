@@ -1,0 +1,2 @@
+matrix-nio[e2e]==0.26.0
+vodozemac==0.10.0

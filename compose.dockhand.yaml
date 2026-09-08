@@ -1,0 +1,79 @@
+# Build tavern:0.3.0 on this Docker host first. See docs/DEPLOY_DOCKHAND_NPM.md.
+name: tavern
+services:
+  tavern-web:
+    image: tavern:0.3.0
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
+    read_only: true
+    tmpfs:
+    - /tmp:size=128m,mode=1777
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    networks:
+    - private
+    - proxy
+    depends_on:
+      synapse:
+        condition: service_healthy
+    labels:
+      dockhand.prune: 'false'
+  synapse:
+    image: ${SYNAPSE_IMAGE:?Select a pinned official Synapse image}
+    restart: unless-stopped
+    user: 991:991
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+    - ${TAVERN_DATA_DIR:?Run docker/prepare-npm.py first}/synapse:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+    - private
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health',timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+    - postgres_data:/var/lib/postgresql/data
+    - ${TAVERN_DATA_DIR:?Run docker/prepare-npm.py first}/secrets/db_password:/run/secrets/db_password:ro
+    networks:
+    - private
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U synapse -d synapse
+      interval: 10s
+      timeout: 5s
+      retries: 10
+networks:
+  private:
+    internal: true
+  proxy:
+    external: true
+    name: ${NPM_PROXY_NETWORK:-npm_proxy}
+volumes:
+  postgres_data: null

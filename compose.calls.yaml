@@ -1,0 +1,37 @@
+# Merge with compose.yaml (or paste these services and network into Dockhand).
+services:
+  coturn:
+    image: coturn/coturn:4.17.2-r0
+    restart: unless-stopped
+    user: "0:0"
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ${TAVERN_DATA_DIR:?}/calls/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports: ["3478:3478/tcp", "3478:3478/udp", "49160-49200:49160-49200/udp"]
+    networks: [media]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  livekit:
+    image: livekit/livekit-server:v1.13.6
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ${TAVERN_DATA_DIR:?}/calls/livekit.yaml:/etc/livekit.yaml:ro
+    ports: ["7881:7881/tcp", "7882:7882/udp"]
+    networks: [private, media]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  rtc-auth:
+    image: ghcr.io/element-hq/lk-jwt-service:0.6.0
+    restart: unless-stopped
+    env_file: ${TAVERN_DATA_DIR:?}/calls/jwt.env
+    networks: [private, media]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+networks:
+  media: {}

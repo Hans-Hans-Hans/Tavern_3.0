@@ -1,0 +1,20 @@
+services:
+  integrations:
+    image: tavern-integrations:0.3.0
+    pull_policy: never
+    build:
+      context: ${TAVERN_SOURCE_DIR:-.}/integrations
+    restart: unless-stopped
+    volumes:
+      - ${TAVERN_DATA_DIR:?}/integrations/config:/config:ro
+      - ${TAVERN_DATA_DIR:?}/integrations/data:/data
+    networks: [private]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

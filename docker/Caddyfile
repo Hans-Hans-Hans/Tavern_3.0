@@ -1,0 +1,36 @@
+{$TAVERN_DOMAIN} {
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    handle /tavern-config.json {
+        header Content-Type application/json
+        header Cache-Control no-store
+        header X-Content-Type-Options nosniff
+        respond `{"homeserverUrl":"https://{$MATRIX_DOMAIN}"}`
+    }
+    handle {
+        reverse_proxy tavern:8080
+    }
+}
+{$MATRIX_DOMAIN} {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+    @matrix_client path /_matrix/client/* /_matrix/media/* /_synapse/client/*
+    handle @matrix_client {
+        request_body {
+            max_size 12MB
+        }
+        reverse_proxy synapse:8008
+    }
+    handle /.well-known/matrix/client {
+        header Content-Type application/json
+        header Access-Control-Allow-Origin *
+        respond `{"m.homeserver":{"base_url":"https://{$MATRIX_DOMAIN}"}}`
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

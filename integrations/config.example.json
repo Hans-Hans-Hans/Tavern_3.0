@@ -1,0 +1,13 @@
+{
+  "homeserver": "http://synapse:8008",
+  "hooks": {
+    "builds": {
+      "room_id": "!REPLACE:chat.example.com",
+      "allowed_users": ["@tavern-bot:chat.example.com", "@alice:chat.example.com"],
+      "secret_file": "/config/builds.hmac"
+    }
+  },
+  "trusted_devices": {
+    "@alice:chat.example.com": {"REPLACE_DEVICE_ID": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_ED25519_FINGERPRINT"}
+  }
+}

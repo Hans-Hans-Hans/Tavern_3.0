@@ -1,0 +1,67 @@
+name: Tavern checks
+on:
+  push:
+    branches: [V3]
+  pull_request:
+    branches: [V3]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tavern-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-and-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check tracked files for private state and credentials
+        run: python3 scripts/check-repository.py
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r integrations/requirements.txt -c integrations/requirements.lock
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Validate GitHub deployment files
+        env:
+          TAVERN_DOMAIN: chat.example.test
+          TAVERN_DATA_DIR: /tmp/tavern-validation-only
+          SYNAPSE_IMAGE: matrixdotorg/synapse:v1.160.0
+          LIVEKIT_KEY: validation-only
+          LIVEKIT_SECRET: validation-only
+        run: |
+          docker compose -f compose.github.yaml config --quiet
+          docker compose -f compose.github.full.yaml config --quiet
+      - name: Build both images (remote Git contexts on branch pushes)
+        env:
+          TAVERN_EVENT: ${{ github.event_name }}
+          TAVERN_REVISION: ${{ github.sha }}
+        run: |
+          if [ "$TAVERN_EVENT" = push ]; then
+            docker build -t tavern-integrations:check "https://github.com/Hans-Hans-Hans/Tavern_3.0.git#$TAVERN_REVISION:integrations"
+            docker build --target npm -t tavern:check "https://github.com/Hans-Hans-Hans/Tavern_3.0.git#$TAVERN_REVISION"
+          else
+            docker build -t tavern-integrations:check integrations
+            docker build --target npm -t tavern:check .
+          fi
+      - name: Check gateway under production restrictions
+        run: |
+          docker run -d --name tavern-check --read-only --tmpfs /tmp:size=128m,mode=1777 --cap-drop ALL --security-opt no-new-privileges:true -e TAVERN_DOMAIN=chat.example.test -p 127.0.0.1:18080:8080 tavern:check
+          curl --fail --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:18080/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/_synapse/admin/v1/server_version)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/_matrix/federation/v1/version)" = 404
+          curl --fail http://127.0.0.1:18080/tavern-config.json | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["homeserverUrl"]=="https://chat.example.test" and c["lockHomeserver"] is True'
+      - if: always()
+        run: |
+          if docker container inspect tavern-check >/dev/null 2>&1; then
+            docker logs tavern-check
+            docker rm -f tavern-check
+          fi

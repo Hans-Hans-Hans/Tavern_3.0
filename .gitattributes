@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.woff2 binary
+*.wasm binary
+*.zip binary
+*.gz binary
+.openai export-ignore
+.codex export-ignore
+releases export-ignore

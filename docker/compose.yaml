@@ -1,0 +1,77 @@
+name: tavern
+services:
+  tavern:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: static
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+  synapse:
+    image: ${SYNAPSE_IMAGE:?Run configure.py first}
+    restart: unless-stopped
+    user: "991:991"
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ./synapse:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run configure.py first}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U synapse -d synapse"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Run configure.py first}
+      MATRIX_DOMAIN: ${MATRIX_DOMAIN:?Run configure.py first}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - tavern
+      - synapse
+    networks: [private,edge]
+    security_opt: [no-new-privileges:true]
+networks:
+  private:
+    internal: true
+  edge: {}
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

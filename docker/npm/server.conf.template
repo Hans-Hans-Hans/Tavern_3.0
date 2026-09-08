@@ -1,0 +1,76 @@
+server {
+    listen 8080;
+    server_name ${TAVERN_DOMAIN};
+    root /usr/share/nginx/html;
+    server_tokens off;
+    client_max_body_size 12m;
+    include /etc/nginx/tavern-headers.conf;
+    set $matrix_upstream http://synapse:8008;
+    proxy_http_version 1.1;
+    proxy_read_timeout 90s;
+    proxy_send_timeout 90s;
+    proxy_buffering off;
+    proxy_set_header Host ${TAVERN_DOMAIN};
+    proxy_set_header X-Forwarded-Proto https;
+    # Do not trust a browser-supplied forwarding chain. This records the NPM
+    # peer address; account-based Synapse login throttles remain enabled.
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_hide_header Server;
+    set $integration_upstream http://integrations:8080;
+    location ~ ^/hooks/[a-zA-Z0-9_-]{1,64}$ {
+        client_max_body_size 16k;
+        limit_except POST { deny all; }
+        proxy_pass $integration_upstream$request_uri;
+    }
+    set $integration_upstream http://integrations:8080;
+    location ^~ /hooks/ {
+        client_max_body_size 16k;
+        limit_except POST { deny all; }
+        proxy_pass $integration_upstream$request_uri;
+    }
+    set $rtc_auth http://rtc-auth:8080;
+    set $rtc_sfu http://livekit:7880;
+    location ^~ /element-call/ {
+        include /etc/nginx/tavern-call-headers.conf;
+        try_files $uri =404;
+    }
+    location = /.well-known/matrix/server {
+        default_type application/json;
+        return 200 '{"m.server":"${TAVERN_DOMAIN}:443"}';
+    }
+    location = /_matrix/federation/v1/openid/userinfo { proxy_pass $matrix_upstream$request_uri; }
+    location /livekit/jwt/ {
+        rewrite ^/livekit/jwt/(.*)$ /$1 break;
+        proxy_pass $rtc_auth$uri$is_args$args;
+    }
+    location /livekit/sfu/ {
+        rewrite ^/livekit/sfu/(.*)$ /$1 break;
+        proxy_set_header Host ${TAVERN_DOMAIN};
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
+        proxy_pass $rtc_sfu$uri$is_args$args;
+    }
+    location = /health { return 200 'ok'; }
+    location = /tavern-config.json {
+        default_type application/json;
+        return 200 '{"homeserverUrl":"https://${TAVERN_DOMAIN}","lockHomeserver":true}';
+    }
+    location = /.well-known/matrix/client {
+        default_type application/json;
+        include /etc/nginx/tavern-headers.conf;
+        add_header Access-Control-Allow-Origin '*' always;
+        return 200 '{"m.homeserver":{"base_url":"https://${TAVERN_DOMAIN}"},"org.matrix.msc4143.rtc_foci":[{"type":"livekit","livekit_service_url":"https://${TAVERN_DOMAIN}/livekit/jwt"}]}';
+    }
+    # Preserve the original encoded Matrix request URI.
+    location ^~ /_matrix/client/ { proxy_pass $matrix_upstream$request_uri; }
+    location ^~ /_matrix/media/ { proxy_pass $matrix_upstream$request_uri; }
+    location ^~ /_synapse/client/ { proxy_pass $matrix_upstream$request_uri; }
+    location /_matrix { return 404; }
+    location /_synapse { return 404; }
+    location /.well-known/matrix/ { return 404; }
+    location /assets/ { try_files $uri =404; }
+    location / { try_files $uri $uri/ /index.html; }
+}

@@ -1,0 +1,11 @@
+# Separate build context: the root ignore file does not apply here.
+# Allow only reviewed program files and dependency resolutions.
+**
+!Dockerfile
+!protocol.py
+!server.py
+!provision.py
+!join-rooms.py
+!send-hook.py
+!requirements.txt
+!requirements.lock
