@@ -1,10 +1,13 @@
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
+import { readInstanceConfig } from './instance';
 import { HttpApiEvent } from 'matrix-js-sdk/lib/http-api/interface';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { readServerEmoji, serverEmojiHtml } from './server-emoji';
 import { indexReactions, type Reaction } from './message-projection';
 import { applyPresenceMode } from './presence';
+import { initializeAppearance, resetAppearance } from './appearance';
+import { initializeOutbox, resetOutbox } from './outbox';
 import { initializeSearch, resetSearch, searchMessages } from './search-index';
 import { initializeNotifications, resetNotifications } from './notifications';
 import { initializeCalls, resetCalls } from './calls';
@@ -33,6 +36,7 @@ const notify=()=>watchers.forEach(fn=>fn());
 export function onMatrixUpdate(fn:()=>void){watchers.add(fn);return()=>{watchers.delete(fn)}}
 export function matrixStatus(){return {connected:!!client,state:syncState,homeserver:client?.getHomeserverUrl(),userId:client?.getUserId(),deviceId:client?.getDeviceId(),crypto:!!client?.getCrypto()}}
 export function getMatrixClient(){return client}
+export function matrixSessionInProgress(){return !!sessionPromise||!!client||securityOperationInProgress();}
 function baseUrl(value:string){const u=new URL(value);if(u.protocol!=='https:')throw new Error('Use an HTTPS homeserver address.');if(u.username||u.password||u.search||u.hash)throw new Error('Enter only the HTTPS homeserver address.');return u.href.replace(/\/$/,'')}
 async function attachSession(s:any){
  sdk??=await import('matrix-js-sdk');
@@ -50,9 +54,10 @@ async function attachSession(s:any){
   c.on(sdk.RoomEvent.Timeline,notify);c.on(sdk.RoomEvent.Receipt,notify);c.on(sdk.RoomEvent.MyMembership,notify);c.on(sdk.MatrixEventEvent.Decrypted,notify);c.on(sdk.RoomEvent.LocalEchoUpdated,notify);c.on(sdk.RoomMemberEvent.Typing,notify);c.on(sdk.RoomStateEvent.Events,notify);c.on(sdk.RoomMemberEvent.Name,notify);c.on(sdk.UserEvent.Presence,notify);c.on(sdk.ClientEvent.AccountData,notify);
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>{c.off(sdk.ClientEvent.Sync,onSync);reject(new Error('The homeserver did not complete the initial sync. Please reconnect.'))},45000);const onSync=(state:string,_prev?:string|null,data?:any)=>{if(state==='ERROR'&&data?.error?.errcode==='M_UNKNOWN_TOKEN'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(data.error);}if(state==='PREPARED'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);resolve()}};c.on(sdk.ClientEvent.Sync,onSync);c.startClient({initialSyncLimit:60,lazyLoadMembers:true,threadSupport:true,pollTimeout:30000}).catch(e=>{clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(e)})});
   await applyPresenceMode(c).catch(()=>{});
+  initializeAppearance(c);void initializeOutbox(c,item=>matrixApi('send',{conversation:item.roomId,parent:item.parent,serverId:item.serverId,body:item.body,nonce:item.id})).catch(error=>console.warn('Local outbox unavailable:',error.message));
   void initializeSearch(c).catch(error=>console.warn('Local search unavailable:',error.message));
   return true;
- }catch(e){resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
+ }catch(e){resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
 }
 export async function restoreMatrixSession(){if(client)return true;if(sessionPromise)return sessionPromise;const raw=sessionStorage.getItem(sessionKey);if(!raw)return false;sessionPromise=(async()=>{try{return await attachSession(JSON.parse(raw))}catch(e){if((e as any)?.errcode==='M_UNKNOWN_TOKEN')sessionStorage.removeItem(sessionKey);throw e}finally{sessionPromise=null}})();return sessionPromise}
 export async function attachManagedMatrixSession(s:AccountSession){if(client)return true;if(sessionPromise)return sessionPromise;const url=new URL(s.baseUrl,location.origin);if(url.origin!==location.origin)throw new Error('Invalid account gateway.');sessionPromise=attachSession({...s,baseUrl:url.href,accessToken:'cookie-session:'+s.deviceId,managed:true});try{return await sessionPromise}finally{sessionPromise=null}}
@@ -69,7 +74,7 @@ async function performConnect(server:string,user:string,password:string,onStatus
  const s={baseUrl:base,accessToken:result.access_token,userId:result.user_id,deviceId:result.device_id};
  onStatus('Preparing encryption and syncing your rooms…');try{await attachSession(s);sessionStorage.setItem(sessionKey,JSON.stringify(s))}catch(e){const cleanup=sdk.createClient({baseUrl:base,accessToken:s.accessToken});await cleanup.logout().catch(()=>{});throw e}notify();
 }
-export function clearLocalMatrixSession(){const c=client;resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export function clearLocalMatrixSession(){const c=client;resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
 export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');if(isManagedAccount())await requestApi('/auth/logout',{});else if(client)await client.logout();clearLocalMatrixSession();if(isManagedAccount())accountSignedOut()}
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
@@ -88,7 +93,7 @@ function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Re
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype)}]:[],encrypted,sending:!!event.status};
+ return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype)}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
@@ -174,7 +179,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   if(parent&&(!parent.isSpaceRoom()||!parent.currentState.maySendStateEvent('m.space.child',me)))throw new Error('You cannot add channels to this server.');
   const via=[me.slice(me.indexOf(':')+1)];
   if(direct&&!p.group&&invite.length<=1){const dm=Object.entries(account('m.direct')).find(([peer])=>peer===(invite[0]||me));const existing=(dm?.[1] as string[]|undefined)?.find(id=>c.getRoom(id)?.getMyMembership()==='join');if(existing)return {id:existing};}
-  const r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
+  const r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0,...((await readInstanceConfig()).serverRolePolicy?{'io.tavern.thread':0}:{})}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
   if(direct){await mutateAccount('m.direct',map=>{const next={...map};for(const peer of invite.length?invite:[me])next[peer]=[...safeStrings(next[peer]),r.room_id];return next;});}
   if(parent){try{await c.sendStateEvent(parent.roomId,'m.space.child' as any,{via},r.room_id)}catch{await c.joinRoom(r.room_id);notify();throw new Error('Channel created, but adding it to the server failed. It is available in All conversations.');}}
   // /sync supplies authoritative state; joinRoom makes the new room locally available.

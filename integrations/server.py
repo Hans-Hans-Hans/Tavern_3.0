@@ -18,7 +18,7 @@ from Crypto.Cipher import AES
 from nio import AsyncClient, AsyncClientConfig, ErrorResponse, RoomSendResponse, SyncResponse
 from nio.store import SqliteStore
 from protocol import authenticate, transaction
-from configuration import load_configuration
+from configuration import cancel_unconfigured, load_configuration, persist_destinations
 
 DATA=Path('/data'); CONFIG=Path('/config/bot.json')
 
@@ -27,6 +27,7 @@ class Bridge:
         os.umask(0o077)
         self.lock=(DATA/'bridge.lock').open('a');fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         self.config,self.secrets,self.configuration=load_configuration(CONFIG);session=json.loads((CONFIG.parent/'session.json').read_text())
+        initial_stat=CONFIG.stat();self.config_stamp=(initial_stat.st_ino,initial_stat.st_mtime_ns,initial_stat.st_size)
         self.pins=self.config.get('trusted_devices',{});self.hooks=self.config['hooks']
         self.queue_key=bytes.fromhex((CONFIG.parent/'queue.key').read_text().strip())
         if len(self.queue_key)!=32: raise RuntimeError('Queue key must contain 32 random bytes encoded as hex')
@@ -41,19 +42,22 @@ class Bridge:
         if not self.client.olm or not hmac.compare_digest(self.client.olm.account.identity_keys['ed25519'],self.identity['ed25519']):raise RuntimeError('Encryption device fingerprint changed')
         self.db=sqlite3.connect(DATA/'outbox.db');self.db.execute('PRAGMA journal_mode=WAL');self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('CREATE TABLE IF NOT EXISTS deliveries(hook TEXT,delivery TEXT,payload BLOB,nonce BLOB,tag BLOB,status TEXT,attempts INTEGER DEFAULT 0,next_attempt INTEGER,event_id TEXT,PRIMARY KEY(hook,delivery))');self.db.commit()
+        self.db.execute('CREATE TABLE IF NOT EXISTS hook_destinations(hook TEXT PRIMARY KEY,room TEXT NOT NULL)');self.db.commit()
+        persist_destinations(self.db,self.config);cancel_unconfigured(self.db,self.hooks)
         self.matrix_lock=asyncio.Lock();self.last_sync=0
         self.ready=False;self.last_error='';self.rate={}
     def reload_configuration(self):
+        current_stat=CONFIG.stat();stamp=(current_stat.st_ino,current_stat.st_mtime_ns,current_stat.st_size)
+        if stamp==self.config_stamp:return
         config,keys,revision=load_configuration(CONFIG)
-        if revision==self.configuration:return
+        if revision==self.configuration:self.config_stamp=stamp;return
         if config['homeserver']!=self.config['homeserver']:raise RuntimeError('Changing bot homeserver requires explicit identity provisioning')
+        persist_destinations(self.db,config)
         for hook in set(self.hooks)&set(config['hooks']):
             if self.hooks[hook]['room_id']!=config['hooks'][hook]['room_id']:raise RuntimeError('Existing webhook destinations are immutable')
-        removed=set(self.hooks)-set(config['hooks'])
-        with self.db:
-            for hook in removed:
-                self.db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND status='pending'",(hook,))
+        cancel_unconfigured(self.db,config['hooks'])
         self.config,self.secrets,self.configuration=config,keys,revision
+        self.config_stamp=stamp
         self.hooks,self.pins=config['hooks'],config.get('trusted_devices',{})
     async def start(self):
         identity=await self.client.whoami()

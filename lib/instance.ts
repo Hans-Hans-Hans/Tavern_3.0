@@ -12,7 +12,7 @@ export async function readInstanceConfig(): Promise<{ homeserverUrl: string; loc
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
       return { homeserverUrl: '' };
     }
-    return { homeserverUrl: url.href.replace(/\/$/, ''), lockHomeserver: config.lockHomeserver === true, managedAuth:config.managedAuth===true, serverRolePolicy:config.serverRolePolicy===true, callsEnabled:config.callsEnabled===true };
+    return { homeserverUrl: url.href.replace(/\/$/, ''), lockHomeserver: config.lockHomeserver === true, managedAuth:config.managedAuth===true, serverRolePolicy:config.serverRolePolicy===true, callsEnabled:typeof config.callsEnabled==='boolean'?config.callsEnabled:undefined };
   } catch {
     // A plain static deployment can leave this blank and enter its server at login.
     return { homeserverUrl: '' };

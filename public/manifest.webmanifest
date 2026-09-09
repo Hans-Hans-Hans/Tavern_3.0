@@ -8,5 +8,10 @@
   "display": "standalone",
   "background_color": "#242a31",
   "theme_color": "#303843",
-  "icons": [{ "src": "/tavern-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+  "icons": [
+    { "src": "/tavern-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/tavern-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/tavern-icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/tavern-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
 }

@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadTs } from './load-ts.mjs';
+const { normalizeAppearance, resolvedTheme, desaturateColor } = loadTs('../lib/appearance.ts', { './matrix': {}, 'matrix-js-sdk': { ClientEvent: {} } });
+test('appearance settings bound scaling, reject invalid values, and follow system by default', () => { const p = normalizeAppearance({ theme: 'fake', font: 'url(tracker)', chatScale: 1000, saturation: -10, reducedMotion: false }); assert.equal(p.theme, 'system'); assert.equal(p.font, 'system'); assert.equal(p.chatScale, 1.5); assert.equal(p.saturation, 0); assert.equal(p.memberList, true); assert.equal(p.reducedMotion, 'system'); assert.equal(normalizeAppearance({ chatScale: NaN }).chatScale, 1); });
+test('system theme follows OS without overwriting explicit theme', () => { assert.equal(resolvedTheme('system', true), 'dark'); assert.equal(resolvedTheme('system', false), 'light'); assert.equal(resolvedTheme('light', true), 'light'); assert.equal(resolvedTheme('dark', false), 'dark'); });
+test('saturation preserves luminance and alpha and leaves unsupported colors untouched', () => { assert.equal(desaturateColor('rgb(100, 150, 200)', 1), 'rgba(100, 150, 200, 1)'); assert.equal(desaturateColor('rgba(100, 150, 200, 0.5)', 0), 'rgba(143, 143, 143, 0.5)'); assert.equal(desaturateColor('oklch(1 0 0)', 0), 'oklch(1 0 0)'); });

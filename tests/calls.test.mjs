@@ -18,7 +18,7 @@ function setup(enabled = true) {
     async placeCallWithCallFeeds(feeds) { this.initialMuted = !feeds[0].stream.getAudioTracks()[0].enabled; this.localUsermediaFeed = feeds[0]; }
     hangup() { this.state = 'ended'; this.emit('hangup'); }
   }
-  const call = new Call(), mediaHandler = { restoreMediaSettings() {}, async setMediaInputs() {}, async setAudioSettings() {}, async getUserMediaStream() { return stream; } };
+  const call = new Call(), mediaHandler = { restoreMediaSettings() {}, async setMediaInputs() {}, async setAudioSettings() {}, stopUserMediaStream(stream) { stream.getTracks().forEach(track => track.stop()); }, async getUserMediaStream() { return stream; } };
   const client = new EventEmitter(); Object.assign(client, { getMediaHandler: () => mediaHandler, getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', checkTurnServers: async () => {}, getTurnServers: () => [{ urls: ['turn:turn.local'] }], getRoom: () => ({ hasEncryptionStateEvent: () => true, getMyMembership: () => 'join', getJoinedMemberCount: () => 2 }), createCall: () => call });
   const calls = loadTs('../lib/calls.ts', {
     './media-session': ownership,
@@ -73,9 +73,33 @@ test('device failure preserves privacy mute and the next settings change still s
   await assert.rejects(calls.setCallMediaSettings({ outputVolume: NaN }), /volume/);
 });
 
+test('changing volume preserves a held microphone while disabling push to talk mutes it', async () => {
+  const { calls, track } = setup(); await calls.startCall('!dm:local', false); await calls.setCallMediaSettings({ pushToTalk: true }); await calls.setCallTalking(true);
+  await calls.setCallMediaSettings({ outputVolume: 0.5 }); assert.equal(track.enabled, true);
+  await calls.setCallMediaSettings({ pushToTalk: false }); assert.equal(track.enabled, false);
+});
+
 test('conference media ownership blocks direct call capture', async () => {
   const { calls, ownership } = setup(); ownership.claimMedia('conference');
   await assert.rejects(calls.startCall('!dm:local', false), /current call/); assert.equal(ownership.mediaOwner(), 'conference');
+});
+
+test('logout during TURN discovery does not create a call or retain media ownership', async () => {
+  const { calls, client, ownership } = setup(); let finish, created = false;
+  client.checkTurnServers = () => new Promise(resolve => { finish = resolve; }); client.createCall = () => { created = true; };
+  const starting = calls.startCall('!dm:local', false);
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  calls.resetCalls(); finish(); await assert.rejects(starting, /canceled/);
+  assert.equal(created, false); assert.equal(ownership.mediaOwner(), null); assert.equal(calls.callSnapshot().busy, false);
+});
+
+test('ending while microphone permission is pending stops the late stream without placing a call', async () => {
+  const { calls, call, track, mediaHandler } = setup(); let finish;
+  mediaHandler.getUserMediaStream = () => new Promise(resolve => { finish = () => resolve({ getAudioTracks: () => [track], getTracks: () => [track] }); });
+  await calls.setCallMediaSettings({ pushToTalk: true }); const starting = calls.startCall('!dm:local', false);
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  calls.endCall(); finish(); await assert.rejects(starting, /canceled/);
+  assert.equal(track.stopped, true); assert.equal(call.initialMuted, undefined); assert.equal(calls.callSnapshot().call, null);
 });
 
 test('conference state survives minimization and ignores callbacks from an older connection', () => {

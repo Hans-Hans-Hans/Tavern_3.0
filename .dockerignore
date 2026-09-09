@@ -21,9 +21,15 @@
 !public/
 !public/favicon.svg
 !public/tavern-config.json
+!public/manifest.webmanifest
+!public/tavern-icon.svg
+!public/tavern-icon-192.png
+!public/tavern-icon-512.png
+!public/tavern-icon-maskable.png
 !scripts/
 !scripts/prepare-call-assets.mjs
 !scripts/operations.py
+!scripts/service-worker.js
 !docker/
 !docker/nginx.conf
 !docker/npm/

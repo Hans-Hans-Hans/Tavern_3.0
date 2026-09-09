@@ -5,7 +5,7 @@ export const communityEvents = { layout: 'io.tavern.server.layout', channel: 'io
 export type Category = { id: string; name: string; icon: string };
 export type ServerLayout = { version: 1; categories: Category[]; channels: { id: string; category: string }[] };
 export type ChannelAppearance = { version: 1; icon: string; accent: string; archived: boolean };
-export type Profile = { version: 1; name: string; avatar: string; banner: string; bio: string; pronouns: string; timezone: string; language: string; accent: string; status: string; statusEmoji: string; statusUntil: number; links: { label: string; url: string }[] };
+export type Profile = { version: 1; name: string; avatar: string; banner: string; bio: string; pronouns: string; timezone: string; language: string; accent: string; status: string; statusEmoji: string; statusUntil: number; links: { label: string; url: string }[]; fields: { label: string; value: string }[] };
 const clean = (v: unknown, max: number) => typeof v === 'string' ? v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, max) : '';
 const record = (v: unknown): Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, any> : {};
 export const cleanMxc = (v: unknown) => typeof v === 'string' && /^mxc:\/\/[^\s/?#]+\/[^\s/?#]+$/.test(v) ? v.slice(0, 1024) : '';
@@ -16,8 +16,12 @@ export function normalizeProfile(value: unknown, now = Date.now()): Profile {
     const l = record(link); try { const url = new URL(clean(l.url, 1000)); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? [{ label: clean(l.label, 60), url: url.href }] : []; } catch { return []; }
   }) : [];
   let timezone = clean(p.timezone, 80); if (timezone) try { new Intl.DateTimeFormat('en', { timeZone: timezone }); } catch { timezone = ''; }
-  return { version: 1, name: clean(p.name, 60), avatar: cleanMxc(p.avatar), banner: cleanMxc(p.banner), bio: clean(p.bio, 1000), pronouns: clean(p.pronouns, 50), timezone, language: clean(p.language, 30), accent: color(p.accent), status: expires && expires <= now ? '' : clean(p.status, 160), statusEmoji: expires && expires <= now ? '' : clean(p.statusEmoji, 16), statusUntil: expires, links };
+  let language = clean(p.language, 30); if (language) try { language = Intl.getCanonicalLocales(language)[0] || ''; } catch { language = ''; }
+  const fields = Array.isArray(p.fields) ? p.fields.slice(0, 8).flatMap(field => { const f = record(field), label = clean(f.label, 60).trim(), value = clean(f.value, 300).trim(); return label && value ? [{ label, value }] : []; }) : [];
+  return { version: 1, name: clean(p.name, 60), avatar: cleanMxc(p.avatar), banner: cleanMxc(p.banner), bio: clean(p.bio, 1000), pronouns: clean(p.pronouns, 50), timezone, language, accent: color(p.accent), status: expires && expires <= now ? '' : clean(p.status, 160), statusEmoji: expires && expires <= now ? '' : clean(p.statusEmoji, 16), statusUntil: expires, links, fields };
 }
+export function profileStatusExpiration(choice: string, current = 0, now = Date.now()) { if (choice === 'keep') return current; if (choice === 'never') return 0; if (choice === 'today' || choice === 'week') { const date = new Date(now); if (choice === 'week') date.setDate(date.getDate() + ((8 - date.getDay()) % 7 || 7)); date.setHours(choice === 'today' ? 24 : 0, 0, 0, 0); return date.getTime(); } const duration = Number(choice); if (![1800000, 3600000, 14400000, 86400000, 604800000].includes(duration)) throw new Error('Choose a valid status expiration.'); return now + duration; }
+export function readMemberProfileContext(roomId: string, userId: string) { const c = getMatrixClient(), room = c?.getRoom(roomId), event = room?.currentState.getStateEvents('m.room.member', userId), previous = event?.getPrevContent()?.membership; const joinedAt = event?.getContent().membership === 'join' && ['invite', 'leave', 'ban', 'knock'].includes(previous || '') ? event!.getTs() : null; return { joinedAt, mutualServers: (c?.getRooms() || []).filter(r => r.isSpaceRoom() && r.getMyMembership() === 'join' && r.getMember(userId)?.membership === 'join').map(r => ({ id: r.roomId, name: r.name })).sort((a, b) => a.name.localeCompare(b.name)) }; }
 export function normalizeChannelAppearance(value: unknown): ChannelAppearance { const p = record(value); return { version: 1, icon: clean(p.icon, 16), accent: color(p.accent), archived: p.archived === true }; }
 export function normalizeServerLayout(value: unknown, roomIds?: string[]): ServerLayout {
   const p = record(value), categoryIds = new Set<string>(), channelIds = new Set<string>(), allowed = roomIds ? new Set(roomIds) : null;
@@ -63,6 +67,8 @@ async function publishOwnProfile(roomId: string, profile: Profile, override: str
 export async function saveOwnProfile(value: Profile, serverId?: string) {
   const { c, me } = context(serverId), profile = normalizeProfile(value); if (!profile.name.trim()) throw new Error('Enter a display name.');
   if (value.timezone && !profile.timezone) throw new Error('Enter a valid timezone, such as America/New_York.');
+  if (value.language && !profile.language) throw new Error('Enter a valid language tag, such as en-US or de.');
+  if (profile.fields.length !== (value.fields || []).length) throw new Error('Each custom profile field needs a label and value. Keep at most eight fields.');
   if (profile.links.length !== value.links.length) throw new Error('Profile links must use HTTP or HTTPS and cannot contain a username or password.');
   if (serverId && !c.getRoom(serverId)?.isSpaceRoom()) throw new Error('Choose a server for this profile.');
   if (serverId) { await publishOwnProfile(serverId, profile, serverId); return; }

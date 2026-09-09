@@ -212,6 +212,39 @@ set `COMPOSE_PROFILES=calls,integrations` (or `integrations` without calls) and
 `INTEGRATIONS_ENABLED=true`. Recreate the API after changing these settings.
 Admin integration settings write the shared bot configuration and HMAC key files;
 the bot's encryption identity and message queue remain in its separate data volume.
+
+## Installed app, calls, and offline behavior
+
+Use Settings → About → Install Tavern to open the browser installation prompt or
+the instructions for your device. Tavern includes native PNG icons for desktop
+and mobile home screens. Browser notification and microphone permissions remain
+under the device owner's control.
+
+The service worker stores a versioned public app shell and its exact static
+assets. It never caches account APIs, Matrix responses, uploads, call media,
+runtime configuration, or credentials. A previously opened installation can
+display its reconnect screen offline. Conversations already loaded in memory
+stay visible when a connection drops; this static cache does not create a second
+message archive. Reconnect uses Matrix's existing sync retry and the account
+gateway's retry flow.
+
+An available app update shows a reload banner. Sign out and finish calls in
+every open Tavern window before applying it. All windows must confirm they can
+reload; an active encrypted session or a nonresponsive window blocks activation.
+No automatic service-worker reload interrupts a call or encryption operation.
+
+Direct calls have microphone/camera selection, supported browser speaker
+selection, local input testing, volume, noise suppression, echo cancellation,
+automatic gain, deafen, and push to talk. Push to talk works while the Tavern
+window has focus; releasing the key, losing focus, or hiding the page mutes
+audio immediately. Deafen also mutes the microphone; turning deafen off leaves
+the microphone muted until you choose to speak again.
+
+Conferences stay connected while switching channels or minimizing the dock.
+The embedded call app handles media devices and screen sharing. The participant
+list comes from real MatrixRTC memberships. Context menus offer identity
+verification and local playback controls where supported; Tavern does not claim
+moderator control over another person's microphone without server enforcement.
 Do not recreate its crypto store on each deployment.
 
 ## Dockhand and Portainer

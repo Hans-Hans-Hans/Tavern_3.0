@@ -20,7 +20,7 @@ class BotStore(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);config=root/'config';data=root/'data';config.mkdir();(data/'crypto').mkdir(parents=True)
             (config/'pickle.key').write_text('test-only-pickle-key');(config/'queue.key').write_text('ab'*32);(config/'builds.hmac').write_text('x'*32)
-            settings={'homeserver':'https://example.invalid','hooks':{'builds':{'room_id':'!test:example.invalid','allowed_users':['@bot:example.invalid'],'secret_file':str(config/'builds.hmac')}},'trusted_devices':{}}
+            settings={'homeserver':'https://example.invalid','hooks':{'builds':{'room_id':'!test:example.invalid','allowed_users':['@bot:example.invalid'],'secret_file':'/config/builds.hmac'}},'trusted_devices':{}}
             (config/'bot.json').write_text(json.dumps(settings));session={'user_id':'@bot:example.invalid','device_id':'TEST','access_token':'test-only'};(config/'session.json').write_text(json.dumps(session))
             c=AsyncClient(settings['homeserver'],user=session['user_id'],device_id='TEST',store_path=str(data/'crypto'),config=AsyncClientConfig(store=SqliteStore,store_name='crypto.db',encryption_enabled=True,pickle_key='test-only-pickle-key'))
             c.restore_login(session['user_id'],'TEST','test-only');fingerprint=c.olm.account.identity_keys['ed25519'];await c.close()
@@ -37,4 +37,8 @@ class BotStore(unittest.IsolatedAsyncioTestCase):
             ciphertext=bridge.db.execute('SELECT payload FROM deliveries').fetchone()[0];self.assertNotIn(b'sensitive',ciphertext)
             await bridge.client.close();bridge.db.close();bridge.lock.close()
             reopened=server.Bridge();self.assertEqual(reopened.client.olm.account.identity_keys['ed25519'],fingerprint);self.assertEqual(reopened.db.execute('SELECT COUNT(*) FROM deliveries').fetchone()[0],1)
+            (config/'rotated.hmac').write_text('y'*32);settings['hooks']['builds']['secret_file']='/config/rotated.hmac';(config/'bot.json').write_text(json.dumps(settings))
+            with self.assertRaises(server.web.HTTPUnauthorized):await reopened.enqueue(Request())
+            settings['hooks']={};(config/'bot.json').write_text(json.dumps(settings));reopened.reload_configuration()
+            row=reopened.db.execute('SELECT status,payload FROM deliveries').fetchone();self.assertEqual(row,('cancelled',None))
             await reopened.client.close();reopened.db.close();reopened.lock.close()

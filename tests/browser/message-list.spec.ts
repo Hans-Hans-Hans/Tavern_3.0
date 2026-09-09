@@ -1,0 +1,20 @@
+import { test, expect } from '@playwright/test';
+test('message virtualization bounds DOM, preserves history position, and measures changing attachment heights', async ({ page }) => {
+  await page.route('**/message-list-component-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/message-list.tsx')).mountFixture();</script></body></html>` }));
+  await page.goto('/message-list-component-test'); await page.waitForFunction(() => (window as any).fixtureReady);
+  const scroller = page.locator('#message-scroller'), rendered = page.locator('[data-message-id]');
+  await expect.poll(() => rendered.count()).toBeGreaterThan(1); expect(await rendered.count()).toBeLessThan(80);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight * .45; });
+  await page.waitForFunction(() => Number(document.querySelector('[data-message-id]')?.getAttribute('data-message-id')?.split('-')[1]) > 600);
+  const visible = () => scroller.evaluate(el => { const bounds = el.getBoundingClientRect(), rows = [...el.querySelectorAll<HTMLElement>('[data-message-id]')]; const first = rows.find(row => row.getBoundingClientRect().bottom > bounds.top + 2); return { id: first?.dataset.messageId, top: first ? first.getBoundingClientRect().top - bounds.top : 0 }; });
+  const anchor = await visible(); await page.getByRole('button', { name: 'Prepend history' }).click();
+  await expect.poll(async () => (await visible()).id).toBe(anchor.id); await expect.poll(async () => Math.abs((await visible()).top - anchor.top)).toBeLessThan(3);
+  const beforeExpansion = await scroller.evaluate(el => el.scrollTop);
+  await page.getByRole('button', { name: 'Expand previous attachment' }).click();
+  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(beforeExpansion + 299);
+  await expect.poll(async () => (await visible()).id).toBe(anchor.id); await expect.poll(async () => Math.abs((await visible()).top - anchor.top)).toBeLessThan(3);
+  await page.getByRole('button', { name: 'Append message' }).click(); await expect.poll(async () => (await visible()).id).toBe(anchor.id); expect(await rendered.count()).toBeLessThan(80);
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; }); await expect(page.getByText('message-2500', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Append message' }).click(); await expect(page.getByText('message-2501', { exact: true })).toBeVisible();
+  await expect.poll(() => scroller.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(5);
+});

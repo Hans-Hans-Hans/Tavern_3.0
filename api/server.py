@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import html
 import ipaddress
+from importlib import import_module
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import secrets
 import smtplib
 import sqlite3
 import ssl
+import sys
 import time
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -114,6 +116,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,created REAL NOT NULL,actor TEXT NOT NULL,
                 action TEXT NOT NULL,target TEXT NOT NULL,detail TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS audit_created ON audit(created);
+            CREATE INDEX IF NOT EXISTS audit_action_id ON audit(action,id);
+            CREATE INDEX IF NOT EXISTS audit_actor_id ON audit(actor,id);
         """)
 
     def seal(self, value) -> str:
@@ -484,6 +488,7 @@ class Service:
         data = await body_json(request)
         self.store.rate("login:" + self.ip(request), 12, 60)
         username = text_value(data.get("username"), 254).strip()
+        request["auditTarget"] = username
         self.store.rate("login-user:" + username.casefold(), 10, 300)
         if username == "admin" and data.get("password") == "admin":
             raise APIError(403, "Use Administrator Setup to initialize this installation. Default credentials cannot sign in.", "BOOTSTRAP_ONLY")
@@ -932,8 +937,25 @@ class Service:
     async def admin_audit(self, request):
         await self.require_admin(request)
         before = int(request.query.get("before", str(2 ** 63 - 1)))
-        rows = self.store.db.execute("SELECT * FROM audit WHERE id<? ORDER BY id DESC LIMIT 100", (before,)).fetchall()
-        return web.json_response({"events": [dict(row) for row in rows], "next": rows[-1]["id"] if len(rows) == 100 else None})
+        if not 0 < before < 2 ** 63:
+            raise APIError(400, "Invalid audit page.")
+        conditions, values = ["id<?"], [before]
+        for name in ("actor", "action", "target"):
+            value = text_value(request.query.get(name, ""), 255).strip()
+            if value:
+                conditions.append(name + "=?")
+                values.append(value)
+        if request.query.get("security") == "true":
+            conditions.append("(action IN ('login','login_failed','verification_failed','request_rejected','rate_limited','logout','session_revoked','other_sessions_revoked','password_changed','password_recovered','email_changed','totp_enabled','email_mfa_enabled','email_mfa_disabled','mfa_disabled','recovery_codes_regenerated','recovery_code_used','account_deactivated') OR action LIKE 'security_%')")
+        for parameter, comparison in (("since", ">="), ("until", "<=")):
+            if parameter in request.query:
+                timestamp = int(request.query[parameter])
+                if not 0 <= timestamp <= 253402300799:
+                    raise APIError(400, "Invalid audit date.")
+                conditions.append("created" + comparison + "?")
+                values.append(timestamp)
+        rows = self.store.db.execute("SELECT * FROM audit WHERE " + " AND ".join(conditions) + " ORDER BY id DESC LIMIT 101", values).fetchall()
+        return web.json_response({"events": [dict(row) for row in rows[:100]], "next": rows[99]["id"] if len(rows) > 100 else None})
 
     async def proxy(self, request):
         session = self.require_session(request)
@@ -968,7 +990,7 @@ class Service:
                 headers[name] = request.headers[name]
         # Stream media uploads and downloads. Never cache private response bodies.
         async with self.http.request(request.method, self.config.synapse_url + raw, data=request.content.iter_chunked(65536) if request.can_read_body else None, headers=headers, allow_redirects=False) as upstream:
-            governed = re.fullmatch(r"/_matrix/client/(?:api/v1|[^/]+)/rooms/([^/]+)/state/(io\.tavern\.(?:roles|channel|timeout|server\.layout))(?:/.*)?", path)
+            governed = re.fullmatch(r"/_matrix/client/(?:api/v1|[^/]+)/rooms/([^/]+)/state/(io\.tavern\.(?:roles|channel|timeout|thread|server\.layout))(?:/.*)?", path)
             if governed and request.method == "PUT" and 200 <= upstream.status < 300:
                 self.audit(session["user_id"], "room_policy_changed", governed[1], governed[2])
             response = web.StreamResponse(status=upstream.status)
@@ -1027,6 +1049,15 @@ async def boundary(request, handler):
                 return await handler(request)
         return await handler(request)
     except APIError as error:
+        action = "rate_limited" if error.status == 429 else "request_rejected" if error.code == "CSRF_REJECTED" else "login_failed" if request.path == "/api/auth/login" and error.status in {400, 401, 403} else "verification_failed" if request.path == "/api/auth/mfa" and error.status in {400, 401, 403} else ""
+        if action:
+            # A rejected request must never turn into a log-flooding primitive.
+            try:
+                service.store.rate("audit-rejection:" + service.ip(request) + ":" + action, 1, 60)
+                session = request.get("session")
+                service.audit(session["user_id"] if session else "unauthenticated", action, request.get("auditTarget", ""), error.code)
+            except (APIError, ValueError):
+                pass
         return web.json_response({"error": error.message, "errcode": error.code, **error.details}, status=error.status)
     except ValueError:
         return web.json_response({"error": "Check the values and trusted proxy configuration, then try again.", "errcode": "INVALID_INPUT"}, status=400)
@@ -1082,60 +1113,17 @@ def create_app(config: Config | None = None):
     app.on_startup.append(service.start)
     app.on_cleanup.append(service.close)
     app.on_response_prepare.append(response_headers)
-    # Optional operational routes are maintained separately from authentication.
-    try:
-        from operations import register_routes
-    except ImportError:
-        try:
-            from .operations import register_routes
-        except ImportError:
-            register_routes = None
-    if register_routes:
-        register_routes(app)
-    try:
-        from social import register_routes as register_social
-    except ImportError:
-        try:
-            from .social import register_routes as register_social
-        except ImportError:
-            register_social = None
-    if register_social:
-        register_social(app)
-    try:
-        from community_api import register_routes as register_community
-    except ImportError:
-        try:
-            from .community_api import register_routes as register_community
-        except ImportError:
-            register_community = None
-    if register_community:
-        register_community(app)
-    try:
-        from system_policy import register_routes as register_system_policy
-    except ImportError:
-        try:
-            from .system_policy import register_routes as register_system_policy
-        except ImportError:
-            register_system_policy = None
-    if register_system_policy:
-        register_system_policy(app)
-    try:
-        from admin_resources import register_routes as register_resources
-    except ImportError:
-        try:
-            from .admin_resources import register_routes as register_resources
-        except ImportError:
-            register_resources = None
-    if register_resources:
-        register_resources(app)
-    try:
-        from .integrations_admin import register_routes as register_integrations
-    except ImportError:
-        from integrations_admin import register_routes as register_integrations
-    register_integrations(app)
+    # Ship the complete route set or fail startup. Missing modules must not make
+    # the health check report success while silently disabling permissions/features.
+    prefix = __package__ + "." if __package__ else ""
+    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin"):
+        import_module(prefix + module).register_routes(app)
     return app
 
 
 if __name__ == "__main__":
+    # Modules import shared helpers from `server` in the container's flat /app
+    # layout. Keep that name bound to this script, not a second class definition.
+    sys.modules["server"] = sys.modules[__name__]
     logging.basicConfig(level=logging.INFO)
     web.run_app(create_app(), host="0.0.0.0", port=8090, access_log=None)

@@ -7,8 +7,10 @@ from collections.abc import Mapping
 import re
 try:
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
+    from thread_policy import ThreadPolicy, THREAD
 except ImportError:
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
+    from synapse_modules.thread_policy import ThreadPolicy, THREAD
 
 POLICY = "io.tavern.roles"
 PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
@@ -134,6 +136,7 @@ class TavernPolicy:
     def __init__(self, config, api):
         self.api = api
         self.channels = ChannelPolicy(api, permissions, rank)
+        self.threads = ThreadPolicy(api, self.channels)
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed)
 
     @staticmethod
@@ -183,7 +186,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, THREAD, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None
@@ -207,8 +210,10 @@ class TavernPolicy:
                 return False, None  # Native authority remains an owner operation.
             else:
                 need = {"m.room.message": "send_messages", "m.room.encrypted": "send_messages", "m.reaction": "add_reactions", "m.room.pinned_events": "pin_messages", "org.matrix.msc3401.call.member": "join_calls", "m.call.invite": "join_calls", "m.call.answer": "join_calls", "io.tavern.server.layout": "manage_channels", TIMEOUT: "timeout"}.get(kind)
-                if need is None and key is not None:
+                if need is None and key is not None and kind != THREAD:
                     need = "manage_server" if event.room_id == server_id else "manage_channels"
                 if need and need not in grants:
                     return False, None
-        return await self.channels.check(event, state_events, policies), None
+        if not await self.threads.check(event, state_events, policies) or not await self.channels.check(event, state_events, policies):
+            return False, None
+        return await self.threads.finish(event, state_events)

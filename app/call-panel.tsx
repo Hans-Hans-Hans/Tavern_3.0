@@ -10,8 +10,10 @@ import { ActionMenu, copyText } from './action-menu';
 import './calls.css';
 
 type OutputVideo = HTMLVideoElement & { setSinkId?: (deviceId: string) => Promise<void> };
-function Feed({ feed, media, roomId }: { feed: CallFeed; media: CallMediaSettings; roomId: string }) {
-  const ref = useRef<OutputVideo>(null), [playBlocked, setPlayBlocked] = useState(false), [, refresh] = useState(0), [locallyMuted, setLocallyMuted] = useState(false);
+type ParticipantPlayback = { muted: boolean; volume: number };
+const defaultPlayback: ParticipantPlayback = { muted: false, volume: 1 };
+function Feed({ feed, media, roomId, playback, setPlayback }: { feed: CallFeed; media: CallMediaSettings; roomId: string; playback: ParticipantPlayback; setPlayback: (patch: Partial<ParticipantPlayback>) => void }) {
+  const ref = useRef<OutputVideo>(null), [playBlocked, setPlayBlocked] = useState(false), [, refresh] = useState(0);
   useEffect(() => {
     const element = ref.current;
     const update = () => { refresh(n => n + 1); if (element) { element.srcObject = feed.stream; void element.play().then(() => setPlayBlocked(false)).catch(() => setPlayBlocked(true)); } };
@@ -21,16 +23,16 @@ function Feed({ feed, media, roomId }: { feed: CallFeed; media: CallMediaSetting
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    element.volume = media.outputVolume;
-    element.muted = feed.isLocal() || media.deafened || locallyMuted;
+    element.volume = media.outputVolume * playback.volume;
+    element.muted = feed.isLocal() || media.deafened || playback.muted;
     if (!feed.isLocal() && element.setSinkId) void element.setSinkId(media.audioOutput).catch(() => toast.error('The selected speaker is unavailable. Choose another output device.'));
-  }, [feed, media.audioOutput, media.outputVolume, media.deafened, locallyMuted]);
+  }, [feed, media.audioOutput, media.outputVolume, media.deafened, playback.muted, playback.volume]);
   const name = feed.isLocal() ? 'You' : getMatrixClient()?.getRoom(roomId)?.getMember(feed.userId)?.name || feed.userId;
   return <ActionMenu actions={[
-    { label: locallyMuted ? 'Hear participant again' : 'Mute participant for me', visible: !feed.isLocal(), run: () => setLocallyMuted(value => !value) },
+    { label: playback.muted ? 'Hear participant again' : 'Mute participant for me', visible: !feed.isLocal(), run: () => setPlayback({ muted: !playback.muted }) },
     { label: 'Verify participant identity', visible: !feed.isLocal(), run: () => requestPeerVerification(feed.userId, roomId) },
     { label: 'Copy user ID', run: () => copyText(feed.userId) },
-  ]}><div className="call-feed"><video ref={ref} autoPlay playsInline muted={feed.isLocal() || media.deafened || locallyMuted}/><div className="call-feed-header"><span>{name}{feed.isAudioMuted() ? ' · Muted' : ''}{locallyMuted ? ' · Muted for you' : ''}</span></div>{playBlocked && <button className="secondary-button" onClick={() => void ref.current?.play().then(() => setPlayBlocked(false)).catch(() => toast.error('Audio playback is blocked. Check browser sound permissions.'))}>Enable audio</button>}</div></ActionMenu>;
+  ]}><div className="call-feed"><video ref={ref} autoPlay playsInline muted={feed.isLocal() || media.deafened || playback.muted}/><div className="call-feed-header"><span>{name}{feed.isAudioMuted() ? ' · Muted' : ''}{playback.muted ? ' · Muted for you' : ''}</span></div>{!feed.isLocal() && <details className="participant-playback"><summary>Participant volume</summary><label>{Math.round(playback.volume * 100)}%<input aria-label={'Volume for ' + name} className="call-volume" type="range" min="0" max="100" value={Math.round(playback.volume * 100)} onChange={event => setPlayback({ volume: Number(event.target.value) / 100 })}/></label><button className="secondary-button" aria-pressed={playback.muted} onClick={() => setPlayback({ muted: !playback.muted })}>{playback.muted ? 'Hear participant again' : 'Mute for me'}</button></details>}{playBlocked && <button className="secondary-button" onClick={() => void ref.current?.play().then(() => setPlayBlocked(false)).catch(() => toast.error('Audio playback is blocked. Check browser sound permissions.'))}>Enable audio</button>}</div></ActionMenu>;
 }
 
 function MicrophoneTest({ device }: { device: string }) {
@@ -90,6 +92,7 @@ export function CallButtons({ roomId, direct, disabled }: { roomId: string; dire
 
 export function CallPanel() {
   const [{ call, error, media }, setSnapshot] = useState(callSnapshot), [busy, setBusy] = useState(false), [settings, setSettings] = useState(false), [minimized, setMinimized] = useState(false), [talking, setTalking] = useState(false);
+  const [participantPlayback, setParticipantPlayback] = useState<Record<string, ParticipantPlayback>>({});
   useEffect(() => subscribeCalls(() => setSnapshot(callSnapshot())), []);
   async function talk(value: boolean) { setTalking(value); try { await setCallTalking(value); } catch { setTalking(false); toast.error('The microphone state could not be changed.'); } }
   useEffect(() => {
@@ -101,13 +104,13 @@ export function CallPanel() {
     window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', release); document.addEventListener('visibilitychange', visibility);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', release); document.removeEventListener('visibilitychange', visibility); void setCallTalking(false); };
   }, [call, media.pushToTalk]);
-  useEffect(() => { setMinimized(false); setSettings(false); setTalking(false); }, [call?.callId]);
+  useEffect(() => { setMinimized(false); setSettings(false); setTalking(false); setParticipantPlayback({}); }, [call?.callId]);
   if (!call) return null;
   const incoming = call.state === CallState.Ringing, ended = call.state === CallState.Ended;
   const client = getMatrixClient(), room = client?.getRoom(call.roomId), peer = room?.getJoinedMembers().find(member => member.userId !== client?.getUserId());
   async function run(task: () => Promise<unknown>) { setBusy(true); try { await task(); } catch (error) { toast.error((error as Error).message); } finally { setBusy(false); } }
   return <section className={'call-panel' + (minimized ? ' call-minimized' : '')} aria-label="Active call"><header><div><strong>{room?.name || 'Direct call'}</strong><small>{incoming ? 'Incoming call' : ended ? 'Call ended' : call.state} · Relayed encrypted media</small></div><div className="call-header-actions"><button className="icon-button" onClick={() => setMinimized(value => !value)} aria-label={minimized ? 'Expand call' : 'Minimize call'}>{minimized ? <Maximize2/> : <Minimize2/>}</button><button className="icon-button call-end" onClick={endCall} aria-label={ended ? 'Close call' : 'End call'}><PhoneOff/></button></div></header>
-    <div className="call-expanded">{incoming ? <div className="inline-actions"><button className="primary-button" disabled={busy} onClick={() => void run(() => answerCall(false))}>Answer with audio</button><button className="secondary-button" disabled={busy} onClick={() => void run(() => answerCall(true))}>Answer with video</button><button className="secondary-button" onClick={endCall}>Decline</button></div> : !ended && <><div className="call-feeds">{call.getFeeds().map(feed => <Feed key={feed.stream.id} feed={feed} media={media} roomId={call.roomId}/>)}</div><div className="call-controls">
+    <div className="call-expanded">{incoming ? <div className="inline-actions"><button className="primary-button" disabled={busy} onClick={() => void run(() => answerCall(false))}>Answer with audio</button><button className="secondary-button" disabled={busy} onClick={() => void run(() => answerCall(true))}>Answer with video</button><button className="secondary-button" onClick={endCall}>Decline</button></div> : !ended && <><div className="call-feeds">{call.getFeeds().map(feed => <Feed key={feed.stream.id} feed={feed} media={media} roomId={call.roomId} playback={participantPlayback[feed.userId] || defaultPlayback} setPlayback={patch => setParticipantPlayback(previous => ({ ...previous, [feed.userId]: { ...(previous[feed.userId] || defaultPlayback), ...patch } }))}/>)}</div><div className="call-controls">
       <button disabled={busy || media.pushToTalk || media.deafened} aria-label={call.isMicrophoneMuted() ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={call.isMicrophoneMuted()} onClick={() => void run(() => toggleCall('mic'))}>{call.isMicrophoneMuted() ? <MicOff/> : <Mic/>}</button>
       <button disabled={busy} aria-label={call.isLocalVideoMuted() ? 'Enable camera' : 'Disable camera'} onClick={() => void run(() => toggleCall('camera'))}>{call.isLocalVideoMuted() ? <VideoOff/> : <Video/>}</button>
       <button disabled={busy} aria-label={call.isScreensharing() ? 'Stop sharing screen' : 'Share screen'} aria-pressed={call.isScreensharing()} onClick={() => void run(() => toggleCall('screen'))}><ScreenShare/></button>

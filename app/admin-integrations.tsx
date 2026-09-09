@@ -1,0 +1,59 @@
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { requestApi } from '@/lib/api';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Field } from './auth-gateway';
+
+type Hook = { id: string; roomId: string; allowedUsers: string[]; url: string };
+type Pin = { userId: string; deviceId: string; fingerprint: string };
+type Inventory = { enabled: boolean; configured: boolean; applied?: boolean; ready: boolean; revision: string; hooks: Hook[]; pins: Pin[] };
+type Action = { kind: 'create' | 'rotate' | 'revoke' | 'pin' | 'unpin'; hook?: Hook; pin?: Pin };
+
+export function AdminIntegrations() {
+  const [data, setData] = useState<Inventory | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [stale, setStale] = useState(false);
+  const [action, setAction] = useState<Action | null>(null), [secret, setSecret] = useState<{ id: string; value: string } | null>(null);
+  const [id, setId] = useState(''), [roomId, setRoomId] = useState(''), [users, setUsers] = useState(''), [confirmation, setConfirmation] = useState('');
+  const [userId, setUserId] = useState(''), [deviceId, setDeviceId] = useState(''), [fingerprint, setFingerprint] = useState(''), [verified, setVerified] = useState(false);
+  async function reload() {
+    try { setData(await requestApi<Inventory>('/admin/integrations')); setStale(false); setError(''); return true; }
+    catch (e) { setError((e as Error).message); setStale(true); return false; }
+  }
+  useEffect(() => { setBusy(true); void reload().finally(() => setBusy(false)); }, []);
+  function choose(next: Action) { setAction(next); setError(''); setConfirmation(''); setVerified(false); setId(''); setRoomId(''); setUsers(''); setUserId(next.pin?.userId || ''); setDeviceId(next.pin?.deviceId || ''); setFingerprint(''); }
+  async function submit() {
+    if (!action || !data || stale) return;
+    setBusy(true); setError('');
+    try {
+      let result: { secret?: string; revision: string };
+      if (action.kind === 'create') result = await requestApi('/admin/integrations/hooks', { id, roomId, allowedUsers: users.split(/[\n,]/).map(user => user.trim()).filter(Boolean), confirmation, revision: data.revision });
+      else if (action.kind === 'rotate' || action.kind === 'revoke') result = await requestApi('/admin/integrations/hooks/' + encodeURIComponent(action.hook!.id) + (action.kind === 'rotate' ? '/rotate' : ''), { confirmation, revision: data.revision }, action.kind === 'revoke' ? 'DELETE' : 'POST');
+      else result = await requestApi('/admin/integrations/pins', { userId, deviceId, ...(action.kind === 'pin' ? { fingerprint } : {}), confirmation, revision: data.revision }, action.kind === 'unpin' ? 'DELETE' : 'POST');
+      // Preserve the only copy before any follow-up request can fail.
+      if (result.secret) setSecret({ id: action.hook?.id || id, value: result.secret });
+      setAction(null); setConfirmation(''); setFingerprint('');
+      setData(previous => previous ? { ...previous, revision: result.revision } : previous);
+      toast.success(action.kind === 'create' ? 'Webhook created' : action.kind === 'rotate' ? 'Signing secret replaced' : action.kind === 'revoke' ? 'Webhook revoked' : action.kind === 'pin' ? 'Device approval saved' : 'Device approval removed');
+      await reload();
+    } catch (e: any) { setError(e.message); if (e.status === 409) setStale(true); }
+    finally { setBusy(false); }
+  }
+  const expected = action?.kind === 'create' ? roomId : action?.hook?.id || 'VERIFIED';
+  const canSubmit = !busy && !stale && confirmation === expected && !!expected && (action?.kind !== 'pin' || verified);
+  return <section className='product-section'><div className='admin-toolbar'><h2>Webhooks and verified devices</h2><button className='secondary-button' disabled={busy} onClick={() => { setError(''); setBusy(true); void reload().finally(() => setBusy(false)); }}>Reload integrations</button></div>
+    {busy && !data && <p role='status'>Loading integrations…</p>}{error && <p className='connect-error' role='alert'>{error}</p>}{stale && <p role='status'>Reload the configuration before making another change. Your form entries are preserved.</p>}
+    {data && <><div className='admin-metrics'>{[['Integration profile', data.enabled ? 'Enabled' : 'Disabled'], ['Configuration', data.configured ? 'Saved' : 'Not configured'], ['Configuration applied', data.applied ? 'Applied' : 'Pending or unavailable'], ['Encrypted delivery service', data.ready ? 'Ready' : 'Not ready']].map(([label, value]) => <article className='admin-metric' key={label}><span>{label}</span><strong>{value}</strong></article>)}</div>
+      {!data.enabled ? <p>Enable the integrations deployment profile and its management setting to configure webhooks here.</p> : <><p>Each webhook has a fixed encrypted destination. The dedicated bot must be provisioned once and invited to that room. Every recipient device needs an independently verified fingerprint before delivery.</p><p><a href='https://github.com/Hans-Hans-Hans/Tavern_3.0/blob/main/docs/CALLS_AND_INTEGRATIONS.md' target='_blank' rel='noreferrer'>Bot setup instructions</a></p>
+        <div className='admin-toolbar'><h3>Incoming webhooks</h3><button className='primary-button' disabled={busy || stale} onClick={() => choose({ kind: 'create' })}>Create webhook</button></div>
+        {!data.hooks.length ? <p>No webhooks configured. Create one after choosing an encrypted room and its approved members.</p> : <div className='admin-table-wrap'><table className='admin-table'><thead><tr><th>Hook</th><th>Destination</th><th>Approved members</th><th>Actions</th></tr></thead><tbody>{data.hooks.map(hook => <tr key={hook.id}><td><strong>{hook.id}</strong><div><code>{hook.url}</code></div></td><td><code>{hook.roomId}</code></td><td><details><summary>{hook.allowedUsers.length} members</summary>{hook.allowedUsers.map(user => <div key={user}>{user}</div>)}</details></td><td><div className='product-actions'><button className='secondary-button' disabled={busy || stale} onClick={() => choose({ kind: 'rotate', hook })}>Rotate secret</button><button className='secondary-button' disabled={busy || stale} onClick={() => choose({ kind: 'revoke', hook })}>Revoke webhook</button></div></td></tr>)}</tbody></table></div>}
+        <div className='admin-toolbar'><h3>Verified device approvals</h3><button className='primary-button' disabled={busy || stale} onClick={() => choose({ kind: 'pin' })}>Approve verified device</button></div>
+        {!data.pins.length ? <p>No recipient devices approved. Delivery waits until all participating devices have verified approvals.</p> : <div className='admin-table-wrap'><table className='admin-table'><thead><tr><th>User</th><th>Device</th><th>Public fingerprint</th><th>Actions</th></tr></thead><tbody>{data.pins.map(pin => <tr key={pin.userId + '\n' + pin.deviceId}><td>{pin.userId}</td><td>{pin.deviceId}</td><td><code>{pin.fingerprint}</code></td><td><button className='secondary-button' disabled={busy || stale} onClick={() => choose({ kind: 'unpin', pin })}>Remove approval</button></td></tr>)}</tbody></table></div>}
+      </>}</>}
+    <Dialog open={!!action} onOpenChange={open => { if (!open && !busy) { setAction(null); setFingerprint(''); } }}><DialogContent className='tavern-dialog'><DialogHeader><DialogTitle>{action?.kind === 'create' ? 'Create webhook' : action?.kind === 'rotate' ? 'Rotate signing secret?' : action?.kind === 'revoke' ? 'Revoke webhook?' : action?.kind === 'pin' ? 'Approve verified device' : 'Remove device approval?'}</DialogTitle><DialogDescription>{action?.kind === 'create' ? 'Webhook messages are encrypted by the dedicated bot. This hook’s destination cannot be changed later.' : action?.kind === 'rotate' ? 'The previous signing secret stops accepting new deliveries when the service loads this change. Update the sending system with the new secret.' : action?.kind === 'revoke' ? 'New requests stop being accepted and pending deliveries are cancelled when the service applies this change. An already running delivery may finish. This hook ID cannot be reused.' : action?.kind === 'pin' ? 'Compare the full fingerprint with the person using that device through a trusted separate channel. A key returned by the server is not proof of identity.' : 'Delivery pauses while this unapproved device remains in a destination room. Messages already delivered are unchanged.'}</DialogDescription></DialogHeader>
+      {action && <form className='dialog-form' onSubmit={event => { event.preventDefault(); void submit(); }}><fieldset disabled={busy}>
+        {action.kind === 'create' && <><Field label='Webhook ID'><input required pattern='[a-z0-9_-]{1,64}' maxLength={64} autoComplete='off' value={id} onChange={e => setId(e.target.value)}/></Field><Field label='Encrypted destination room ID'><input required value={roomId} maxLength={255} onChange={e => setRoomId(e.target.value)}/></Field><Field label='Approved Matrix users, one per line'><textarea required value={users} onChange={e => setUsers(e.target.value)} maxLength={40000}/></Field><p className='login-help'>Include the bot and every current member. Approving a user here does not approve their devices or invite them to the room.</p></>}
+        {(action.kind === 'pin' || action.kind === 'unpin') && <><Field label='Matrix user ID'><input required readOnly={action.kind === 'unpin'} value={userId} onChange={e => setUserId(e.target.value)} maxLength={255}/></Field><Field label='Device ID'><input required readOnly={action.kind === 'unpin'} value={deviceId} onChange={e => setDeviceId(e.target.value)} maxLength={255}/></Field>{action.kind === 'pin' && <><Field label='Independently verified Ed25519 fingerprint'><input required value={fingerprint} onChange={e => setFingerprint(e.target.value)} maxLength={100} autoComplete='off' spellCheck={false}/></Field><label className='check-label'><input type='checkbox' checked={verified} onChange={e => setVerified(e.target.checked)}/>I compared this fingerprint through a trusted separate channel</label></>}</>}
+        <Field label={'Type ' + (action.kind === 'create' ? 'the destination room ID' : expected) + ' to confirm'}><input autoComplete='off' required value={confirmation} onChange={e => setConfirmation(e.target.value)}/></Field><div className='product-actions'><button className='primary-button' disabled={!canSubmit}>Confirm</button><button type='button' className='secondary-button' onClick={() => setAction(null)}>Cancel</button>{stale && <button type='button' className='secondary-button' onClick={() => { setBusy(true); void reload().finally(() => setBusy(false)); }}>Reload configuration</button>}</div></fieldset>{error && <p className='connect-error' role='alert'>{error}</p>}</form>}
+    </DialogContent></Dialog>
+    <Dialog open={!!secret} onOpenChange={open => { if (!open) setSecret(null); }}><DialogContent><DialogHeader><DialogTitle>Save the webhook signing secret</DialogTitle><DialogDescription>This secret for {secret?.id} is shown once. Save it in the sending system’s secret storage before closing this window.</DialogDescription></DialogHeader><Field label='Webhook signing secret'><textarea readOnly value={secret?.value || ''} autoComplete='off' spellCheck={false}/></Field><div className='product-actions'><button className='secondary-button' onClick={() => { if (secret) void navigator.clipboard.writeText(secret.value).then(() => toast.success('Signing secret copied')).catch(() => toast.error('Select and copy the secret manually.')); }}>Copy signing secret</button><button className='primary-button' onClick={() => setSecret(null)}>I saved the secret</button></div>{error && <p role='alert'>{error}</p>}</DialogContent></Dialog>
+  </section>;
+}

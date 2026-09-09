@@ -11,7 +11,7 @@ export function normalizeChannelPolicy(value: any): ChannelPolicy {
   return { kind: value && Object.hasOwn(channelKinds, value.kind) ? value.kind : 'text', slowModeSeconds: Number.isInteger(value?.slowModeSeconds) && value.slowModeSeconds >= 0 && value.slowModeSeconds <= 21600 ? value.slowModeSeconds : 0, archived: value?.archived === true };
 }
 export function readChannelPolicy(roomId: string) { return normalizeChannelPolicy(getMatrixClient()?.getRoom(roomId)?.currentState.getStateEvents(channelPolicyEvent, '')?.getContent()); }
-function roomContext(roomId: string) {
+export function roomContext(roomId: string) {
   const client = getMatrixClient(), room = client?.getRoom(roomId), me = client?.getUserId();
   if (!client || !room || !me || room.getMyMembership() !== 'join') throw new Error('Join this conversation first.');
   const policies: RolePolicy[] = [], own = readRolePolicy(roomId);

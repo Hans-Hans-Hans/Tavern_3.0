@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Beer, Loader2, ShieldCheck } from 'lucide-react';
-import { requestApi, setManagedAccount, type AccountSession } from '@/lib/api';
+import { requestApi, setManagedAccount, setAccountDevice, type AccountSession } from '@/lib/api';
 import './product.css';
 import { useInstanceStatus, InstanceNotices } from './instance-status';
 import { readInstanceConfig } from '@/lib/instance';
+import { pwaUpdateLocked, setPwaReloadAllowed } from '@/lib/pwa';
 
 const Tavern = lazy(() => import('./tavern'));
 const AdminConsole = lazy(() => import('./admin-console'));
@@ -19,8 +20,11 @@ export function AuthGateway() {
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [notice, setNotice] = useState(''),[recoveryMfa,setRecoveryMfa]=useState('');
   const status=useInstanceStatus(!!config);
+  useEffect(() => { setPwaReloadAllowed(!busy && ['login', 'failure', 'legacy'].includes(mode)); return () => setPwaReloadAllowed(false); }, [mode, busy]);
+  useEffect(() => { const reconnect = () => { if (mode === 'failure') void initialize(); }; window.addEventListener('tavern:reconnect', reconnect); return () => window.removeEventListener('tavern:reconnect', reconnect); }, [mode]);
   useEffect(()=>{if(session&&!session.admin&&status?.maintenance.enabled&&mode==='ready'){void import('@/lib/matrix').then(m=>m.clearLocalMatrixSession());setMode('maintenance');}},[status,session,mode]);
   async function openSession(value: AccountSession) {
+    setAccountDevice(value.deviceId);
     const health=await requestApi('/system/status').catch(()=>null);
     if(health?.maintenance?.enabled&&!value.admin){setSession(value);setMode('maintenance');return;}
     const { attachManagedMatrixSession } = await import('@/lib/matrix');
@@ -43,7 +47,7 @@ export function AuthGateway() {
   }
   useEffect(() => { void initialize(); const logout = () => { setSession(null); setMode('login'); setNotice('You have been signed out.'); }; window.addEventListener('tavern:signout', logout); return () => window.removeEventListener('tavern:signout', logout); }, []);
   async function submit(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError(''); setNotice('');
+    e.preventDefault(); if (pwaUpdateLocked()) { setError('An app update is being applied. Please wait.'); return; } setPwaReloadAllowed(false); setBusy(true); setError(''); setNotice('');
     try {
       if(mode==='register'){
         const result=await requestApi('/auth/register/start',{inviteToken:new URLSearchParams(location.search).get('invite')||undefined,username,password:newPassword,confirmation,email,displayName});setChallenge(result.challengeId);setNewPassword('');setConfirmation('');setMode('register-code');setNotice('Check your email for the verification code.');

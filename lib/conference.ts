@@ -57,7 +57,9 @@ export class TavernCallDriver extends WidgetDriver {
   processError(error:unknown){const e=error as any;return typeof e?.asWidgetApiErrorData==='function'?{matrix_api_error:e.asWidgetApiErrorData()}:undefined;}
 }
 
-export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false){
+export type ConferenceDevices = { audio_enabled?: boolean; video_enabled?: boolean };
+export type ConferenceControls = (() => Promise<void>) & { setDevices: (devices: ConferenceDevices) => Promise<void> };
+export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void):Promise<ConferenceControls>{
   signal?.throwIfAborted();if(!managedSession)claimMedia('conference');
   try {
   const room=client.getRoom(roomId);if(!room||!await client.getCrypto()?.isEncryptionEnabledInRoom(roomId))throw new Error('Conferences require an encrypted room.');
@@ -76,8 +78,10 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   client.on(RoomEvent.Timeline,timeline);client.on(RoomStateEvent.Events,state);client.on(ClientEvent.ToDeviceEvent,device);client.on(MatrixEventEvent.Decrypted,decrypted);
   const close=(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});onClose();};
   for(const action of ['io.element.close','im.vector.hangup'])api.on('action:'+action,close);
-  for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});if(action==='io.element.join')onJoined?.();});
+  const devices=(data:any)=>({...(typeof data?.audio_enabled==='boolean'?{audio_enabled:data.audio_enabled}:{}),...(typeof data?.video_enabled==='boolean'?{video_enabled:data.video_enabled}:{})});
+  for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});if(action==='io.element.join')onJoined?.();else onDevices?.(devices(event.detail.data));});
   iframe.src=url.href;
-  return async()=>{if(stopped)return;stopped=true;await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
+  const cleanup=async()=>{if(stopped)return;stopped=true;await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
+  return Object.assign(cleanup,{setDevices:async(patch:ConferenceDevices)=>{if(stopped)throw new Error('The conference has ended.');const result=devices(await api.transport.send('io.element.device_mute',patch));if(stopped)return;onDevices?.(result);if(Object.entries(patch).some(([key,value])=>(result as any)[key]!==value))throw new Error('The call is still preparing this device. Check its settings in the conference.');}});
   }catch(error){if(!managedSession)releaseMedia('conference');throw error;}
 }

@@ -1,0 +1,10 @@
+:root{--tavern-chat-scale:1}
+:root[data-tavern-font=system] body{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+:root[data-tavern-font=readable] body{font-family:Georgia,"Times New Roman",serif}
+:root[data-tavern-font=monospace] body{font-family:ui-monospace,"Cascadia Code",Consolas,monospace}
+:root .message-body,:root .composer textarea,:root .appearance-preview p{font-size:calc(14px * var(--tavern-chat-scale));line-height:1.7}
+:root[data-member-list=hidden] .channel-overview{display:none}
+:root[data-reduce-motion=true] *,:root[data-reduce-motion=true] *::before,:root[data-reduce-motion=true] *::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+.appearance-theme-options{display:flex;gap:10px}.appearance-theme-options button{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border:1px solid var(--border);border-radius:8px;font-size:12px}.appearance-theme-options button[aria-pressed=true]{background:var(--accent);color:var(--primary);border-color:var(--ring)}
+.appearance-preview{border:1px solid var(--border);background:var(--subtle);border-radius:10px;padding:16px;margin-top:18px}.appearance-preview strong{font-size:12px}.appearance-preview p{margin:8px 0}.appearance-preview small{color:var(--muted-foreground);font-size:11px}.appearance-settings input[type=range]{padding:0;accent-color:var(--primary)}
+@media(min-width:1600px){:root .message-body{font-size:calc(16px * var(--tavern-chat-scale))}}

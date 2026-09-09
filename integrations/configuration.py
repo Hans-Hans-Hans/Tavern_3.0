@@ -5,6 +5,24 @@ from pathlib import Path
 import re
 
 
+def persist_destinations(db, config):
+    """Destination bindings survive config replacement and process restarts."""
+    with db:
+        for hook, value in config['hooks'].items():
+            previous = db.execute('SELECT room FROM hook_destinations WHERE hook=?', (hook,)).fetchone()
+            if previous and previous[0] != value['room_id']:
+                raise RuntimeError('Existing webhook destinations are immutable')
+            db.execute('INSERT OR IGNORE INTO hook_destinations VALUES(?,?)', (hook, value['room_id']))
+
+
+def cancel_unconfigured(db, hooks):
+    with db:
+        pending = db.execute("SELECT DISTINCT hook FROM deliveries WHERE status='pending'").fetchall()
+        for (hook,) in pending:
+            if hook not in hooks:
+                db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND status='pending'", (hook,))
+
+
 def load_configuration(path):
     path = Path(path)
     if path.is_symlink() or path.stat().st_size > 512000:

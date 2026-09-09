@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadTs } from './load-ts.mjs';
+const roles = loadTs('../lib/roles.ts', { './matrix': {} });
+const { groupDirectoryMembers } = loadTs('../lib/member-directory.ts', { './roles': roles });
+test('member groups use highest separately displayed role and hide non-hoisted role groups', () => { const p = roles.defaultRolePolicy('@owner:local'); p.roles.push({ id: 'mod', name: 'Moderator', position: 10, separate: true }, { id: 'raider', name: 'Raider', position: 20, separate: false }); p.members['@a:local'] = ['mod', 'raider']; const members = [{ userId: '@owner:local', name: 'Owner', presence: 'offline', powerLevel: 100 }, { userId: '@a:local', name: 'A', presence: 'offline', powerLevel: 0 }, { userId: '@b:local', name: 'B', presence: 'online', powerLevel: 0 }, { userId: '@c:local', name: 'C', presence: 'offline', powerLevel: 0 }]; const groups = groupDirectoryMembers(members, p); assert.deepEqual(groups.map(g => g.name), ['Owner', 'Moderator', 'Online', 'Offline']); assert.equal(groupDirectoryMembers(members, p, 'raider')[0].members[0].userId, '@a:local'); assert.equal(groupDirectoryMembers(members, p, '@b:')[0].name, 'Online'); assert.equal(groupDirectoryMembers(members, p, 'missing').length, 0); });

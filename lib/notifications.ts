@@ -14,13 +14,12 @@ export function disableBrowserNotifications(){localStorage.removeItem('tavern.no
 function eventReceived(event:MatrixEvent,room?:unknown,toStart?:boolean,removed?:boolean,data?:{liveEvent?:boolean}){
   const id=event.getId();if(!client||!ready||toStart||removed||data?.liveEvent===false||!id||seen.has(id)||event.getTs()<started||event.getSender()===client.getUserId()||event.isDecryptionFailure()||event.getType()!=='m.room.message')return;
   seen.add(id);if(seen.size>5000)seen.delete(seen.values().next().value!);
-  if(!enabled()||focus||typeof Notification==='undefined'||Notification.permission!=='granted'||document.visibilityState==='visible')return;
+  if(focus||document.visibilityState==='visible')return;
   const preferences=readNotificationPreferences(client),content=event.getContent(),me=client.getUserId()!,setting=resolveNotificationPreference(preferences,event.getRoomId(),notificationServerForRoom(client,event.getRoomId()!));
   const mention=content['m.mentions']?.user_ids?.includes(me)||content['m.mentions']?.room===true||String(content.body||'').includes(me);
   if(!notificationEligible(setting,{mention:!!mention,ignored:client.getIgnoredUsers().includes(event.getSender()!),dnd:readPresenceMode(client)==='dnd',own:event.getSender()===me,nativeNotify:client.getPushActionsForEvent(event,true)?.notify===true}))return;
   // Never expose room names, senders or decrypted content on a locked desktop.
-  const notice=new Notification('Tavern',{body:'You have a new message.',tag:`tavern:${event.getRoomId()}`,silent:true});
-  notice.onclick=()=>{window.focus();notice.close();};
+  if(browserNotificationsEnabled()){const notice=new Notification('Tavern',{body:'You have a new message.',tag:`tavern:${event.getRoomId()}`,silent:true});notice.onclick=()=>{window.focus();notice.close();};}
   if(setting.sound)void playNotificationSound().catch(()=>{});
 }
 const synced=(state:string)=>{if(state==='PREPARED'||state==='SYNCING')ready=true;};
