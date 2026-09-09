@@ -12,6 +12,16 @@ The development-branch test now subscribes to the actual idle state with a
 five-second failure deadline; all 34 affected local checks pass. This correction
 changes the test, while `V3` retains the `c591215` application checkpoint.
 
+[Run 34369895845](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34369895845)
+at development commit `60d69e1` passed the build and all 272 JavaScript tests,
+then passed 121 browser tests and failed three native-worker notification tests.
+The pinned Chromium 153 headless shell reports notification permission as denied
+in both page and worker despite the test's browser-context grant. This behavior
+was reproduced locally; the same pinned full Chromium reports granted and
+supports the native notification checks. The notification suite now selects full
+Chromium headless explicitly and asserts both permissions before testing delivery.
+Docker stages did not run in that failed workflow.
+
 [Run 34362064249](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34362064249)
 passed the complete workflow at development commit `12c5c54`: production build,
 242 JavaScript tests, 116 browser tests, 317 Python checks, offline PWA, Compose,

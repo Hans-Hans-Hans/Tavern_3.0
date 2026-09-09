@@ -2,6 +2,10 @@ import { test, expect, type Page, type BrowserContext, type Worker } from '@play
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 
+// The headless shell reports notification permission as denied even after a
+// browser-context grant. Full Chromium headless supports the native worker API.
+test.use({ channel: 'chromium' });
+
 async function fixture(page: Page, context: BrowserContext) {
   const key = new Uint8Array(65); key[0] = 4;
   const backend = { binding: null as any, generation: 'a'.repeat(32), show: true, checks: 0, checkGate: null as Promise<void> | null, deleteFails: false, foreground: [] as any[], providerActive: false, unsubscribed: 0 };
@@ -25,6 +29,8 @@ async function fixture(page: Page, context: BrowserContext) {
   await page.goto('/web-push-test?invite=preserve-me'); await page.waitForFunction(() => (window as any).fixtureReady);
   await expect(page.getByRole('button', { name: 'Enable background notifications', exact: true })).toBeEnabled();
   const worker = context.serviceWorkers()[0];
+  expect(await page.evaluate(() => Notification.permission)).toBe('granted');
+  expect(await worker.evaluate(() => Notification.permission)).toBe('granted');
   // Chromium headless accepts showNotification but need not retain OS notices.
   // Observe the native call after it resolves; do not replace browser delivery.
   await worker.evaluate(() => { const original = (self as any).registration.showNotification.bind((self as any).registration); (self as any).deliveredNotices = []; (self as any).registration.showNotification = async (title: string, options: any) => { await original(title, options); (self as any).deliveredNotices.push({ title, ...options }); }; });
