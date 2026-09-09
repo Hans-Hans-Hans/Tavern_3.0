@@ -20,7 +20,7 @@ export function mountFixture() {
     room.currentState.setStateEvents(events.map(value=>new MatrixEvent(value)));room.updateMyMembership(membership as any);room.name=name;room.loadMembersIfNeeded=async()=>{};
     rooms.set(id,room);raws.set(id,events);return room;
   }
-  const server=make('!server:local','Server','m.space'),source=make('!source:local','Source'),privateRoom=make('!private:local','Private One','io.tavern.private_thread',parameters.has('invited')?'invite':'join',source.roomId);
+  const server=make('!server:local','Server','m.space',parameters.has('server-invited')?'invite':'join'),source=make('!source:local','Source','',parameters.has('source-invited')?'invite':'join'),privateRoom=make('!private:local','Private One','io.tavern.private_thread',parameters.has('invited')?'invite':'join',source.roomId);
   const add=(room:any,type:string,content:any,key='')=>{const event={type,content,state_key:key,room_id:room.roomId,event_id:'$'+type+key,sender:me};raws.get(room.roomId)!.push(event);room.currentState.setStateEvents([new MatrixEvent(event)]);};
   add(server,'io.tavern.roles',defaultRolePolicy(me));add(server,'m.space.child',{via:['local']},source.roomId);add(source,'m.space.parent',{via:['local'],canonical:true},server.roomId);
   const accounts:any={'io.tavern.onboarding':{completed:true},'io.tavern.appearance':{mode:'light'},'io.tavern.text_media':{inlineImages:false}};
@@ -33,7 +33,7 @@ export function mountFixture() {
   w.publicMessage=message('$source',source.roomId,'Source message',[{id:'public-file',name:'public.txt',size:10}]);
   w.privateMessage=message('$private',privateRoom.roomId,'Private message',[{id:'private-file',name:'secret.txt',size:12}]);
   const messages:any={[source.roomId]:[w.publicMessage],[privateRoom.roomId]:[w.privateMessage]};w.client=client;w.rooms=rooms;w.source=source;
-  const bootstrap=()=>({me:{id:me,name:'Owner',role:'member'},workspace:{name:'Tavern'},members:[{id:me,name:'Owner',role:'member'}],memberships:[],preferences:{},preview:false,servers:[{id:server.roomId,name:'Server',roomIds:[source.roomId]}],conversations:[...rooms.values()].filter(room=>!room.isSpaceRoom()&&room.getMyMembership()==='join'&&!isPrivateDiscussion(room)).map(room=>({id:room.roomId,name:room.name,kind:'channel',encrypted:true,unread:0})),invitations:[...rooms.values()].filter(room=>room.getMyMembership()==='invite').map(room=>({id:room.roomId,name:room.name}))});
+  const bootstrap=()=>({me:{id:me,name:'Owner',role:'member'},workspace:{name:'Tavern'},members:[{id:me,name:'Owner',role:'member'}],memberships:[],preferences:{},preview:false,servers:server.getMyMembership()==='join'?[{id:server.roomId,name:'Server',roomIds:[source.roomId]}]:[],conversations:[...rooms.values()].filter(room=>!room.isSpaceRoom()&&room.getMyMembership()==='join'&&!isPrivateDiscussion(room)).map(room=>({id:room.roomId,name:room.name,kind:'channel',encrypted:true,unread:0})),invitations:[...rooms.values()].filter(room=>room.getMyMembership()==='invite').map(room=>({id:room.roomId,name:room.name}))});
   w.matrixBoundary=(name:string,args:any[])=>{
     if(name==='getMatrixClient')return client;if(name==='onMatrixUpdate'){w.listeners.add(args[0]);return()=>w.listeners.delete(args[0]);}
     if(name==='matrixStatus')return{connected:true,state:'Connected'};if(name==='matrixTyping')return[];if(name==='restoreMatrixSession')return Promise.resolve(true);

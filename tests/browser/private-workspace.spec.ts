@@ -85,3 +85,36 @@ test('saved private messages open the private panel and failed link lookups are 
   await expect(panel(page).getByText('Private message',{exact:true})).toBeVisible();
   expect(await page.evaluate(()=>(window as any).resolved.length)).toBe(reads);
 });
+
+test('closed optional panels load on demand and a slow import preserves the conversation draft',async({page})=>{
+  let requests=0,release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route(url=>url.pathname==='/app/message-search.tsx',async route=>{requests++;await gate;await route.continue();});
+  await fixture(page);
+  expect(requests).toBe(0);
+  const composer=page.getByRole('textbox',{name:'Message Source',exact:true});
+  await composer.fill('Keep this unsent draft');
+  await page.getByRole('button',{name:'Search conversations',exact:true}).click();
+  await expect(page.getByRole('status').filter({hasText:'Loading message search'})).toBeVisible();
+  expect(requests).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(composer).toHaveValue('Keep this unsent draft');
+  const response=page.waitForResponse(url=>new URL(url.url()).pathname==='/app/message-search.tsx');
+  release();await response;
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button',{name:'Search conversations',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'Search messages',exact:true})).toBeVisible();
+  expect(requests).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(composer).toHaveValue('Keep this unsent draft');
+});
+
+for(const target of ['source','server'])test('a linked '+target+' invitation closes when sync confirms it already joined',async({page})=>{
+  await fixture(page,target+'-invited','#room='+encodeURIComponent('!'+target+':local'));
+  await expect(page.getByRole('dialog').getByRole('button',{name:'Join',exact:true})).toBeVisible();
+  await page.evaluate(target=>(window as any).client.joinRoom('!'+target+':local'),target);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Tavern home',exact:true})).toBeVisible();
+  await expect(page.getByRole('textbox',{name:'Message Source',exact:true})).toBeEnabled();
+});

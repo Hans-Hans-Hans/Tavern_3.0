@@ -22,6 +22,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Tavern video playback/seek/volume/speed controls, local video posters and metadata, and downloads that reuse an already decrypted preview.
 - Designated announcement-channel navigation and optimized invitation artwork shared through scoped invitation metadata.
 - Private discussions in separate encrypted rooms, with explicit invitations, source permission checks, shared slow mode, archive controls and private-room navigation.
+- Seventeen optional panels load on demand with local loading/retry feedback, preserving the surrounding conversation and drafts.
 - Installable app shell, offline/reconnect behavior, guarded app updates, and automated browser/API/deployment coverage.
 
 ### Changed
