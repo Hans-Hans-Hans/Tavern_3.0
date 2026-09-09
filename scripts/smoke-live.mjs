@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { privateDiscussionSmoke } from './smoke-private-discussions.mjs';
+import { historyRecoverySmoke } from './smoke-history-recovery.mjs';
 import { afkSmoke } from './smoke-afk.mjs';
 import { eligibilitySmoke } from './smoke-eligibility.mjs';
 import { profilePolicySmoke } from './smoke-profile-policy.mjs';
@@ -245,6 +246,7 @@ try {
   await sharedAvatar.scrollIntoViewIfNeeded();
   await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   console.log('PASS: a cropped profile avatar uploads, persists in the account and room, and loads through authenticated thumbnails for another user after reload.');
+  await historyRecoverySmoke({ admin, adminSession, origin, api, ready, createPage: page, login, encryptedResponse, encryptedEvent });
   await privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent });
   const afkFixture = await afkSmoke({ admin, alice, adminSession, aliceSession, api });
   await eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, encryptedProbe: { roomId, eventId }, origin, api, ready, encryptedResponse, encryptedEvent });

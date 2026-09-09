@@ -1,10 +1,14 @@
 # V3 and existing Tavern deployments
 
-`V3` now contains a 0.4 development checkpoint for testing. Further work continues
-on `codex/tavern-completion`. The repository name `Tavern_3.0` and branch `V3`
+`V3` contains the 0.4 development checkpoints for testing. Further pushes continue
+on `V3`. The repository name `Tavern_3.0` and branch `V3`
 are separate from the application version; neither is a published 0.4 release.
 
 ## Existing Matrix-based Tavern
+
+For unreadable messages after signing in again or on a new device, follow
+[History recovery](HISTORY_RECOVERY.md). Keep existing browser site data so
+retained encryption stores can be checked by the updated client.
 
 Use the existing-install procedure in [Installation and operations](INSTALLATION.md).
 Before changing the deployment, back up the database and private data together.

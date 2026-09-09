@@ -45,6 +45,7 @@ import { Toaster, toast } from 'sonner';
 import { terminology, type Naming } from '@/lib/terminology';
 import { ServerDialog } from './server-dialog';
 import { SecurityCenter, VerificationDialog } from './security-center';
+import { HistoryRecovery } from './history-recovery';
 import { CallButtons, CallPanel } from './call-panel';
 import { ConferenceButton, ConferencePanel } from './conference-panel';
 import { setNotificationFocus } from '@/lib/notifications';
@@ -481,6 +482,7 @@ export function Workspace() {
   </SidebarContent><SidebarFooter className='sidebar-footer'><div className='connection'><span className={connection === 'Connected' ? 'live' : ''}/>{connection}<span className='version'>v0.4.0</span></div><button className='profile-button' onClick={() => openSettings('profile')}><Avatar name={me?.name || 'You'} size='small'/><span><strong>{me?.name || label("Your Tavern")}</strong><small>{data?.preview ? 'Not connected' : 'Matrix account'}</small></span><Settings size={17}/></button></SidebarFooter>
  </Sidebar>
  <main className='main-workspace'>
+  {!data?.preview && <HistoryRecovery/>}
   <header className='global-header'><div className='breadcrumb'><SidebarTrigger className='mobile-sidebar-trigger'/><span>Tavern</span><ChevronRight size={12}/><strong>{view === 'channel' ? label("Guilds") : heading}</strong></div><button className='global-search' onClick={() => openCommandPalette()}><Search size={17}/><span>{label("Search your Tavern")}</span><kbd>Ctrl K</kbd></button><div className='header-end'>{instanceAdmin&&<a className='secondary-button' href='/admin'>Admin</a>}<IconButton label={prefs.focus?'Leave focus mode':'Enter focus mode'} onClick={()=>updatePrefs({focus:!prefs.focus})}><Moon size={18} fill={prefs.focus?'currentColor':'none'}/></IconButton><span className='private-badge'><ShieldCheck size={14}/>{active?.encrypted ? 'Encrypted' : 'Matrix ready'}</span><IconButton label='Tavern members' onClick={() => setModal('members')}><Users size={18}/></IconButton></div></header>
   {data?.preview && <div className='matrix-banner'><span className='matrix-wordmark'>[matrix]</span><span>Your space. Your server. Connect Matrix to start a conversation.</span><button onClick={() => setModal('connect')}>Connect homeserver <ArrowRight size={13}/></button></div>}
   {!!data?.invitations?.length && <div className='matrix-banner'><Users size={16}/><span>{data.invitations.length} room invitation{data.invitations.length === 1 ? '' : 's'}</span><button onClick={() => setModal('roomInvites')}>View invitations</button></div>}
