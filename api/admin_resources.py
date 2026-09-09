@@ -10,17 +10,19 @@ from aiohttp import web
 
 try:
     from .server import APIError, body_json, text_value
+    from .room_authority import room_id as native_room_id
 except ImportError:
     from server import APIError, body_json, text_value
+    from room_authority import room_id as native_room_id
 
 DEFAULT_LIMITS = {"maxUploadBytes": 10 * 1024 * 1024, "userQuotaBytes": 1024 ** 3, "globalQuotaBytes": 10 * 1024 ** 3}
 
 
 def room_identity(request):
     value = request.match_info["room_id"]
-    if not value.startswith("!") or ":" not in value or len(value) > 255:
+    if len(value) > 255:
         raise APIError(400, "Choose a valid room ID.")
-    return value
+    return native_room_id(value)
 
 
 async def rooms(request):

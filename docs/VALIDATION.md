@@ -38,6 +38,15 @@ fixtures do not establish live encrypted multi-device role-mention delivery.
 
 ## Observed continuous integration
 
+[Run 34384936096](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34384936096)
+at development commit `c370b3b` passed the repository check, build and all 381
+JavaScript tests. Browser dependency installation then failed because Google's
+Chrome apt package index did not match its advertised checksum. Browser,
+Python, Docker and live-stack stages were not reached. The GitHub connector
+could not rerun the job because its integration lacks Actions write permission;
+a subsequent development push is needed for another run. This does not
+establish acceptance or a product regression for the unexecuted stages.
+
 [Run 34381965768](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34381965768)
 at development commit `ea3d52f` passed build, all 354 JavaScript tests, all 174
 browser tests, 538 Python checks, PWA/Compose/Docker and the gateway fixture.

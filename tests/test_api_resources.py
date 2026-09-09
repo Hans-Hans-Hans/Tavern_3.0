@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import unittest
+from urllib.parse import quote
 
 from api.server import COOKIE
 from tests import test_api as fixture
@@ -35,6 +37,49 @@ class ResourceAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.rooms["!room:test"]["blocked"])
         self.assertEqual(len(self.rooms["!room:test"]["members"]), 2)
         self.assertFalse(any(method == "DELETE" for method, *_ in self.upstream_calls))
+
+    async def test_domainless_native_room_admin_preserves_members_while_blocking_and_unblocking(self):
+        identity = '!' + base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip('=')
+        self.rooms[identity] = self.rooms.pop('!room:test')
+        members = dict(self.rooms[identity]['members'])
+        owner, _, _ = await self.login('owner')
+        path = '/api/admin/rooms/' + quote(identity, safe='')
+        detail = await self.request('GET', path, cookie=owner)
+        self.assertEqual(detail.status, 200, await detail.text())
+        value = await detail.json()
+        self.assertEqual(value['room']['room_id'], identity)
+        self.assertEqual(value['members']['total'], len(members))
+        for blocked in [True, False]:
+            result = await self.request('PUT', path + '/block', {'block': blocked, 'confirmation': identity}, owner)
+            self.assertEqual(result.status, 200, await result.text())
+            self.assertEqual(self.rooms[identity]['blocked'], blocked)
+            detail = await self.request('GET', path, cookie=owner)
+            self.assertEqual((await detail.json())['blocked'], blocked)
+        self.assertEqual(self.rooms[identity]['members'], members)
+        self.assertFalse(any(method == 'DELETE' for method, *_ in self.upstream_calls))
+
+    async def test_domainless_admin_targets_still_require_native_admin_and_exact_confirmation(self):
+        identity = '!' + 'A' * 43
+        self.rooms[identity] = self.rooms.pop('!room:test')
+        owner, _, _ = await self.login('owner')
+        ordinary, _, _ = await self.login()
+        path = '/api/admin/rooms/' + quote(identity, safe='')
+        for method, suffix, payload in [('GET', '', None), ('PUT', '/block', {'block': True, 'confirmation': identity})]:
+            denied = await self.request(method, path + suffix, payload, ordinary)
+            self.assertEqual(denied.status, 403)
+        denied = await self.request('PUT', path + '/block', {'block': True, 'confirmation': '!wrong:test'}, owner)
+        self.assertEqual(denied.status, 400)
+        self.assertFalse(any(path.startswith('/_synapse/admin/v1/rooms/') for _, path, *_ in self.upstream_calls))
+        self.assertFalse(self.rooms[identity].get('blocked', False))
+
+    async def test_malformed_admin_room_ids_never_reach_native_room_endpoints(self):
+        owner, _, _ = await self.login('owner')
+        for identity in ['!short', '!' + 'A' * 42 + 'B', '!' + 'A' * 43 + '=', '!a\x00:test', '!room:', '!' + 'A' * 250 + ':test']:
+            path = '/api/admin/rooms/' + quote(identity, safe='')
+            for method, suffix, payload in [('GET', '', None), ('PUT', '/block', {'block': True, 'confirmation': identity})]:
+                denied = await self.request(method, path + suffix, payload, owner)
+                self.assertEqual(denied.status, 400, (identity, await denied.text()))
+        self.assertFalse(any(path.startswith('/_synapse/admin/v1/rooms/') for _, path, *_ in self.upstream_calls))
 
     async def test_existing_usage_is_paginated_and_encrypted_upload_counts_actual_bytes(self):
         self.media_usage = {"@alice:test": 1100, "@owner:test": 200}

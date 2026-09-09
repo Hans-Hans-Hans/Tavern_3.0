@@ -49,6 +49,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 ### Fixed
 
 - Search indexing and history exports continue through empty filtered pages, retain the requested room during older-event decryption, and reject stale identity/membership results before output or storage.
+- Staff room details and join-block controls accept native room-version-12 hash IDs while retaining administrator authority, bounded ID validation and exact confirmation.
 - Native eligibility and system-message module names remain distinct from the flat API modules, so deployed permission checks load correctly.
 
 - Nginx startup configuration and gateway routing regressions.
