@@ -4,6 +4,14 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34374301063](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34374301063)
+at development commit `a73a362` passed the production build, 291 JavaScript
+tests, 141 browser tests and offline PWA. One of 491 Python checks errored because
+an API signature test imported Synapse's `canonicaljson`, which the separate API
+test environment does not install. The fixture now signs its exact standard-JSON
+bytes using the native signature helper; the runtime transport is unchanged.
+Docker and live acceptance stages were not reached in that run.
+
 [Run 34372590506](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34372590506)
 at development commit `c4c9688` passed the production build, 285 JavaScript
 checks, 136 browser tests, 446 Python tests, offline PWA, Compose, remote Docker

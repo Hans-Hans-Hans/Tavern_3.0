@@ -279,9 +279,10 @@ class SystemMessagesAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wrong.status,403)
 
     async def test_exact_signed_internal_post_needs_no_cookie_or_browser_origin(self):
-        from canonicaljson import encode_canonical_json
         from synapse_modules.server_system_messages import signed_headers
-        raw=encode_canonical_json(self.source())
+        # The API authenticates the exact transmitted bytes; canonicaljson is
+        # a Synapse runtime dependency, not an API-test dependency.
+        raw=json.dumps(self.source(), sort_keys=True, separators=(',', ':')).encode()
         headers={key.decode():values[0].decode() for key,values in signed_headers(bytes.fromhex('12'*32),'system-events',raw).items()}
         response=await self.client.post('/api/internal/system-events',data=raw,headers=headers)
         self.assertEqual(response.status,202,await response.text())
