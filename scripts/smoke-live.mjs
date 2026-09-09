@@ -24,7 +24,9 @@ async function api(page, path, body, matrix = false) {
   }, { path, body, matrix });
 }
 async function ready(page) {
-  await page.getByRole('button', { name: 'Tavern home', exact: true }).waitFor();
+  // The first-run dialog aria-hides the page behind it, so use its visual shell
+  // for the initial wait and dismiss onboarding before querying page roles.
+  await page.locator('.workspace-rail').waitFor();
   await expect(page.locator('.connection')).toContainText('Connected', { timeout: 60000 });
   const finish = page.getByRole('button', { name: 'Finish later', exact: true });
   if (await finish.isVisible()) await finish.click();
