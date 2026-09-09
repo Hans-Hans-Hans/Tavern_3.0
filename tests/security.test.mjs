@@ -63,3 +63,10 @@ test('a trusted upload backup with a mismatched cached private key is not report
  const f=fixture({identity:true,storage:true,backup:true});f.crypto.isKeyBackupTrusted=async()=>({trusted:true,matchesDecryptionKey:false});
  assert.equal((await f.api.securityStatus()).canRestoreBackup,false);
 });
+
+test('a generated recovery key cannot configure a replacement signed-in account',async()=>{
+ const f=fixture(),key=await f.api.generateRecoveryKey();
+ f.api.initializeSecurity({...f.client,getUserId:()=>'@bob:test',getDeviceId:()=>'B'});
+ await assert.rejects(f.api.setupRecovery(key,'old account password'),/session changed/);assert.equal(f.calls.length,0);
+ key.privateKey.fill(0);
+});

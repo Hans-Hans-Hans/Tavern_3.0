@@ -25,6 +25,7 @@ function owner(c: MatrixClient) {
   const current = () => c === client && epoch === sessionEpoch && c.getUserId() === user && c.getDeviceId() === device;
   return { current, check: () => { if (!current()) throw new Error('Your signed-in session changed. Retry from the current session.'); } };
 }
+const generatedOwners = new WeakMap<GeneratedSecretStorageKey, ReturnType<typeof owner>>();
 export async function restoreLocalHistory() {
   const c = required(), own = owner(c);
   return exclusive(async () => {
@@ -149,9 +150,13 @@ export async function generateRecoveryKey() {
   if (identity || storage || backup) throw new Error('This account already has encryption security configured. Recover it or verify with another device; Tavern will not replace your identity or backup.');
   const generated = await crypto.createRecoveryKeyFromPassphrase();
   if (!own.current()) { generated.privateKey.fill(0); own.check(); }
+  generatedOwners.set(generated, own);
   return generated;
 }
 export async function setupRecovery(generated: GeneratedSecretStorageKey, password: string) {
+  const generatedOwner = generatedOwners.get(generated);
+  if (!generatedOwner) throw new Error('Generate a recovery key for the current signed-in session before enabling recovery.');
+  generatedOwner.check();
   const owned = { ...generated, privateKey: new Uint8Array(generated.privateKey) };
   try { return await exclusive(async () => {
     const c = required(), crypto = c.getCrypto()!, own = owner(c);
