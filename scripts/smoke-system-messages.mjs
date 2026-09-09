@@ -83,6 +83,10 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     await page.getByRole('tab',{name:'Privacy',exact:true}).click();
   }
   async function ownFingerprint(page,expected) {
+    // Earlier private-room acceptance deliberately leaves its modal open.
+    // Return this same owning browser to its normal workspace before opening
+    // Settings; never bypass the modal's accessibility/interaction boundary.
+    await page.goto(ORIGIN); await ready(page); await session(page,expected);
     await privacy(page);
     const panel = page.locator('section.session-manager');
     const details = panel.locator('details');

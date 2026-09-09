@@ -4,6 +4,17 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34376809528](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34376809528)
+at development commit `58a129c` passed build, 291 JavaScript tests, 141 browser
+tests, 497 Python checks, PWA/Compose/Docker/gateway validation and all preceding
+native messaging, private-discussion, AFK, eligibility and profile probes.
+The isolated bot helper became healthy, but its first device-verification step
+could not open Bob's settings because the earlier private-discussion modal was
+still open. The fixture now navigates each same-session browser back to its
+workspace and rechecks identity before reading its own fingerprint. No bot
+credentials were provisioned or notices sent in that failed run. Independent
+failed-update rollback passed; live bot delivery and final restart need the rerun.
+
 [Run 34375353644](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34375353644)
 passed the complete workflow at development commit `42edb43`: production build,
 291 JavaScript tests, 141 browser tests, 491 Python tests, offline PWA, Compose,
