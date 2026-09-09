@@ -15,7 +15,7 @@ async function fixture(page: Page, options: { unconfigured?: boolean; restricted
   await page.goto('/system-messages-test?' + (options.restricted ? 'restricted' : '')); await page.waitForFunction(() => !!(window as any).systemFixture);
   return backend;
 }
-async function enableDraft(page: Page) { await page.getByRole('checkbox', { name: 'Post system notices' }).check(); await page.getByLabel('Encrypted webhook destination').selectOption('notices'); await page.getByRole('checkbox', { name: 'Member leaves' }).check(); await page.getByLabel('Confirm server ID').fill('!server:local'); }
+async function enableDraft(page: Page) { await page.getByRole('checkbox', { name: 'Post system notices' }).check(); await page.getByLabel('Encrypted webhook destination', { exact: true }).selectOption('notices'); await page.getByRole('checkbox', { name: 'Member leaves' }).check(); await page.getByLabel('Confirm server ID').fill('!server:local'); }
 
 test('system notices show off until explicitly confirmed and report honest delivery outcomes', async ({ page }) => {
   const backend = await fixture(page); await expect(page.getByText('System notices: Off', { exact: true })).toBeVisible();

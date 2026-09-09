@@ -38,7 +38,7 @@ export function ServerSystemMessagesSettings({ serverId }: { serverId: string })
         finally { update({ busy: false }); }
       }}><fieldset disabled={busy || blocked}>
         <label className="checkbox-row"><input type="checkbox" checked={draft.enabled} disabled={!configured && !draft.enabled} onChange={event => setDraft({ enabled: event.target.checked })}/>Post system notices</label>
-        <label>Encrypted webhook destination<select value={selected?.hookId || (draft.hookId ? '__unavailable' : '')} disabled={!configured || !draft.enabled} onChange={event => { const destination = data.destinations.find(option => option.hookId === event.target.value); setDraft({ hookId: destination?.hookId || '', channelId: destination?.roomId || '' }); }}>
+        <label>Encrypted webhook destination<select aria-label="Encrypted webhook destination" value={selected?.hookId || (draft.hookId ? '__unavailable' : '')} disabled={!configured || !draft.enabled} onChange={event => { const destination = data.destinations.find(option => option.hookId === event.target.value); setDraft({ hookId: destination?.hookId || '', channelId: destination?.roomId || '' }); }}>
           <option value="">Choose a destination</option>{draft.hookId && !selected && <option value="__unavailable">Unavailable destination: {draft.hookId} · {draft.channelId}</option>}
           {data.destinations.map(destination => <option key={destination.hookId} value={destination.hookId}>{destination.name} · {getMatrixClient()?.getRoom(destination.roomId)?.name || destination.roomId}</option>)}
         </select></label>

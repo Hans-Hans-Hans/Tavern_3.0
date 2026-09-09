@@ -4,6 +4,16 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+Checkpoint `fb17f5d`, workflow
+[34397617476](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34397617476),
+passed the real Linux policy-directory repair checks, including the API process
+identity, and both native history-recovery proofs again. Its mounted system-notice
+settings GET now returned 200. The workflow stopped at an exact accessible-name
+lookup for the destination selector, before saving the route. That selector and
+the later export conversation selector now have explicit accessible names; all
+five system-notice browser checks pass with the exact destination lookup. Native
+encrypted system-notice delivery remains pending the next workflow.
+
 The subsequent historical participant-discovery changes pass the production
 build, all 422 JavaScript checks, and 23 focused thread/private-workspace browser
 checks. Actual SDK timeline fixtures cover connected older segments, cursor
