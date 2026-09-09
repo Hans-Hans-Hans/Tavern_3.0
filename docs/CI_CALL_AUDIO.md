@@ -18,6 +18,13 @@ validates the original generated configuration and keeps the credentials.
 The overlay removes published TURN/SFU ports and makes the media network
 internal. The SFU HTTP endpoint remains reachable by the API inside Docker.
 Startup checks its exact audio-capability response before browser probes begin.
+The TURN service retains `cap_drop: ALL`, `no-new-privileges` and a read-only
+filesystem, with only `NET_BIND_SERVICE` added. The pinned
+[coturn image](https://github.com/coturn/coturn/blob/docker/4.17.2-r0/docker/coturn/debian/Dockerfile)
+sets that file capability on `turnserver`; excluding it from the container's
+capability bounding set caused Linux to reject execution with `Operation not
+permitted`, even though the configured listening port is above 1024. The same
+service settings apply to production and this isolated test stack.
 The independent rollback project explicitly disables both call flags and uses
 the production init entrypoint. This setup adds no production validation exception.
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "purpose": "Reviewed audio-permission prototype build; not enabled in Compose",
+  "purpose": "Pinned SFU build for Tavern's optional calls profile; server audio moderation is separately opt-in",
   "sources": {
     "protocol": {
       "repository": "https://github.com/livekit/protocol",
@@ -72,8 +72,8 @@
     "patch_applier": "3 passed; symlink test skipped on Windows, included in Linux Docker target",
     "linux_amd64_cross_build": "passed from clean source processed by the build Go applier",
     "linux_amd64_binary_sha256": "fb4c66222963a8832b5a89f63e8fdd7c5366014e46f7f95198a93fee66914338",
-    "docker_execution": "pending; no local Docker daemon",
-    "deployment": "not enabled or published",
+    "docker_execution": "Linux amd64 passed at V3 8c87c5215cb210db6347ef9d1533d5129573883c: source/hash/auth/RTC/RTP checks and nonroot read-only no-network runtime; https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769133",
+    "deployment": "Compose calls profile builds the pinned image; moderator controls default off; no release image published",
     "rtc_full": "73 top-level tests passed; TestUpdateSubscriptionPermission/update_versions fails on its immediate timestamp-order assertion, reproduced separately in pristine upstream with original protocol dependency"
   },
   "capability": {

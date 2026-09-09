@@ -119,9 +119,9 @@ The final source checksums independently verify the resulting patch output.
 The Docker recipe passed Linux amd64 CI, including source checks, protocol auth,
 eight focused RTC tests, three real RTP tests, and the final binary's `--version`
 under UID10001, a read-only filesystem, no capabilities and no network. See
-[the successful run](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34401461309).
-The subsequent test-only loopback configuration correction passed all three RTP
-tests locally; CI for that correction is recorded separately. Docker is not
+[the successful run](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769133).
+That run includes the explicit loopback test configuration and nonroot runtime
+used by the Compose calls profile. Docker is not
 available in the Windows workspace. The pinned runtime base does not run
 `apk upgrade`; digest upgrades require source review and these checks again.
 Arm64 and multi-node migration acceptance remain pending.

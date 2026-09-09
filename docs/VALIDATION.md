@@ -4,6 +4,16 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+Checkpoint `8c87c52` passed the complete
+[SFU Linux workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769133),
+including the explicit loopback test configuration and nonroot runtime image.
+The separate [assembled application/native stack workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769140)
+passed its application and browser checks, then stopped before the native probes:
+the pinned coturn executable requires a file capability excluded by the service's
+empty capability bounding set. Compose now grants only `NET_BIND_SERVICE` to
+coturn while retaining `cap_drop: ALL`, `no-new-privileges` and its read-only
+filesystem. The corrected calls-enabled stack still requires a passing Linux run.
+
 The combined audio/member-state working tree passed the production build,
 443 JavaScript tests, all 240 browser tests and 634 Python checks (12 platform
 skips). Native member-state migration covers timeout, temporary ban and server

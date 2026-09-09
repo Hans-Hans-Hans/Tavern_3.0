@@ -268,6 +268,8 @@ services:
     - calls
     image: ${COTURN_IMAGE:-coturn/coturn:4.17.2-r0}
     user: 0:0
+    cap_add:
+    - NET_BIND_SERVICE
     command:
     - -c
     - /config/turnserver.conf
