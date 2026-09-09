@@ -152,7 +152,7 @@ async def actions(request):
                 db.execute('UPDATE accounts SET upload_quota_bytes=? WHERE user_id=?', (quota, target))
             elif operation == 'enable':
                 if user.get('deactivated'):
-                    error = password_error(data.get('newPassword'))
+                    error = service.password_error(data.get('newPassword'))
                     if error: raise APIError(400, error)
                     await service.matrix('PUT', '/_synapse/admin/v2/users/' + quote(target, safe=''), {'deactivated': False, 'locked': False, 'password': data['newPassword'], 'logout_devices': True}, token)
                     db.execute('UPDATE accounts SET password_change_required=1 WHERE user_id=?', (target,))
@@ -199,6 +199,8 @@ async def update(request):
             # profile edit into an undocumented account-provisioning path.
             await service.matrix('GET', '/_synapse/admin/v2/users/' + quote(target, safe=''), token=service.store.open(session['token']))
             result = await service.matrix('PUT', '/_synapse/admin/v2/users/' + quote(target, safe=''), allowed, service.store.open(session['token']))
+            if 'admin' in allowed:
+                service.store.db.execute('UPDATE accounts SET known_admin=? WHERE user_id=?', (int(allowed['admin']), target))
             if 'locked' in allowed:
                 service.store.db.execute('INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)', (target, time.time()))
                 service.store.db.execute('UPDATE accounts SET access_blocked=? WHERE user_id=?', ('locked' if allowed['locked'] else '', target))

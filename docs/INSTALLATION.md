@@ -23,7 +23,7 @@ bot are optional profiles in the same file.
 ## Fresh installation
 
 ```sh
-git clone --branch V3 https://github.com/Hans-Hans-Hans/Tavern_3.0.git tavern
+git clone --branch codex/tavern-completion https://github.com/Hans-Hans-Hans/Tavern_3.0.git tavern
 cd tavern
 cp .env.example .env
 nano .env
@@ -261,7 +261,7 @@ and [pinned authentication service](https://github.com/element-hq/lk-jwt-service
 
 ## Dockhand and Portainer
 
-Use repository `https://github.com/Hans-Hans-Hans/Tavern_3.0.git`, branch `V3`,
+Use repository `https://github.com/Hans-Hans-Hans/Tavern_3.0.git`, branch `codex/tavern-completion`,
 project name `tavern`, and Compose path `compose.yaml` for a Git checkout build.
 Enable image builds during deployment and enter `.env` values in the manager's
 private stack environment. Relative paths are resolved from the checkout.

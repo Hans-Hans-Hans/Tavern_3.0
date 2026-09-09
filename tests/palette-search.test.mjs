@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadTs } from './load-ts.mjs';
+const { paletteMatchScore, rankPaletteItems, collectPalettePeople } = loadTs('../lib/palette-search.ts', {});
+test('palette fuzzy search prefers contiguous matches but accepts ordered abbreviations', () => { assert.ok(paletteMatchScore('Appearance and theme', 'aprnc') > 0); assert.equal(paletteMatchScore('Appearance and theme', 'zzyy'), 0); assert.deepEqual(rankPaletteItems(['Security and devices', 'Theme devices', 'Dev tools'], 'dev', value => value), ['Dev tools', 'Theme devices', 'Security and devices']); });
+test('cached people deduplicate shared membership, preserve nickname lookup, and bound scan work', () => { const rooms = [{ getJoinedMembers: () => [{ userId: '@me:l', name: 'Me' }, { userId: '@a:l', name: 'Alice' }, { userId: '@bad:l', name: 'Left', membership: 'leave' }] }, { getJoinedMembers: () => [{ userId: '@a:l', name: 'Captain Alice' }, { userId: '@b:l', name: 'Bob' }] }]; const people = collectPalettePeople(rooms, '@me:l'); assert.equal(people.length, 2); assert.equal(rankPaletteItems(people, 'captain', value => value.keywords)[0].userId, '@a:l'); assert.equal(collectPalettePeople(rooms, '@me:l', 2).length, 1); });

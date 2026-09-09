@@ -1,4 +1,6 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { brandingAsset } from '@/lib/branding';
+import { SecurityEnrollment } from './security-enrollment';
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Beer, Loader2, ShieldCheck } from 'lucide-react';
 import { requestApi, setManagedAccount, setAccountDevice, type AccountSession } from '@/lib/api';
 import './product.css';
@@ -9,10 +11,11 @@ import { ForcedPasswordChange } from './forced-password-change';
 
 const Tavern = lazy(() => import('./tavern'));
 const AdminConsole = lazy(() => import('./admin-console'));
-type Config = { bootstrapRequired: boolean; smtpConfigured: boolean; registrationMode?:'admin'|'invite'|'open'; instance?: { name?: string; description?: string; maintenance?: boolean } };
+type Config = { bootstrapRequired: boolean; smtpConfigured: boolean; registrationMode?:'admin'|'invite'|'open'|'disabled'; instance?: { name?: string; description?: string; maintenance?: boolean; icon?:string;logo?:string;background?:string;termsUrl?:string;privacyUrl?:string;contact?:string } };
 export function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="product-field"><span>{label}</span>{children}</label>; }
 export function AuthGateway() {
   const [config, setConfig] = useState<Config | null>(null), [session, setSession] = useState<AccountSession | null>(null);
+  const rechecking=useRef(false);
   const [mode, setMode] = useState('loading'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [remember, setRemember] = useState(false);
   const [challenge, setChallenge] = useState(''), [code, setCode] = useState(''), [method, setMethod] = useState('totp'), [methods, setMethods] = useState<string[]>([]);
@@ -27,6 +30,7 @@ export function AuthGateway() {
   async function openSession(value: AccountSession) {
     setAccountDevice(value.deviceId);
     if (value.passwordChangeRequired) { setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
+    if(value.mfaEnrollmentRequired){setSession(value);setPassword('');setNewPassword('');setConfirmation('');setCode('');setMode('security-enrollment');return;}
     const health=await requestApi('/system/status').catch(()=>null);
     if(health?.maintenance?.enabled&&!value.admin){setSession(value);setMode('maintenance');return;}
     const { attachManagedMatrixSession } = await import('@/lib/matrix');
@@ -48,6 +52,8 @@ export function AuthGateway() {
     }
   }
   useEffect(() => { void initialize(); const logout = () => { setSession(null); setMode('login'); setNotice('You have been signed out.'); }; window.addEventListener('tavern:signout', logout); return () => window.removeEventListener('tavern:signout', logout); }, []);
+  useEffect(()=>{const enforce=()=>{if(rechecking.current)return;rechecking.current=true;setMode('loading');void import('@/lib/matrix').then(matrix=>{matrix.clearLocalMatrixSession();return requestApi<AccountSession>('/auth/session');}).then(openSession).catch(e=>{setError(e.message);setMode(e.status===401?'login':'failure');}).finally(()=>{rechecking.current=false;});};window.addEventListener('tavern:account-requirement',enforce);return()=>window.removeEventListener('tavern:account-requirement',enforce);},[]);
+  useEffect(()=>{const icon=brandingAsset(config?.instance?.icon);if(!icon)return;const link=document.querySelector<HTMLLinkElement>('link[rel="icon"]')||document.createElement('link'),previous=link.getAttribute('href'),previousType=link.getAttribute('type');link.rel='icon';link.type='image/png';link.href=icon;if(!link.isConnected)document.head.append(link);return()=>{if(previous)link.setAttribute('href',previous);else link.remove();if(previousType)link.setAttribute('type',previousType);else link.removeAttribute('type');};},[config?.instance?.icon]);
   async function submit(e: FormEvent) {
     e.preventDefault(); if (pwaUpdateLocked()) { setError('An app update is being applied. Please wait.'); return; } setPwaReloadAllowed(false); setBusy(true); setError(''); setNotice('');
     try {
@@ -77,10 +83,11 @@ export function AuthGateway() {
   }
   if(mode==='maintenance')return <main className='auth-shell'><section className='auth-card'><h1>Tavern is under maintenance</h1><p>{status?.maintenance.message||'Your administrator is performing maintenance. Please try again shortly.'}</p><button className='primary-button' disabled={busy} onClick={()=>{setBusy(true);void openSession(session!).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>Check again</button><a className='secondary-button' href='/admin'>Administration</a>{error&&<p role='alert'>{error}</p>}</section></main>;
   if (mode === 'legacy' || mode === 'ready') return <><InstanceNotices status={status}/><Suspense fallback={<div className="auth-shell" role="status">Opening Tavern…</div>}>{location.pathname.startsWith('/admin') && session ? <AdminConsole session={session}/> : <Tavern />}</Suspense></>;
+  if (mode === 'security-enrollment') return <SecurityEnrollment onComplete={async()=>openSession(await requestApi<AccountSession>('/auth/session'))}/>;
   if (mode === 'password-change') return <ForcedPasswordChange onComplete={async () => openSession(await requestApi<AccountSession>('/auth/session'))}/>;
   const setup = mode === 'bootstrap',register=mode==='register', recovery = mode.startsWith('recovery'), verification = mode.endsWith('-code') || mode === 'mfa';
-  return <main className="auth-shell"><section className="auth-card">
-    <div className="auth-wordmark"><Beer aria-hidden="true" size={34}/><strong>{config?.instance?.name || 'Tavern'}</strong></div>
+  return <main className="auth-shell" style={brandingAsset(config?.instance?.background)?{backgroundImage:`linear-gradient(#0008,#0008),url(${brandingAsset(config?.instance?.background)})`,backgroundSize:'cover',backgroundPosition:'center'}:undefined}><section className="auth-card">
+    <div className="auth-wordmark">{brandingAsset(config?.instance?.logo)||brandingAsset(config?.instance?.icon)?<img src={brandingAsset(config?.instance?.logo)||brandingAsset(config?.instance?.icon)} alt='' width={48} height={48} style={{objectFit:'contain'}}/>:<Beer aria-hidden='true' size={34}/>}<strong>{config?.instance?.name || 'Tavern'}</strong></div>
     <h1>{mode === 'loading' ? 'Opening your Tavern' : setup ? 'Administrator setup' : register ? 'Create your account' : recovery ? 'Recover your account' : verification ? 'Verify your identity' : mode === 'failure' ? 'Unable to connect' : 'Welcome back'}</h1>
     <p>{setup ? 'Create the permanent administrator identity. Setup credentials stop working after verification.' : config?.instance?.description || 'Your people. Your conversations. Your server.'}</p>
     {mode === 'loading' ? <Loader2 className="spin" aria-label="Loading"/> : mode === 'failure' ? <button className="primary-button" onClick={initialize}>Try again</button> : <form className="dialog-form" onSubmit={submit}>
@@ -97,6 +104,6 @@ export function AuthGateway() {
       {!setup && mode !== 'login' && <button type="button" className="text-button" disabled={busy} onClick={() => { setMode(config?.bootstrapRequired ? 'bootstrap' : 'login'); setCode(''); setError(''); }}>Back</button>}
     </form>}
     {error && <p className="connect-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <footer><ShieldCheck size={16}/> Self-hosted conversations with end-to-end encryption</footer>
+    <footer><ShieldCheck size={16}/> Self-hosted conversations with end-to-end encryption</footer><div className='auth-legal-links'>{config?.instance?.termsUrl&&/^https?:\/\//.test(config.instance.termsUrl)&&<a href={config.instance.termsUrl} target='_blank' rel='noreferrer'>Terms</a>}{config?.instance?.privacyUrl&&/^https?:\/\//.test(config.instance.privacyUrl)&&<a href={config.instance.privacyUrl} target='_blank' rel='noreferrer'>Privacy</a>}{config?.instance?.contact&&<span>{config.instance.contact}</span>}</div>
   </section></main>;
 }

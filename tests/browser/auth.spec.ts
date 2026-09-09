@@ -3,6 +3,28 @@ async function managed(page: any, bootstrapRequired = false) {
   await page.route('**/api/auth/config', (route:any) => route.fulfill({json:{bootstrapRequired,smtpConfigured:true,instance:{name:'Tavern Test'}}}));
   await page.route('**/api/auth/session', (route:any) => route.fulfill({status:401,json:{error:'Sign in first'}}));
 }
+
+test('required MFA enrollment blocks the application until recovery codes are acknowledged',async({page})=>{
+  let enabled=false,matrixRequests=0,submitted:any;
+  await page.route('**/api/auth/config',r=>r.fulfill({json:{bootstrapRequired:false,smtpConfigured:true,instance:{name:'Policy test'}}}));
+  await page.route('**/api/auth/session',r=>r.fulfill({json:{userId:'@owner:local',deviceId:'D1',admin:true,baseUrl:'/api/matrix',mfaEnrollmentRequired:!enabled}}));
+  await page.route('**/api/matrix/**',r=>{matrixRequests++;return r.abort();});
+  await page.route('**/api/account/mfa/totp/start',r=>{submitted=r.request().postDataJSON();return r.fulfill({json:{challengeId:'enroll',secret:'JBSWY3DPEHPK3PXP',uri:'otpauth://totp/Tavern:test?secret=JBSWY3DPEHPK3PXP'}});});
+  await page.route('**/api/account/mfa/totp/complete',r=>{enabled=true;return r.fulfill({json:{recoveryCodes:['test-recovery-1','test-recovery-2']}});});
+  await page.route('**/api/system/status',r=>r.fulfill({json:{maintenance:{enabled:false},announcements:[]}}));
+  await page.route('**/api/system/events',r=>r.fulfill({contentType:'text/event-stream',body:': test\n\n'}));
+  await page.route('**/api/admin/overview',r=>r.fulfill({json:{users:1,rooms:0,sessions:1}}));
+  await page.goto('/admin');await expect(page.getByRole('heading',{name:'Protect your account'})).toBeVisible();expect(matrixRequests).toBe(0);
+  await page.getByLabel('Current password',{exact:true}).fill('policy-password-test');await page.getByRole('button',{name:'Set up authenticator',exact:true}).click();
+  expect(submitted).toEqual({password:'policy-password-test'});await page.getByLabel('Authenticator code',{exact:true}).fill('123456');await page.getByRole('button',{name:'Enable two-step verification',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Save your recovery codes'})).toBeVisible();await expect(page.getByRole('heading',{name:'Overview',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'I saved my codes — continue'}).click();await expect(page.getByRole('heading',{name:'Overview',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('policy-password-test');
+  // A newly imposed policy must also move an already-open admin session back to enrollment.
+  enabled=false;await page.route('**/api/admin/policy-test',r=>r.fulfill({status:403,json:{error:'Enrollment required',errcode:'MFA_ENROLLMENT_REQUIRED'}}));
+  await page.evaluate(async()=>{const api=await import('/lib/api.ts' as string);await api.requestApi('/admin/policy-test').catch(()=>{});});
+  await expect(page.getByRole('heading',{name:'Protect your account'})).toBeVisible();
+});
 test('managed sign-in shows actionable errors and never stores passwords', async ({page})=>{
   await managed(page);await page.route('**/api/auth/login',route=>route.fulfill({status:401,json:{error:'The username or password is incorrect.'}}));
   await page.goto('/');await page.getByLabel('Username or email').fill('alice');await page.getByLabel('Password',{exact:true}).fill('not-a-real-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();

@@ -1,0 +1,20 @@
+import { useEffect, useRef, useState } from 'react';
+import { getMatrixClient } from '@/lib/matrix';
+import { exportMessageHistory, type ExportProgress } from '@/lib/message-export';
+export function MessageExport() {
+  const [roomId, setRoomId] = useState('all'), [ownOnly, setOwnOnly] = useState(true), [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [progress, setProgress] = useState<ExportProgress | null>(null), [done, setDone] = useState(false), controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  const client = getMatrixClient(), rooms = client?.getRooms().filter(room => room.getMyMembership() === 'join' && !room.isSpaceRoom()) || [];
+  async function start() {
+    if (!client || busy || !confirmed) return; setBusy(true); setError(''); setDone(false); setProgress(null); const abort = new AbortController(); controller.current = abort;
+    let sink: any, chunks: BlobPart[] = [], size = 0;
+    try {
+      if ('showSaveFilePicker' in window) { const handle = await (window as any).showSaveFilePicker({ suggestedName: 'tavern-message-history.jsonl', types: [{ description: 'JSON Lines', accept: { 'application/jsonl': ['.jsonl'] } }] }); abort.signal.throwIfAborted(); sink = await handle.createWritable(); }
+      const result = await exportMessageHistory(client, roomId === 'all' ? rooms.map(room => room.roomId) : [roomId], ownOnly, async line => { abort.signal.throwIfAborted(); if (sink) await sink.write(line); else { size += new TextEncoder().encode(line).byteLength; if (size > 128 * 1024 * 1024) throw new Error('This export exceeds the browser memory limit. Export one room at a time, or use a browser with direct file saving.'); chunks.push(line); } }, setProgress, abort.signal);
+      if (sink) await sink.close(); else { const url = URL.createObjectURL(new Blob(chunks, { type: 'application/jsonl' })), link = document.createElement('a'); link.href = url; link.download = 'tavern-message-history.jsonl'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+      setProgress(result); setDone(true);
+    } catch (e) { if (sink) await sink.abort().catch(() => {}); setError((e as Error).name === 'AbortError' ? 'Export canceled. No completed export was saved.' : (e as Error).message); }
+    finally { chunks = []; setBusy(false); controller.current = null; }
+  }
+  return <section className="settings-section"><h3>Export message history</h3><p>Read older history from your homeserver in pages and decrypt it on this device. Missing encryption keys are listed in the export. File records include attachment metadata and decryption keys, without downloading attachment bytes.</p><fieldset disabled={busy}><label>Conversations<select value={roomId} onChange={e => setRoomId(e.target.value)}><option value="all">All joined conversations</option>{rooms.map(room => <option key={room.roomId} value={room.roomId}>{room.name}</option>)}</select></label><label className="check-label"><input type="checkbox" checked={ownOnly} onChange={e => setOwnOnly(e.target.checked)} />Only messages I sent</label><label className="check-label"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />I understand the downloaded file contains unencrypted message content and must be kept private.</label></fieldset><div className="inline-actions"><button className="secondary-button" disabled={busy || !confirmed || !rooms.length} onClick={() => void start()}>Download history</button>{busy && <button className="secondary-button" onClick={() => controller.current?.abort()}>Cancel export</button>}</div>{progress && <p role="status">{done ? 'Export complete' : 'Exporting ' + progress.room}: {progress.roomsDone}/{progress.roomsTotal} conversations, {progress.exported} events, {progress.undecryptable} missing keys.</p>}{error && <p className="connect-error" role="alert">{error}</p>}</section>;
+}

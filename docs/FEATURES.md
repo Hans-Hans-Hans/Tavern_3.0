@@ -1,31 +1,27 @@
-# Tavern feature coverage — 0.3
+# Tavern feature coverage — 0.4 development
 
-The target remains a self-hosted alternative spanning Discord communities, Slack collaboration, and Teams meetings. Full parity is not complete. “Implemented” below describes code paths in this release; call/deployment behavior still requires live acceptance.
+Tavern keeps the existing Matrix architecture for encrypted messaging and builds community, account, and administration features around it. The [130-section implementation checklist](IMPLEMENTATION_CHECKLIST.md) records each requested area, source evidence, and remaining work. “Implemented” describes a code path; deployment and interoperability claims require the separate [validation record](VALIDATION.md).
 
-| Area | Implemented | Remaining |
+| Area | Implemented | Remaining or deliberately limited scope |
 |---|---|---|
-| Organization | Servers/Spaces, encrypted channels/DMs, invitations, standard or legacy terminology | Nested categories, reordering, discovery, expiring invitations, multiple accounts |
-| Messaging | Threads, edits, reactions, redaction, pins, bookmarks, text formatting, loaded-history search | Rich composer, durable offline sends, full encrypted search index, scheduled sends, controlled link previews |
-| Files | Encrypted attachments, authenticated downloads, integrity checks | Inline galleries/previews, resumable upload, quotas, shared document editing |
-| Identity and recovery | SAS emoji verification, cross-signing, authenticated recovery keys, encrypted secret storage, non-deleting backup creation, automatic backup/key recovery, full restore option | QR verification UX, seamless secret transfer after every SAS flow, automatic recovery of every interrupted cross-device setup, live interoperability/security assessment |
-| Calls | Direct voice/video, screen sharing, relay-only TURN, incoming/answer/decline/hangup controls | Proven browser/device/network compatibility, persistent voice channels, call-history UI |
-| Conferences | Bundled Element Call, room-scoped widget bridge, MatrixRTC encryption, LiveKit/authorization/TURN deployment, native call UI controls | Persistent cross-channel dock, guest meeting links, lobby/breakouts, recording/transcription, organizational meeting policy, scale proof |
-| Work | Encrypted tasks with assignees/progress, authored notes/revisions, calendar .ics exports, polls with editable visible votes | Full historical projection/index, concurrent shared-document editing, recurring meetings, calendar sync, native Matrix polls, project automation |
-| Notifications | Matrix all/mention/mute rules; generic desktop alerts with an open background tab; focus mode | Closed-browser/mobile push, notification center, presence/status schedules |
-| Permissions | Kick/ban/unban, member/moderator roles, invitation/message/pin/conference thresholds | Arbitrary Discord role bitsets, role inheritance, complete audit/admin/reporting UI |
-| Integrations | Signed inbound text hooks; durable E2EE bot; explicit room/user/device allowlists; encrypted outbox and replay protection | OAuth app catalog, turnkey Slack/Teams connectors, outbound automation, arbitrary bot/plugin management UI, controlled bridges |
-| Account access | Local Matrix login, session listing and revocation, closed registration and login throttles | SSO/OIDC, MFA interface, account recovery administration, multi-account UX |
-| Customization | Tavern branding, colors/themes, density, focus, legacy terminology | Instance branding editor, extension SDK, comprehensive accessibility assessment |
-| Operations | Docker source builds, Compose/Dockhand files, NPM/Cloudflare guides, private DB/server networks, call services | Published signed multi-architecture images, tested upgrades/disaster recovery, load testing, monitoring/admin console |
+| Accounts | One-time verified administrator bootstrap; username/email login; email recovery; TOTP/email MFA and recovery codes; cookie sessions; device revocation; required password changes | External identity providers, passkeys and platform authority beyond administrator/user |
+| Profiles and contacts | Optimized avatar/banner crop, pronouns/bio/fields/timezone/status, per-server profile, presence modes, durable friend requests and server-enforced invitation privacy | Account/join dates when authoritative metadata is unavailable; per-server invitation preferences |
+| Servers and channels | Matrix Spaces, categories and ordering, branding, favorites/folders, channel types, private membership, archive/slow mode, welcome/interest recommendations | Full historical discovery, optional interest-based role assignment, AFK routing and comprehensive server default policies |
+| Roles and permissions | Multiple roles, hierarchy, icons/colors/grouping, role/member category inheritance and channel overrides; authoritative Synapse module checks | Matrix native membership/power remains an additional ceiling. A server cannot enforce encrypted attachment/link subtypes without decrypting them |
+| Messages | Inline editing, reactions, reply/thread/quote/mentions, Markdown/code/spoilers, pins/bookmarks, deep links/unread markers, forwarding with destination reencryption, consent-based link previews | Full rich-text format coverage and independent multi-device acceptance |
+| Threads and forums | Virtualized replies, explicit historical paging, participant list, notifications, title/tags/lock/archive and server-time inactivity archive | Private thread membership and complete historical forum indexing |
+| Files and media | Encrypted uploads/downloads, integrity checks, progress/cancel/retry, per-user/global byte quotas, authenticated media viewer with zoom/navigation/save/open original | Per-server quotas, resumable upload, encrypted-content classification, dedicated video editing/transcoding |
+| Search and navigation | Device-local encrypted IndexedDB search with keyed term index, filters/operators, opt-in cancellable history indexing, quick switcher and command palette | Indexed scope is the decrypted history on this device. No server plaintext search or automatic complete historical coverage |
+| Offline work | Encrypted local outbox, scheduled sends and reminders with retry/edit/cancel; per-conversation memory drafts and channel draft badges | The owning signed-in device must run to send scheduled work. Outbox/reminders do not sync across devices |
+| Calls | Direct voice/video/screen share, device controls, echo/noise/gain, push-to-talk/deafen, per-user local volume; MatrixRTC/LiveKit conferences and persistent dock | External-network TURN/media validation; complete native quality/voice-activity and conference participant controls |
+| Call moderation | Verified participant identity and authorized removal of channel membership plus matching active LiveKit devices, with partial failures reported | Independent server mute/deafen and move-between-channel actions |
+| Collaboration | Encrypted tasks, authored notes, events/calendar export, single/multiple-choice polls with expiry and visible editable votes | Anonymous polls, shared-document editing and complete historical work indexing |
+| Notifications and appearance | Synced global/server/channel/thread overrides, timed mutes, DND, generic desktop alerts and optional sound; system/light/dark themes, fonts/scale/motion/saturation | Closed-browser/mobile push, consolidated notification center, full accessibility and contrast acceptance |
+| Administration | Real user/session/room/storage/status data; user filters/sort/details/security actions; registration/maintenance/announcements; reports; filtered audit; SMTP and integration administration | Delegated platform roles, comprehensive logs/CPU/queue telemetry, anonymization/retention policy |
+| Integrations | Signed webhook ingestion, durable encrypted bot delivery, room/user/device allowlists, secret rotation/revocation and verified device approvals | One-time bot identity provisioning remains an operator task. OAuth app catalog and arbitrary automation are absent |
+| Operations | Canonical Compose with generated persistent configuration, named volumes, health checks, backup/download/retention, isolated-copy restore and compatible web/API patch updates | Production restore cutover and infrastructure/schema upgrades remain explicit operator procedures; final restore/upgrade acceptance must be recorded |
+| PWA | Install manifest/icons, versioned static-shell cache, offline/reconnect UI, all-tab active-crypto/media update guards | Android/iOS installation and device-specific offline/update acceptance |
 
-## Distinctive behavior
+New encrypted rooms keep message content and attachments end-to-end encrypted. Profiles, room state, membership, timing, and ordinary preference metadata remain visible to the homeserver. Administrative features do not decrypt arbitrary user conversations. Recovery preserves existing encryption identity and backup versions; it does not silently replace keys to clear an error.
 
-- Recovery uses official Matrix crypto and preserves old backup versions. Tavern does not silently replace an existing signing identity to clear an error.
-- Typing is off by default. Focus hides activity. Desktop alerts do not expose decrypted content or sender names.
-- Integration delivery stops when a participant or device is outside the configured trust policy. The bot never falls back to plaintext Matrix messages.
-- Tasks, notes, events, and polls live in encrypted conversation history, with plaintext-compatible message fallbacks only after the receiving Matrix client decrypts them.
-- Accounts, database, signaling, media relays, and integration processing can all run on infrastructure controlled by the operator.
-
-## Validation status
-
-Application type checking, production compilation, focused JS/Python tests, and a real nio SQLite identity/outbox reopen test were run. No live Synapse deployment, two-browser verification, group-media session, router/NPM configuration, load test, or independent audit was completed in this environment. The deployment guide provides explicit acceptance cases for those remaining gates.
+Observed builds, browser/API tests, container checks, and outstanding live acceptance are tracked in [VALIDATION.md](VALIDATION.md). This table is not a claim of complete Discord, Slack, or Teams parity.

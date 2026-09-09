@@ -12,7 +12,7 @@ import { initializeSearch, resetSearch, searchMessages } from './search-index';
 import { initializeNotifications, resetNotifications } from './notifications';
 import { initializeCalls, resetCalls } from './calls';
 import { cryptoCallbacks, initializeSecurity, resetSecurity, securityOperationInProgress } from './security';
-import { requestApi, isManagedAccount, accountSignedOut, type AccountSession } from './api';
+import { notifyAccountRequirement, requestApi, isManagedAccount, accountSignedOut, type AccountSession } from './api';
 let client:MatrixClient|null=null;
 let sessionPromise:Promise<boolean>|null=null;
 let releaseLock:(()=>void)|null=null;
@@ -47,7 +47,7 @@ async function attachSession(s:any){
  let unlock!:()=>void;
  const held=new Promise<void>(r=>unlock=r);
  await new Promise<void>((resolve,reject)=>{navigator.locks.request('harbor-matrix-'+s.userId+'-'+s.deviceId,{ifAvailable:true},async lock=>{if(!lock){reject(new Error('This Matrix session is already open in another tab. Use that tab to protect your encryption keys.'));return;}releaseLock=unlock;resolve();await held;}).catch(reject)});
- const c=sdk.createClient({baseUrl:baseUrl(s.baseUrl),accessToken:s.accessToken,userId:s.userId,deviceId:s.deviceId,timelineSupport:true,verificationMethods:['m.sas.v1'],cryptoCallbacks:cryptoCallbacks(()=>c),forceTURN:true,fallbackICEServerAllowed:false,...(s.managed?{fetchFn:((url:any,options:any)=>{const target=new URL(String(url),location.origin);if(target.origin!==location.origin)throw new Error('Account requests must stay on this Tavern instance.');return fetch(url,{...options,credentials:'same-origin'});}) as typeof fetch}:{})});
+ const c=sdk.createClient({baseUrl:baseUrl(s.baseUrl),accessToken:s.accessToken,userId:s.userId,deviceId:s.deviceId,timelineSupport:true,verificationMethods:['m.sas.v1'],cryptoCallbacks:cryptoCallbacks(()=>c),forceTURN:true,fallbackICEServerAllowed:false,...(s.managed?{fetchFn:((url:any,options:any)=>{const target=new URL(String(url),location.origin);if(target.origin!==location.origin)throw new Error('Account requests must stay on this Tavern instance.');return fetch(url,{...options,credentials:'same-origin'}).then(async response=>{if(response.status===403)notifyAccountRequirement(await response.clone().json().catch(()=>null));return response;});}) as typeof fetch}:{})});
  try{
   syncState='Initializing encryption';notify();
   await c.initRustCrypto({cryptoDatabasePrefix:'harbor-crypto-'+s.userId+'-'+s.deviceId});
@@ -95,7 +95,7 @@ function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Re
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype)}]:[],encrypted,sending:!!event.status};
+ return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
@@ -137,7 +137,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
   if(!p.suppressMentions&&p.body.includes('@everyone'))content['m.mentions'].room=true;
   const attachments=(p.attachments||[]).map((id:string)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId)throw new Error('Reattach this file before sending.');return f});
-  if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
+  if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type,...f.info},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
   if(p.body.trim()){if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}
   for(const id of p.attachments||[])pendingFiles.delete(id);notify();return {ok:true};
  }
@@ -202,17 +202,28 @@ export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:
  options.signal?.throwIfAborted();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});
  let uploaded;try{uploaded=await c.uploadContent(data,{includeFilename:false,type:descriptor?'application/octet-stream':file.type||'application/octet-stream',abortController,progressHandler:p=>options.onProgress?.(p.loaded,p.total||data.size)});}finally{options.signal?.removeEventListener('abort',abort);}
  options.signal?.throwIfAborted();if(client!==c)throw new Error('Your account changed during upload. Sign in and attach the file again.');
- const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,record);return record;
+ const info:any={};
+ const {createImagePreview}=await import('./media-processing');const preview=await createImagePreview(file,options.signal);
+ if(preview){info.w=preview.sourceWidth;info.h=preview.sourceHeight;try{
+  let thumbnailData=preview.blob,thumbnailFile:any=null;
+  if(descriptor){const {encryptAttachment}=await import('matrix-encrypt-attachment');const encrypted=await encryptAttachment(await preview.blob.arrayBuffer());thumbnailData=new Blob([encrypted.data],{type:'application/octet-stream'});thumbnailFile=encrypted.info;}
+  options.signal?.throwIfAborted();const thumbAbort=new AbortController(),cancelThumb=()=>thumbAbort.abort();options.signal?.addEventListener('abort',cancelThumb,{once:true});let result;
+  try{result=await c.uploadContent(thumbnailData,{includeFilename:false,type:thumbnailData.type,abortController:thumbAbort});}finally{options.signal?.removeEventListener('abort',cancelThumb);}
+  if(thumbnailFile)info.thumbnail_file={...thumbnailFile,url:result.content_uri};else info.thumbnail_url=result.content_uri;
+  info.thumbnail_info={w:preview.width,h:preview.height,size:preview.blob.size,mimetype:preview.blob.type};
+ }catch(error){if(options.signal?.aborted)throw error;}}
+ options.signal?.throwIfAborted();if(client!==c)throw new Error('Your account changed during upload. Sign in and attach the file again.');
+ const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,info,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,record);return record;
 }
 export function discardMatrixFile(id:string){pendingFiles.delete(id);}
-export async function matrixFileBlob(a:any,signal?:AbortSignal){
+export async function matrixFileBlob(a:any,signal?:AbortSignal,maxBytes=20*1024*1024){
  const c=requireClient();const url=c.mxcUrlToHttp(a.url,undefined,undefined,undefined,false,true,true);if(!url)throw new Error('Invalid Matrix file address.');
  const res=await fetch(url,{headers:{Authorization:'Bearer '+c.getAccessToken()},credentials:'same-origin',referrerPolicy:'no-referrer',signal});if(!res.ok)throw new Error('Could not download this attachment.');
- if(Number(res.headers.get('Content-Length'))>20*1024*1024)throw new Error('This attachment is too large to preview safely.');
+ if(Number(res.headers.get('Content-Length'))>maxBytes)throw new Error('This attachment is too large to preview safely.');
  const reader=res.body?.getReader();if(!reader)throw new Error('This browser cannot stream attachments.');const chunks:Uint8Array[]= [];let size=0;
- try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>20*1024*1024){await reader.cancel();throw new Error('This attachment is too large to preview safely.');}chunks.push(next.value);}}finally{reader.releaseLock();}
+ try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>maxBytes){await reader.cancel();throw new Error('This attachment is too large to preview safely.');}chunks.push(next.value);}}finally{reader.releaseLock();}
  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}let payload=bytes.buffer;if(a.file){const {decryptAttachment}=await import('matrix-encrypt-attachment');payload=await decryptAttachment(bytes.buffer,a.file);}
- if(payload.byteLength>20*1024*1024)throw new Error('This attachment is too large to preview safely.');
+ if(payload.byteLength>maxBytes)throw new Error('This attachment is too large to preview safely.');
  const mime=typeof a.type==='string'&&/^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|ogg)|audio\/(mpeg|mp4|ogg|webm|wav|flac))$/.test(a.type)?a.type:'application/octet-stream';
  return new Blob([payload],{type:mime});
 }

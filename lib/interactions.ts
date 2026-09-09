@@ -14,6 +14,7 @@ export function messagePermissions(roomId: string, sender: string) {
   const send=joined&&roleAllows(roomId,me,'send_messages')&&r.currentState.maySendEvent(r.hasEncryptionStateEvent()?'m.room.encrypted':'m.room.message',me);
   return { edit: send && sender === me, delete: joined && (sender === me || (roleAllows(roomId,me,'manage_messages')&&r.currentState.hasSufficientPowerLevelFor('redact', r.getMember(me)?.powerLevel || 0))), pin: joined && roleAllows(roomId,me,'pin_messages')&&r.currentState.maySendStateEvent('m.room.pinned_events', me), react: joined && roleAllows(roomId,me,'add_reactions')&&r.currentState.maySendEvent('m.reaction', me), send };
 }
+export function canInviteToRoom(roomId:string){const c=getMatrixClient(),r=c?.getRoom(roomId),me=c?.getUserId();return !!(c&&r&&me&&r.getMyMembership()==='join'&&r.canInvite(me)&&roleAllows(roomId,me,'invite'));}
 const navKey = 'io.tavern.navigation';
 export function navigationPreferences(c: MatrixClient | null = getMatrixClient()): { favorites: string[]; unread: string[] } {
   const value = c?.getAccountData(navKey as any)?.getContent() || {};

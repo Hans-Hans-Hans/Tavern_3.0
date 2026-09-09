@@ -32,9 +32,9 @@ from cryptography.fernet import Fernet
 import yaml
 
 try:
-    from .security import client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
+    from .security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 except ImportError:
-    from security import client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
+    from security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 
 LOG = logging.getLogger("tavern.api")
 COOKIE = "__Host-tavern-session"
@@ -227,6 +227,22 @@ class Service:
     def ip(self, request) -> str:
         return client_address(request.remote, request.headers.get("X-Forwarded-For"), self.trusted)
 
+    def security_policy(self):
+        return {**DEFAULT_SECURITY, **self.store.get('security_policy', {})}
+
+    def password_error(self, value, confirmation=None):
+        issue = password_error(value, confirmation)
+        minimum = self.security_policy()['minimumPasswordLength']
+        return issue or (f'Use a password with at least {minimum} characters.' if len(value) < minimum else None)
+
+    def requires_mfa(self, session, admin=None):
+        policy = self.security_policy()['mfaRequirement']
+        if admin is None: admin = bool(self.store.account(session['user_id']).get('known_admin'))
+        return policy == 'everyone' or policy == 'admins' and admin
+
+    def needs_mfa_enrollment(self, session, admin=None):
+        return self.requires_mfa(session, admin) and not self.methods(self.store.account(session['user_id']))
+
     def audit(self, actor: str, action: str, target: str = "", detail: str = ""):
         self.store.db.execute("INSERT INTO audit(created,actor,action,target,detail) VALUES(?,?,?,?,?)", (time.time(), actor, action, target, detail[:1000]))
 
@@ -327,6 +343,12 @@ class Service:
             return None
         now, digest = time.time(), self.store.digest(cookie)
         row = self.store.db.execute("SELECT * FROM sessions WHERE cookie_hash=? OR (previous_hash=? AND previous_until>?)", (digest, digest, now)).fetchone()
+        if row:
+            policy = self.security_policy()
+            maximum = row['created'] + (policy['persistentDays'] * 86400 if row['persistent'] else policy['sessionHours'] * 3600)
+            if row['expires'] > maximum:
+                self.store.db.execute('UPDATE sessions SET expires=? WHERE id=?', (maximum, row['id']))
+                row = self.store.db.execute('SELECT * FROM sessions WHERE id=?', (row['id'],)).fetchone()
         if not row or row["expires"] <= now:
             return None
         session = dict(row)
@@ -355,6 +377,9 @@ class Service:
         allowed = {'/api/auth/session', '/api/auth/logout', '/api/account/security', '/api/account/security/email-code', '/api/account/password'}
         if account.get('password_change_required') and request.path not in allowed:
             raise APIError(403, 'Change your password before continuing.', 'PASSWORD_CHANGE_REQUIRED')
+        enrollment = allowed | {'/api/account/email/start', '/api/account/email/complete', '/api/account/mfa/totp/start', '/api/account/mfa/totp/complete', '/api/account/mfa/email'}
+        if self.needs_mfa_enrollment(session) and request.path not in enrollment:
+            raise APIError(403, 'Set up two-step verification before continuing.', 'MFA_ENROLLMENT_REQUIRED')
         return session
 
     async def require_admin(self, request):
@@ -362,14 +387,21 @@ class Service:
         status, result = await self.matrix("GET", "/_synapse/admin/v1/users/" + quote(session["user_id"], safe="") + "/admin", token=self.store.open(session["token"]), expected=False)
         if status != 200 or result.get("admin") is not True:
             raise APIError(403, "Instance administrator access is required.", "FORBIDDEN")
+        self.store.db.execute('UPDATE accounts SET known_admin=1 WHERE user_id=?', (session['user_id'],))
+        if self.needs_mfa_enrollment(session, True):
+            raise APIError(403, 'Set up two-step verification before continuing.', 'MFA_ENROLLMENT_REQUIRED')
         return session
 
     async def session_info(self, session):
         account = self.store.account(session["user_id"])
         status, result = await self.matrix("GET", "/_synapse/admin/v1/users/" + quote(session["user_id"], safe="") + "/admin", token=self.store.open(session["token"]), expected=False)
+        if status not in (200, 403):
+            raise APIError(502, 'Your account permissions could not be checked. Try again.', 'UPSTREAM_UNAVAILABLE')
+        is_admin = status == 200 and result.get('admin') is True
+        self.store.db.execute('UPDATE accounts SET known_admin=? WHERE user_id=?', (int(is_admin), session['user_id']))
         return {"userId": session["user_id"], "deviceId": session["device_id"], "baseUrl": self.config.public_url + "/api/matrix",
-                "admin": status == 200 and result.get("admin") is True, "displayName": account.get("display_name", ""),
-                "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "passwordChangeRequired": bool(account.get('password_change_required'))}
+                "admin": is_admin, "displayName": account.get("display_name", ""),
+                "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "passwordChangeRequired": bool(account.get('password_change_required')), 'mfaEnrollmentRequired': self.needs_mfa_enrollment(session, is_admin)}
 
     async def issue_session(self, request, login, remember=False):
         status, _ = await self.matrix("GET", "/_matrix/client/v3/account/whoami", token=login["access_token"], expected=False)
@@ -379,7 +411,7 @@ class Service:
         self.store.db.execute("INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)", (login["user_id"], now))
         session = {"id": identity, "cookie_hash": self.store.digest(cookie), "cookie": self.store.seal(cookie), "previous_hash": None,
                    "previous_until": 0, "rotated": now, "user_id": login["user_id"], "device_id": login["device_id"], "token": self.store.seal(login["access_token"]),
-                   "created": now, "last_seen": now, "expires": now + (30 * 86400 if remember else 12 * 3600), "persistent": int(remember),
+                   "created": now, "last_seen": now, "expires": now + (self.security_policy()['persistentDays'] * 86400 if remember else self.security_policy()['sessionHours'] * 3600), "persistent": int(remember),
                    "name": request.headers.get("User-Agent", "Browser")[:240], "ip": self.ip(request)}
         self.store.db.execute("INSERT INTO sessions(" + ",".join(session) + ") VALUES(" + ",".join("?" for _ in session) + ")", tuple(session.values()))
         request["cookie"], request["session"] = (cookie, session), session
@@ -492,10 +524,10 @@ class Service:
 
     async def login_route(self, request):
         data = await body_json(request)
-        self.store.rate("login:" + self.ip(request), 12, 60)
+        self.store.rate("login:" + self.ip(request), self.security_policy()['loginPerIpPerMinute'], 60)
         username = text_value(data.get("username"), 254).strip()
         request["auditTarget"] = username
-        self.store.rate("login-user:" + username.casefold(), 10, 300)
+        self.store.rate("login-user:" + username.casefold(), self.security_policy()['loginPerAccountPerFiveMinutes'], 300)
         if username == "admin" and data.get("password") == "admin":
             raise APIError(403, "Use Administrator Setup to initialize this installation. Default credentials cannot sign in.", "BOOTSTRAP_ONLY")
         local = self.store.db.execute("SELECT user_id FROM accounts WHERE email=? AND verified=1", (username.casefold(),)).fetchone()
@@ -575,7 +607,7 @@ class Service:
         username = text_value(setup.get("username"), 64)
         if not re.fullmatch(r"[a-z0-9][a-z0-9._=-]{0,63}", username):
             raise APIError(400, "Use a lowercase username with letters, numbers, dots, underscores or dashes.")
-        error = password_error(setup.get("password"), setup.get("confirmPassword"))
+        error = self.password_error(setup.get("password"), setup.get("confirmPassword"))
         if error:
             raise APIError(400, error)
         setup = {key: text_value(setup.get(key, ""), 2048 if "Url" in key else 1024) for key in ("username", "password", "displayName", "email", "timezone", "instanceName", "instanceDescription", "avatarUrl", "instanceIcon")}
@@ -638,7 +670,7 @@ class Service:
         session = self.require_session(request)
         account = self.store.account(session["user_id"])
         count = self.store.db.execute("SELECT count(*) FROM recovery_codes WHERE user_id=?", (session["user_id"],)).fetchone()[0]
-        return web.json_response({"email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "totpEnabled": bool(account.get("totp")), "emailMfaEnabled": bool(account.get("email_mfa")), "recoveryCodesRemaining": count})
+        return web.json_response({"email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "totpEnabled": bool(account.get("totp")), "emailMfaEnabled": bool(account.get("email_mfa")), "recoveryCodesRemaining": count, 'mfaRequired': self.requires_mfa(session), 'minimumPasswordLength': self.security_policy()['minimumPasswordLength']})
 
     async def sensitive_email(self, request):
         session = self.require_session(request)
@@ -714,6 +746,8 @@ class Service:
         if not account.get("verified") or not self.smtp()["enabled"]:
             raise APIError(400, "Verify your email address and configure SMTP before enabling email verification.")
         enabled = data.get("enabled") is True
+        if not enabled and not account.get('totp') and self.requires_mfa(session):
+            raise APIError(400, 'Your instance requires two-step verification. Enable another method before removing email verification.')
         was_enabled = bool(self.methods(account))
         if enabled:
             await self.revoke_upstream_others(session, data["password"])
@@ -725,6 +759,8 @@ class Service:
     async def disable_mfa(self, request):
         data = await body_json(request)
         session = await self.require_sensitive(request, data)
+        if self.requires_mfa(session):
+            raise APIError(400, 'Your instance requires two-step verification. Keep at least one verification method enabled.')
         self.store.db.execute("UPDATE accounts SET totp=NULL,email_mfa=0,totp_counter=-1 WHERE user_id=?", (session["user_id"],))
         self.store.db.execute("DELETE FROM recovery_codes WHERE user_id=?", (session["user_id"],))
         self.audit(session["user_id"], "mfa_disabled", session["user_id"])
@@ -743,7 +779,7 @@ class Service:
 
     async def account_password(self, request):
         data = await body_json(request)
-        error = password_error(data.get("newPassword"), data.get("confirmation"))
+        error = self.password_error(data.get("newPassword"), data.get("confirmation"))
         if error:
             raise APIError(400, error)
         if data.get("newPassword") == data.get("currentPassword"):
@@ -836,7 +872,7 @@ class Service:
     async def recovery_complete(self, request):
         data = await body_json(request)
         self.store.rate("recovery-complete:" + self.ip(request), 10, 900)
-        error = password_error(data.get("newPassword"), data.get("confirmation"))
+        error = self.password_error(data.get("newPassword"), data.get("confirmation"))
         if error:
             raise APIError(400, error)
         challenge = self.store.read_challenge(data.get("challengeId", ""), "recovery")
@@ -872,10 +908,12 @@ class Service:
         if request.method == "GET":
             return await import_module((__package__ + '.' if __package__ else '') + 'admin_users').listing(request)
         data = await body_json(request)
+        if self.store.get('policy', {}).get('registrationMode') == 'disabled':
+            raise APIError(403, 'Account registration is disabled in instance security settings.', 'REGISTRATION_DISABLED')
         username = text_value(data.get("username"), 64)
         if not re.fullmatch(r"[a-z0-9][a-z0-9._=-]{0,63}", username):
             raise APIError(400, "Enter a valid lowercase username.")
-        error = password_error(data.get("password"))
+        error = self.password_error(data.get("password"))
         if error:
             raise APIError(400, error)
         email = email_address(data["email"]) if data.get("email") else None
@@ -916,10 +954,11 @@ class Service:
                 value = data["instance"]
                 if not isinstance(value, dict):
                     raise APIError(400, "Invalid instance settings.")
-                self.store.set("instance", {key: text_value(value.get(key, ""), 2000) for key in ("name", "description", "icon", "contact", "termsUrl", "privacyUrl")})
+                normalizer = import_module((__package__ + '.' if __package__ else '') + 'instance_admin').normalize_branding
+                self.store.set('instance', normalizer({**self.store.get('instance', {}), **value}, self.config.data_dir / 'branding'))
             if "policy" in data:
                 value = data["policy"]
-                if not isinstance(value, dict) or value.get("registrationMode") not in {"admin", "invite", "open"}:
+                if not isinstance(value, dict) or value.get("registrationMode") not in {"admin", "invite", "open", "disabled"}:
                     raise APIError(400, "Choose administrator, invitation or open account registration.")
                 self.store.set("policy", {**self.store.get("policy", {}), "registrationMode": value["registrationMode"]})
             self.audit(session["user_id"], "settings_updated", "instance")
@@ -1115,7 +1154,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users"):
+    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin"):
         import_module(prefix + module).register_routes(app)
     return app
 

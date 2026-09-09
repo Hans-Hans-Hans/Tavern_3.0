@@ -14,7 +14,7 @@ except ImportError:
 
 def normalize_policy(value, now=None):
     now = int(time.time() * 1000) if now is None else now
-    if not isinstance(value, dict) or value.get("registrationMode", "admin") not in {"admin", "invite", "open"}:
+    if not isinstance(value, dict) or value.get("registrationMode", "admin") not in {"admin", "invite", "open", "disabled"}:
         raise APIError(400, "Choose a valid registration mode.")
     maintenance = value.get("maintenance", {})
     if not isinstance(maintenance, dict) or type(maintenance.get("enabled", False)) is not bool:

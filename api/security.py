@@ -11,6 +11,8 @@ import struct
 import time
 from urllib.parse import quote
 
+DEFAULT_SECURITY = {'minimumPasswordLength': 12, 'sessionHours': 12, 'persistentDays': 30, 'loginPerIpPerMinute': 12, 'loginPerAccountPerFiveMinutes': 10, 'mfaRequirement': 'off'}
+
 
 def password_error(password: object, confirmation: object | None = None) -> str | None:
     if not isinstance(password, str) or len(password) < 12:

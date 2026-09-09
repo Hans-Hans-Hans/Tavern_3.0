@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {loadTs} from './load-ts.mjs';
+function fixture(pages){let index=0,active;const client={getUserId:()=> '@me:local',getRoom:()=>({name:'Room',getMyMembership:()=> 'join',hasEncryptionStateEvent:()=> true}),createMessagesRequest:async()=>pages[index++],decryptEventIfNeeded:async event=>{event.clear=event.raw.plain;},getEventMapper:()=>raw=>({raw,isEncrypted:()=>raw.type==='m.room.encrypted',isDecryptionFailure(){return raw.type==='m.room.encrypted'&&!this.clear;},getType(){return this.clear?'m.room.message':raw.type;},getOriginalContent(){return this.clear||raw.content;},getSender:()=>raw.sender,getId:()=>raw.event_id,getTs:()=>raw.origin_server_ts,isRedacted:()=>!!raw.redacted})};active=client;const module=loadTs('../lib/message-export.ts',{'matrix-js-sdk':{Direction:{Backward:'b'}},'./matrix':{getMatrixClient:()=>active}});return {client,...module,switchAccount:()=>active=null};}
+const event=(id,sender='@me:local',extra={})=>({event_id:id,sender,origin_server_ts:100,type:'m.room.message',content:{msgtype:'m.text',body:id},...extra});
+test('historical export decrypts all pages, keeps edits, omits other authors and records missing keys',async()=>{
+ const f=fixture([{chunk:[event('$encrypted',undefined,{type:'m.room.encrypted',plain:{body:'decrypted'}}),event('$peer','@peer:local')],end:'older'},{chunk:[event('$edit',undefined,{content:{body:'edit','m.relates_to':{rel_type:'m.replace',event_id:'$encrypted'}}}),event('$missing',undefined,{type:'m.room.encrypted'})]}]);const lines=[];const result=await f.exportMessageHistory(f.client,['!room:local'],true,async line=>lines.push(JSON.parse(line)),()=>{},new AbortController().signal);
+ assert.equal(result.exported,2);assert.equal(result.undecryptable,1);assert.equal(result.roomsDone,1);assert.equal(lines.find(x=>x.eventId==='$encrypted').content.body,'decrypted');assert.equal(lines.find(x=>x.eventId==='$edit').content['m.relates_to'].event_id,'$encrypted');assert.equal(lines.some(x=>x.eventId==='$peer'),false);assert.equal(lines.at(-1).type,'complete');
+});
+test('export cancellation, account changes and repeated cursors never claim completion',async()=>{
+ const f=fixture([{chunk:[event('$1')],end:'repeat'},{chunk:[event('$2')],end:'repeat'}]);const lines=[];await assert.rejects(f.exportMessageHistory(f.client,['!room:local'],true,async line=>lines.push(JSON.parse(line)),()=>{},new AbortController().signal),/stopped advancing/);assert.equal(lines.some(x=>x.type==='complete'),false);
+ const canceled=new AbortController();canceled.abort();await assert.rejects(f.exportMessageHistory(f.client,[],true,async()=>{},()=>{},canceled.signal),{name:'AbortError'});
+ f.switchAccount();await assert.rejects(f.exportMessageHistory(f.client,[],true,async()=>{},()=>{},new AbortController().signal),/account changed/);
+});

@@ -11,11 +11,14 @@ export async function requestApi<T = any>(path: string, body?: unknown, method =
     signal: AbortSignal.timeout(45000),
   });
   const data = await response.json().catch(() => ({}));
+  if(response.status===403)notifyAccountRequirement(data);
   if (!response.ok) throw new ApiError(typeof data.error === 'string' ? data.error : typeof data.message === 'string' ? data.message : 'The request could not be completed. Please try again.', response.status, data);
   return data;
 }
-export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; passwordChangeRequired?: boolean };
+export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; passwordChangeRequired?: boolean; mfaEnrollmentRequired?: boolean };
 let managed = false;
 export function setManagedAccount(value: boolean) { managed = value; }
 export function isManagedAccount() { return managed; }
 export function accountSignedOut() { expectedDevice = ''; window.dispatchEvent(new Event('tavern:signout')); }
+
+export function notifyAccountRequirement(data:any){if(['MFA_ENROLLMENT_REQUIRED','PASSWORD_CHANGE_REQUIRED'].includes(data?.errcode||data?.code))window.dispatchEvent(new Event('tavern:account-requirement'));}

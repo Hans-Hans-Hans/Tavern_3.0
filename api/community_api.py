@@ -303,7 +303,7 @@ async def registration_start(request):
     if not re.fullmatch(r"[a-z0-9][a-z0-9._=-]{0,63}", username) or username == "admin":
         raise APIError(400, "Choose a lowercase username other than admin.")
     email = email_address(data.get("email"))
-    error = password_error(data.get("password"), data.get("confirmation"))
+    error = service.password_error(data.get("password"), data.get("confirmation"))
     if error:
         raise APIError(400, error)
     if service.store.db.execute("SELECT 1 FROM accounts WHERE email=?", (email,)).fetchone():
@@ -332,6 +332,9 @@ async def registration_complete(request):
         challenge = service.store.read_challenge(data.get("challengeId", ""), "registration")
         service.store.verify_code(challenge, data.get("code"))
         value = challenge["payload"]
+        error = service.password_error(value['password'])
+        if error:
+            raise APIError(400, 'Password policy changed. Start registration again. ' + error)
         mode = service.store.get("policy", {"registrationMode": "admin"}).get("registrationMode")
         if mode not in {"open", "invite"} or (mode == "invite" and not value["inviteToken"]):
             raise APIError(403, "Registration policy changed. Ask your administrator for an account.")
@@ -350,10 +353,13 @@ async def registration_complete(request):
     response = await service.issue_session(request, login)
     if value["inviteToken"]:
         result = json.loads(response.body)
-        try:
-            result["invitationRoomId"] = await redeem(service, request["session"], value["inviteToken"])
-        except APIError as error:
-            result["invitationError"] = error.message
+        if result.get('mfaEnrollmentRequired'):
+            result['invitationError'] = 'Complete account security setup, then accept this invitation.'
+        else:
+            try:
+                result["invitationRoomId"] = await redeem(service, request["session"], value["inviteToken"])
+            except APIError as error:
+                result["invitationError"] = error.message
         response.body = json.dumps(result).encode()
     return response
 
