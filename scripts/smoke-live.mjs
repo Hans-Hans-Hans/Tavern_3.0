@@ -1,16 +1,23 @@
 // Real HTTPS/account/Synapse/crypto acceptance test; no network routes are mocked.
 import { chromium, expect } from '@playwright/test';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash, X509Certificate } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
+if (!process.env.TAVERN_CI_TLS) throw new Error('The isolated CI certificate directory is required.');
+// Playwright ignoreHTTPSErrors does not cover service-worker installation.
+// Trust only this run's ephemeral public key, including worker fetches.
+const certificate = new X509Certificate(await readFile(join(process.env.TAVERN_CI_TLS, 'cert.pem')));
+const fingerprint = createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
 const origin = 'https://chat.example.test';
 const password = () => 'Ci!' + randomBytes(24).toString('base64url');
 const adminPassword = password(), alicePassword = password(), bobPassword = password();
-const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server'] });
+const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--ignore-certificate-errors-spki-list=' + fingerprint] });
 const pages = [], errors = [];
 async function page() {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const context = await browser.newContext();
   const value = await context.newPage(); value.setDefaultTimeout(60000);
   value.on('pageerror', error => errors.push(error.message));
   value.on('console', message => { if (message.type() === 'error') errors.push(message.text().slice(0, 2000)); });
@@ -34,6 +41,8 @@ async function ready(page) {
   const finish = page.getByRole('button', { name: 'Finish later', exact: true });
   if (await finish.isVisible()) await finish.click();
   await expect(page.getByRole('button', { name: 'Tavern home', exact: true })).toBeVisible();
+  await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.active, undefined, { timeout: 15000 });
+  await expect(page.getByText('Offline app storage is unavailable.', { exact: false })).toHaveCount(0);
 }
 async function login(page, username, password) {
   await page.goto(origin);
@@ -108,7 +117,8 @@ try {
   const text = 'Encrypted CI proof ' + randomBytes(12).toString('hex');
   console.log('Ready to send an encrypted message from the production composer.');
   await alice.getByRole('textbox', { name: 'Message CI encrypted conversation', exact: true }).fill(text);
-  const encryptedSend = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click());
+  await expect(alice.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+  const encryptedSend = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click({ timeout: 15000 }));
   const eventId = await encryptedEvent(alice, roomId, encryptedSend, text);
   await expect(bob.locator('.message-body').filter({ hasText: text })).toBeVisible({ timeout: 60000 });
   await bob.reload(); await ready(bob);
