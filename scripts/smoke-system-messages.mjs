@@ -17,6 +17,12 @@ const SUBJECT = '@cinoticesubject:chat.example.test', TYPE = 'io.tavern.server.s
 const HOOK = 'ci-system-notices', CONTROL = 'http://127.0.0.1:18086';
 const run = promisify(execFile);
 
+export function systemNoticeMessages(events) {
+  assert.ok(Array.isArray(events) && events.length <= 100, 'Inspect a bounded native message page.');
+  // /messages also includes the bot's own membership join. Count message events,
+  // including plaintext so an unexpected unencrypted send still fails the proof.
+  return events.filter(event => event?.sender === BOT && ['m.room.encrypted', 'm.room.message'].includes(event.type));
+}
 
 export async function openSystemMessageSettings(page, serverName) {
   const trigger = page.locator('.workspace-select');
@@ -179,8 +185,7 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
   }
   async function botEvents() {
     const response=checked(await native(alice,room(channel)+'/messages?dir=b&limit=100'),200,'Inspect native encrypted CI history');
-    assert.ok(Array.isArray(response.chunk));
-    return response.chunk.filter(event => event.sender===BOT);
+    return systemNoticeMessages(response.chunk);
   }
   async function sourceEvent() {
     const all=checked(await native(alice,room(server)+'/state'),200,'Read the exact persisted native membership event');

@@ -4,6 +4,17 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+Checkpoint `7f27be3`, workflow
+[34399512564](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34399512564),
+again passed both real recovery paths and now saved the mounted system-notice
+route. A native Space join reached the actual encrypted bot and both owning
+browser decryptors. The subsequent history assertion included the bot's own
+native membership join as an extra notice. The corrected helper excludes that
+state event while retaining encrypted and plaintext messages, with a focused
+regression. Independent sender checks confirmed that removing a fingerprint pin
+invalidates cached trust before key sharing or sending. Queue restart and the
+remaining native workflow stages still need the next run.
+
 Checkpoint `fb17f5d`, workflow
 [34397617476](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34397617476),
 passed the real Linux policy-directory repair checks, including the API process
