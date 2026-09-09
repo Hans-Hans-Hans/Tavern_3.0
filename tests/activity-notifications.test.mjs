@@ -74,14 +74,14 @@ test('external Matrix accounts get direct call alerts without opening managed co
 });
 
 test('contact event streams are shared per current account and close after the final observer leaves', () => {
-  const streams = []; let client = {};
+  const streams = [], generation = {}; let client = { getUserId: () => '@owner:local' };
   globalThis.EventSource = class { constructor() { streams.push(this); } close() { this.closed = true; } };
-  const social = loadTs('../lib/social.ts', { './matrix': { getMatrixClient: () => client }, './api': {} });
+  const social = loadTs('../lib/social.ts', { './matrix': { getMatrixClient: () => client }, './api': { accountArtworkOwner: () => generation } });
   let first = 0, second = 0;
   const one = social.observeContacts(() => first++), two = social.observeContacts(() => second++);
   assert.equal(streams.length, 1); streams[0].onmessage(); assert.equal(first, 1); assert.equal(second, 1);
   one(); assert.equal(streams[0].closed, undefined); two(); assert.equal(streams[0].closed, true);
-  const old = social.observeContacts(() => first++); const previous = streams.at(-1); client = {};
+  const old = social.observeContacts(() => first++); const previous = streams.at(-1); client = { getUserId: () => '@replacement:local' };
   const current = social.observeContacts(() => second++); previous.onmessage(); streams.at(-1).onmessage();
   assert.equal(first, 1); assert.equal(second, 2); assert.equal(previous.closed, true); old(); current();
 });
