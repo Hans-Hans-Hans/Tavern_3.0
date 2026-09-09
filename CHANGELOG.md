@@ -27,6 +27,9 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Private discussions in separate encrypted rooms, with explicit invitations, source permission checks, shared slow mode, archive controls and private-room navigation.
 - Seventeen optional panels load on demand with local loading/retry feedback, preserving the surrounding conversation and drafts.
 - Installable app shell, offline/reconnect behavior, guarded app updates, and automated browser/API/deployment coverage.
+- Opt-in background Web Push with persistent signing keys, encrypted provider subscriptions, generic notices, current access checks and account-scoped worker cleanup.
+- Conference token and reconnect authorization with durable modern participant identities, revocation retries and exact-device channel-plus-call removal.
+- Protected per-server verified-email and account-age requirements, with native join/post/call enforcement, source inheritance for private discussions, owner recovery and revision-safe settings.
 
 ### Changed
 
@@ -47,6 +50,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Welcome tours wait for initial preference sync and stay dismissed on reload; completed invitation navigation closes when membership sync confirms joining.
 - Room deep links requested before Matrix sync, status banners overlapping the composer, and false app-update prompts during first installation.
 - Native channel/member administration now checks fresh Matrix and Tavern role authority, including native equal/higher members in manual role assignments.
+- Call authorization subrequests preserve browser cookie rotation; uninspected SFU form bodies and identity-changing publish-only requests are blocked.
+- A replacement sign-in retires the previous browser cookie session, and delayed responses cannot restore its expired cookie. Other devices and encryption keys are preserved.
 
 ### Security
 

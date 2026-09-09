@@ -50,4 +50,5 @@ export async function afkSmoke({ admin, alice, adminSession, aliceSession, api }
   checked(await native(admin, state(server, afk), disabled, 'PUT'), 200, 'Disable AFK even if the previous destination is no longer valid');
   assert.deepEqual(checked(await native(alice, state(server, afk)), 200, 'Read disabled AFK configuration'), disabled);
   console.log('PASS: actual Synapse AFK configuration persists, enforces custom authority beyond native power, rejects stale state and invalid destinations, protects redaction, and can be disabled without starting media.');
+  return { server, voice };
 }

@@ -4,12 +4,14 @@ This adds restrictions to Matrix authorization; it never grants native room powe
 Encrypted content is opaque: all encrypted messages share the send_messages gate.
 """
 from collections.abc import Mapping
+from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from server_afk import ServerAfkPolicy, AFK
+    from server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
     from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
@@ -19,6 +21,7 @@ except ImportError:
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from synapse_modules.server_afk import ServerAfkPolicy, AFK
+    from synapse_modules.server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
     from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
@@ -254,14 +257,30 @@ class TavernPolicy:
         self.temporary_bans = TemporaryBanPolicy(api, permissions, rank)
         self.private_threads = PrivateThreadPolicy(self, permissions, rank, native_member_power, valid_policy, valid_layout)
         self.server_afk = ServerAfkPolicy(api)
-        api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed, on_create_room=self.on_create_room,
+        self.server_eligibility = ServerEligibilityPolicy(config, api, SimpleNamespace(POLICY=POLICY,
+            valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
+        api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_with_errors, on_create_room=self.on_create_room,
             check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid)
 
     async def on_create_room(self, requester, request_content, is_requester_admin):
         error = await self.private_threads.create(requester.user.to_string(), request_content)
+        creation = request_content.get('creation_content', {})
+        if not error and isinstance(creation, Mapping) and creation.get('type') == 'io.tavern.private_thread':
+            state = {('m.room.create', ''): SimpleNamespace(content=creation)}
+            for actor in [requester.user.to_string()] + request_content.get('invite', []):
+                if not await self.server_eligibility.eligible('', state, actor):
+                    error = 'The source server account requirements do not permit this private discussion.'
+                    break
         if error:
             from synapse.module_api.errors import SynapseError
             raise SynapseError(403, error, 'M_FORBIDDEN')
+
+    async def check_event_with_errors(self, event, state_events):
+        try:
+            return await self.check_event_allowed(event, state_events)
+        except EligibilityDenied as error:
+            from synapse.module_api.errors import SynapseError
+            raise SynapseError(403, str(error), 'M_FORBIDDEN') from None
 
     @staticmethod
     def parse_config(config):
@@ -289,6 +308,10 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        if not await self.server_eligibility.check(event, state_events):
+            return False, None
+        if eligibility_cleanup(event, state_events):
+            return True, None  # Native auth still applies; account requirements cannot trap members.
         if not await self.server_afk.check(event, state_events):
             return False, None
         if not check_settings(event, state_events):
@@ -344,7 +367,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, ELIGIBILITY, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None

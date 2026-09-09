@@ -76,6 +76,10 @@ jobs:
             docker logs tavern-check
             docker rm -f tavern-check
           fi
+      - name: Verify call and push gateway routing
+        env:
+          TAVERN_CI_SMOKE: 'true'
+        run: python3 scripts/ci-gateway.py
       - name: Start clean canonical stack and verify persistence
         env:
           TAVERN_DOMAIN: chat.example.test

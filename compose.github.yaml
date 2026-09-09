@@ -108,6 +108,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-WARNING}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
       OPERATIONS_ENABLED: ${OPERATIONS_ENABLED:-false}
+      WEB_PUSH_ENABLED: ${WEB_PUSH_ENABLED:-false}
       OPERATIONS_URL: http://operations:8091
       OPERATIONS_TOKEN_FILE: /run/tavern-operations/token
       INTEGRATIONS_ENABLED: ${INTEGRATIONS_ENABLED:-false}
@@ -145,7 +146,9 @@ services:
     depends_on:
       init: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
-    networks: [private]
+    # Push delivery uses the fixed public HTTPS gateway. No private IP-range
+    # exception or additional published Synapse port is required.
+    networks: [private, egress]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health',timeout=3)"]
       interval: 30s
@@ -245,6 +248,10 @@ services:
       LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
       LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
       LIVEKIT_JWT_BIND: :8080
+      LIVEKIT_LOG_LEVEL: error
+    # The pinned issuer can include OpenID/delegation URLs in transport errors.
+    # Its gateway reports sanitized failures; do not persist raw issuer logs.
+    logging: {driver: none}
     volumes: ["${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro"]
     networks: [private, media]
     read_only: true

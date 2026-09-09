@@ -25,7 +25,6 @@ server {
         limit_except POST { deny all; }
         proxy_pass $integration_upstream$request_uri;
     }
-    set $rtc_auth http://rtc-auth:8080;
     set $rtc_sfu http://livekit:7880;
     location ^~ /element-call/ {
         include /etc/nginx/tavern-call-headers.conf;
@@ -35,19 +34,54 @@ server {
         default_type application/json;
         return 200 '{"m.server":"${TAVERN_DOMAIN}:443"}';
     }
-    location = /_matrix/federation/v1/openid/userinfo { proxy_pass $matrix_upstream$request_uri; }
-    location /livekit/jwt/ {
-        rewrite ^/livekit/jwt/(.*)$ /$1 break;
-        proxy_pass $rtc_auth$uri$is_args$args;
+    location = /_matrix/federation/v1/openid/userinfo {
+        error_log /dev/null;
+        proxy_pass $matrix_upstream$request_uri;
     }
-    location /livekit/sfu/ {
+    location ~ "^/livekit/jwt/(get_token|sfu/get)$" {
+        client_max_body_size 32k;
+        limit_except POST { deny all; }
+        rewrite ^/livekit/jwt/(.*)$ /api/calls/rtc-auth/$1 break;
+        proxy_pass $tavern_api$uri$is_args$args;
+    }
+    location /livekit/jwt { return 404; }
+    location = /_tavern/rtc-authorize {
+        internal;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Tavern-RTC-URI $request_uri;
+        proxy_set_header X-Tavern-RTC-Method $request_method;
+        proxy_set_header X-Tavern-RTC-Upgrade $http_upgrade;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Authorization $http_authorization;
+        proxy_method GET;
+        error_log /dev/null;
+        proxy_pass $tavern_api/api/calls/sfu-authorize;
+    }
+    location ~ "^/livekit/sfu/rtc(?:/v1)?(?:/validate)?$" {
+        auth_request /_tavern/rtc-authorize;
+        # Authorize the query only; GET form bodies must not add SFU options.
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
         rewrite ^/livekit/sfu/(.*)$ /$1 break;
+        # SFU handshake URLs contain credentials. Keep them out of error logs.
+        error_log /dev/null;
         proxy_set_header Host ${TAVERN_DOMAIN};
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie "";
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 120s;
         proxy_pass $rtc_sfu$uri$is_args$args;
+    }
+    location /livekit/sfu { return 404; }
+    location = /_matrix/push/v1/notify {
+        client_max_body_size 32k;
+        limit_except POST { deny all; }
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_pass $tavern_api$request_uri;
     }
     location = /health { return 200 'ok'; }
     location = /health/live { proxy_pass $tavern_api$request_uri; }
@@ -74,7 +108,7 @@ server {
     # Preserve the original encoded Matrix request URI.
     # Managed authentication must not be bypassed through native credential,
     # reset, or session-minting endpoints. Legacy static clients keep access.
-    location ~ "^/_matrix/client/(?:api/v1|[^/]+)/(?:login|register|refresh|account/password|account/deactivate|account/3pid)(?:/|$)" {
+    location ~ "^/_matrix/client/(?:api/v1|[^/]+)/(?:login|register|refresh|account/password|account/deactivate|account/3pid|pushers/set)(?:/|$)" {
         if ($managed_auth = true) { return 403; }
         proxy_pass $matrix_upstream$request_uri;
     }

@@ -286,6 +286,16 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 401)
         self.assertEqual((await response.json())["errcode"], "M_UNKNOWN_TOKEN")
 
+    async def test_native_pusher_mutations_cannot_bypass_device_bound_push_registration(self):
+        cookie, _, _ = await self.login()
+        before = len(self.upstream_calls)
+        for version in ('v3', 'r0', 'unstable', 'api/v1'):
+            response = await self.request('POST', '/api/matrix/_matrix/client/' + version + '/pushers/set',
+                {'app_id': 'io.tavern.web', 'pushkey': 'untrusted', 'data': {'url': 'https://untrusted.example/notify'}}, cookie)
+            self.assertEqual(response.status, 403)
+            self.assertEqual((await response.json())['errcode'], 'ACCOUNT_ROUTE_REQUIRED')
+        self.assertEqual(len(self.upstream_calls), before)
+
     async def test_server_side_token_revocation_clears_browser_session(self):
         cookie, _, _ = await self.login()
         self.tokens.clear()

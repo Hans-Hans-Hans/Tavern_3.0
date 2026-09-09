@@ -1,6 +1,7 @@
 """Room-authorized removal from Matrix and the pinned self-hosted MatrixRTC SFU.
 
-Mapping follows lk-jwt-service v0.6.0's legacy /sfu/get compatibility route:
+Mapping uses the managed gateway's signed admission registry, with a verified
+legacy /sfu/get room-state fallback for deployments upgrading existing calls:
 https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/handler.go
 https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/helper.go
 LiveKit's documented Twirp RoomService protocol uses a room-scoped admin JWT.
@@ -66,6 +67,40 @@ def target_identities(events, participants, target):
     return sorted({participant['identity'] for participant in participants} & identities)
 
 
+def mapped_targets(events, participants, target, bindings):
+    """Resolve exact identities; an opaque SFU name is never a user prefix."""
+    users = {event.get('state_key') for event in events if isinstance(event, dict) and event.get('type') == 'm.room.member' and isinstance(event.get('content'), dict) and event['content'].get('membership') == 'join'}
+    present = {participant['identity'] for participant in participants}
+    owners = {}
+    for event in events:
+        if not isinstance(event, dict) or event.get('type') != 'org.matrix.msc3401.call.member' or event.get('sender') not in users:
+            continue
+        user, content = event['sender'], event.get('content')
+        if not isinstance(content, dict):
+            continue
+        device = content.get('device_id')
+        if content.get('application') != 'm.call' or content.get('call_id') not in ('', 'ROOM') or not isinstance(device, str) or not 1 <= len(device) <= 512 or any(ord(c) < 32 for c in device):
+            continue
+        identity = user + ':' + device
+        if identity not in present:
+            continue
+        # Check every possible legacy user delimiter against actual room users,
+        # including server names with explicit ports; never guess by startswith.
+        if any(identity[:index] in users and identity[:index] != user for index, char in enumerate(identity) if char == ':'):
+            raise APIError(503, 'The conference contains an ambiguous legacy identity.')
+        owners[identity] = user
+    for binding in bindings:
+        identity, user = binding['identity'], binding['user_id']
+        if identity in owners and owners[identity] != user:
+            raise APIError(503, 'The conference identity could not be verified.')
+        owners[identity] = user
+    if present - owners.keys():
+        raise APIError(503, 'A conference participant has no verified identity. Wait for the call to reconnect before trying again.')
+    # Include issued identities that have not appeared in the SFU inventory yet:
+    # their connection may have been in flight when the moderator started.
+    return sorted(identity for identity, user in owners.items() if user == target)
+
+
 class CallModerator:
     def __init__(self, service):
         self.service = service
@@ -113,9 +148,25 @@ class CallModerator:
             return web.json_response({'available': False, 'reason': error.message})
         return web.json_response({'available': True, 'action': 'remove_from_channel_and_call'})
 
+    def bindings(self, room, alias):
+        if getattr(self.service, 'rtc_gateway', None) is None:
+            return []
+        return self.service.store.db.execute('SELECT identity,user_id FROM rtc_admissions WHERE room_alias=? AND room_id=?', (alias, room)).fetchall()
+
+    async def disconnect(self, alias, identity):
+        gateway = getattr(self.service, 'rtc_gateway', None)
+        if gateway is None:
+            await self.sfu('RemoveParticipant', alias, {'identity': identity})
+        else:
+            # Coordinate with token publication, signaling admission and the
+            # background revocation worker for this exact participant only.
+            async with gateway.lock(alias, identity):
+                await self.sfu('RemoveParticipant', alias, {'identity': identity})
+
     async def remove(self, request):
         session = self.service.require_session(request)
         data = await body_json(request)
+        self.service.require_session(request)
         room_id, target = data.get('roomId'), data.get('userId')
         if not isinstance(room_id, str) or not re.fullmatch(r'![^\s/\\?#]{1,254}', room_id) or not isinstance(target, str) or not re.fullmatch(r'@[^\s/\\?#]{1,254}:[^\s/\\?#]{1,254}', target):
             raise APIError(400, 'Choose a valid channel and participant.')
@@ -136,34 +187,32 @@ class CallModerator:
         participants = inventory.get('participants', [])
         if not isinstance(participants, list) or len(participants) > 1000 or any(not isinstance(p, dict) or not isinstance(p.get('identity'), str) for p in participants):
             raise APIError(502, 'The call participant inventory could not be verified.')
-        # The supported compatibility protocol provides userId:deviceId identities.
-        # Do not guess opaque modern identities or accept browser-supplied SFU names.
-        if any(not re.fullmatch(r'@[^\s:]+:[^\s:]+:.+', p['identity']) for p in participants):
-            raise APIError(503, 'This conference uses an unsupported participant identity format.')
         state = await self.service.matrix('GET', '/_synapse/admin/v1/rooms/' + quote(room_id, safe='') + '/state', token=await self.service.service_token())
         events = state.get('state')
-        if not isinstance(events, list):
+        if not isinstance(events, list) or len(events) > 50000:
             raise APIError(502, 'The conference membership inventory could not be verified.')
-        identities = target_identities(events, participants, target)
-        # A target-looking SFU identity without its matching MatrixRTC state is
-        # uncertain; fail before changing membership instead of claiming success.
-        if any(p['identity'].startswith(target + ':') and p['identity'] not in identities for p in participants):
-            raise APIError(503, 'This participant has an unverified call device. Wait for the room to sync before trying again.')
+        identities = mapped_targets(events, participants, target, self.bindings(room_id, alias))
         reason = data.get('reason', 'Removed from channel and conference by a moderator.')
         if not isinstance(reason, str) or len(reason) > 500:
             raise APIError(400, 'Use a moderation reason of at most 500 characters.')
         # Synapse authorizes the actual native kick, including Tavern roles and rank.
+        self.service.require_session(request)
         await self.service.matrix('POST', prefix + '/kick', {'user_id': target, 'reason': reason}, token=token)
         disconnected = 0
         try:
+            # Include scoped tokens published while native kick was in flight.
+            identities = sorted(set(identities) | set(mapped_targets(events, participants, target, self.bindings(room_id, alias))))
             for identity in identities:
-                await self.sfu('RemoveParticipant', alias, {'identity': identity})
+                await self.disconnect(alias, identity)
                 disconnected += 1
             # Recheck after the kick: another device may have joined between the
             # first inventory and native membership change. Never claim its
             # media is disconnected on the strength of the earlier snapshot.
             remaining = (await self.sfu('ListParticipants', alias)).get('participants', [])
-            if not isinstance(remaining, list) or any(not isinstance(participant, dict) or not isinstance(participant.get('identity'), str) or participant['identity'].startswith(target + ':') for participant in remaining):
+            if not isinstance(remaining, list) or len(remaining) > 1000 or any(not isinstance(participant, dict) or not isinstance(participant.get('identity'), str) for participant in remaining):
+                raise APIError(502, 'The participant disconnect could not be confirmed.')
+            still_target = set(mapped_targets(events, remaining, target, self.bindings(room_id, alias))) & {participant['identity'] for participant in remaining}
+            if still_target:
                 raise APIError(502, 'The participant disconnect could not be confirmed.')
         except APIError:
             self.service.audit(session['user_id'], 'call.remove.partial', target, room_id)

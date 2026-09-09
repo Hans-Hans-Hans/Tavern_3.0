@@ -7,11 +7,11 @@ function worker() {
   const events = {}, entries = new Map(), fetched = [], timers = new Map(), clients = ['one', 'two'].map(id => ({ id, messages: [], postMessage(message) { this.messages.push(message); } }));
   const cache = { async put(key, value) { entries.set(key, value); }, async match(key) { return entries.get(key); } };
   let activated = 0, nonce = 0;
-  const self = { location: { origin: 'https://tavern.test' }, clients: { matchAll: async () => clients, claim: async () => {} }, skipWaiting: async () => { activated++; }, addEventListener(type, listener) { events[type] = listener; } };
+  const self = { location: { origin: 'https://tavern.test' }, clients: { matchAll: async () => clients, claim: async () => {} }, skipWaiting: async () => { activated++; }, addEventListener(type, listener) { (events[type] ||= []).push(listener); } };
   const source = readFileSync(new URL('../scripts/service-worker.js', import.meta.url), 'utf8').replace('__TAVERN_BUILD__', 'test-version').replace('__TAVERN_STATIC_FILES__', JSON.stringify(['/index.html', '/assets/app-hash.js', '/manifest.webmanifest']));
   vm.runInNewContext(source, { self, URL, Set, Map, Promise, crypto: { randomUUID: () => 'nonce-' + (++nonce) }, caches: { open: async () => cache, keys: async () => [] }, Request: class { constructor(path, options) { this.url = 'https://tavern.test' + path; Object.assign(this, options); } }, fetch: async request => { fetched.push(request); return { ok: true, type: 'basic', body: 'public shell' }; }, setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; }, clearTimeout: id => timers.delete(id) });
   const pending = [];
-  function emit(type, detail = {}) { const event = { ...detail, waitUntil: promise => pending.push(promise) }; events[type](event); }
+  function emit(type, detail = {}) { const event = { ...detail, waitUntil: promise => pending.push(promise) }; for (const listener of events[type] || []) listener(event); }
   function request(path, options = {}) { let response = null; emit('fetch', { request: { url: 'https://tavern.test' + path, method: 'GET', mode: 'cors', headers: new Headers(), ...options }, respondWith: promise => { response = promise; } }); return response; }
   return { emit, request, clients, entries, fetched, timers, pending, activated: () => activated };
 }

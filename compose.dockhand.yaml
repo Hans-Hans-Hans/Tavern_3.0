@@ -126,6 +126,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-WARNING}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
       OPERATIONS_ENABLED: ${OPERATIONS_ENABLED:-false}
+      WEB_PUSH_ENABLED: ${WEB_PUSH_ENABLED:-false}
       OPERATIONS_URL: http://operations:8091
       OPERATIONS_TOKEN_FILE: /run/tavern-operations/token
       INTEGRATIONS_ENABLED: ${INTEGRATIONS_ENABLED:-false}
@@ -177,6 +178,7 @@ services:
         condition: service_healthy
     networks:
     - private
+    - egress
     healthcheck:
       test:
       - CMD
@@ -333,7 +335,8 @@ services:
     cap_drop: *id002
     security_opt: *id003
     labels: *id004
-    logging: *id001
+    logging:
+      driver: none
     profiles:
     - calls
     image: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
@@ -343,6 +346,7 @@ services:
       LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
       LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
       LIVEKIT_JWT_BIND: :8080
+      LIVEKIT_LOG_LEVEL: error
     volumes:
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro
     networks:

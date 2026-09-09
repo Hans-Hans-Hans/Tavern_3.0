@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import sqlite3
 import unittest
 from types import SimpleNamespace
 
@@ -9,6 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from api.call_moderation import CallModerator, CONFIRMATION, admin_token, room_alias, target_identities
+from api.rtc_gateway import RtcGateway, modern_identity
 from api.server import APIError
 
 
@@ -19,6 +21,7 @@ class CallModerationTests(unittest.IsolatedAsyncioTestCase):
         self.participants = [{'identity': '@member:test:A'}, {'identity': '@member:test:B'}, {'identity': '@other:test:C'}]
         self.events = [{'type': 'm.room.member', 'state_key': user, 'content': {'membership': 'join'}} for user in ('@mod:test', '@member:test', '@other:test')]
         self.events += [{'type': 'org.matrix.msc3401.call.member', 'sender': '@member:test', 'content': {'application': 'm.call', 'call_id': '', 'device_id': device}} for device in ('A', 'B')]
+        self.events.append({'type': 'org.matrix.msc3401.call.member', 'sender': '@other:test', 'content': {'application': 'm.call', 'call_id': '', 'device_id': 'C'}})
         def session(request):
             if request.headers.get('X-Test-Session') != 'yes':
                 raise APIError(401, 'Sign in')
@@ -37,6 +40,7 @@ class CallModerationTests(unittest.IsolatedAsyncioTestCase):
             return 'server-read-token'
         service = SimpleNamespace(require_session=session, store=SimpleNamespace(open=lambda token: 'caller-token', rate=lambda *args: None), matrix=matrix, service_token=service_token, audit=lambda *args: self.trace.append(('audit', args)))
         self.moderator = CallModerator(service)
+        self.service = service
         self.moderator.credentials = lambda: ('test-api-key', 'x' * 64)
         async def sfu(method, room, values=None):
             self.trace.append(('SFU', method, room, values))
@@ -62,6 +66,17 @@ class CallModerationTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.close()
+        if hasattr(self.service.store, 'db'): self.service.store.db.close()
+
+    def admission(self, user, device, member='call-member', room='!room:test'):
+        if not hasattr(self.service, 'rtc_gateway'):
+            self.service.store.db = sqlite3.connect(':memory:', isolation_level=None)
+            self.service.store.db.row_factory = sqlite3.Row
+            self.service.rtc_gateway = RtcGateway(self.service)
+        identity = modern_identity(user, device, member)
+        self.service.store.db.execute('''INSERT INTO rtc_admissions(room_alias,identity,room_id,user_id,device_id,member_id,session_id,created,expires)
+            VALUES(?,?,?,?,?,?,?,0,99999999999)''', (room_alias(room), identity, room, user, device, member, 'fixture-session-' + device))
+        return identity
 
     async def request(self, **patch):
         return await self.client.post('/remove', headers={'X-Test-Session': 'yes'}, json={'roomId': '!room:test', 'userId': '@member:test', 'confirmation': CONFIRMATION, **patch})
@@ -116,6 +131,52 @@ class CallModerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['membershipRemoved'])
         self.assertFalse(result['mediaDisconnectConfirmed'])
         self.assertEqual(result['disconnectedDevices'], 2)
+
+    async def test_modern_signed_admission_mapping_removes_only_the_exact_target_devices(self):
+        first = self.admission('@member:test', 'A')
+        second = self.admission('@member:test', 'B')
+        other = self.admission('@other:test', 'C')
+        self.participants = [{'identity': identity} for identity in (first, second, other)]
+        response = await self.request()
+        value = await response.json()
+        self.assertEqual(response.status, 200, value)
+        self.assertTrue(value['mediaDisconnectConfirmed'])
+        self.assertEqual(value['disconnectedDevices'], 2)
+        self.assertEqual(self.participants, [{'identity': other}])
+        self.assertEqual(len(self.service.rtc_gateway.locks), 0)
+
+    async def test_modern_binding_for_another_room_never_authorizes_participant_removal(self):
+        identity = self.admission('@member:test', 'A', room='!another:test')
+        self.participants = [{'identity': identity}]
+        self.assertEqual((await self.request()).status, 503)
+        self.assertFalse(self.removed)
+
+    async def test_unknown_opaque_participant_prevents_native_kick_even_when_target_is_known(self):
+        identity = self.admission('@member:test', 'A')
+        self.participants = [{'identity': identity}, {'identity': 'unregistered-modern-participant'}]
+        self.assertEqual((await self.request()).status, 503)
+        self.assertFalse(self.removed)
+
+    async def test_issued_modern_device_in_flight_is_removed_even_before_it_appears_in_inventory(self):
+        first = self.admission('@member:test', 'A')
+        in_flight = self.admission('@member:test', 'B')
+        self.participants = [{'identity': first}]
+        response = await self.request()
+        self.assertTrue((await response.json())['mediaDisconnectConfirmed'])
+        removed = [entry[3]['identity'] for entry in self.trace if entry[:2] == ('SFU', 'RemoveParticipant')]
+        self.assertEqual(set(removed), {first, in_flight})
+
+    async def test_modern_native_hierarchy_denial_and_sfu_failure_keep_existing_outcomes(self):
+        identity = self.admission('@member:test', 'A')
+        self.participants = [{'identity': identity}]
+        self.allowed = False
+        self.assertEqual((await self.request()).status, 403)
+        self.assertFalse(self.removed)
+        self.allowed = True; self.fail_disconnect = True
+        response = await self.request()
+        result = await response.json()
+        self.assertTrue(result['membershipRemoved'])
+        self.assertFalse(result['mediaDisconnectConfirmed'])
 
 
 class ScopedIdentityTests(unittest.TestCase):

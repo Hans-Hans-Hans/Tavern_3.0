@@ -1,5 +1,6 @@
 import { disposeCachedImageOwner } from './image-cache';
 import { readImageResponse } from './response-image';
+import { startWebPushSession, stopWebPushSession } from './web-push';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public details: any = {}) { super(message); }
@@ -7,7 +8,7 @@ export class ApiError extends Error {
 let expectedDevice = '';
 let artworkOwner = {};
 export function accountArtworkOwner() { return artworkOwner; }
-export function setAccountDevice(deviceId: string) { if (deviceId !== expectedDevice) { disposeCachedImageOwner(artworkOwner); artworkOwner = {}; } expectedDevice = deviceId; }
+export function setAccountDevice(deviceId: string) { if (!deviceId || (expectedDevice && deviceId !== expectedDevice)) stopWebPushSession(); if (deviceId !== expectedDevice) { disposeCachedImageOwner(artworkOwner); artworkOwner = {}; } expectedDevice = deviceId; }
 export async function requestApi<T = any>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await fetch('/api' + path, {
     method, credentials: 'same-origin', cache: 'no-store',
@@ -44,8 +45,9 @@ export async function fetchAccountArtwork(path: string, signal: AbortSignal): Pr
 }
 export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; passwordChangeRequired?: boolean; mfaEnrollmentRequired?: boolean };
 let managed = false;
-export function setManagedAccount(value: boolean) { managed = value; }
+export function setManagedAccount(value: boolean) { managed = value; if (!value) stopWebPushSession(); }
 export function isManagedAccount() { return managed; }
+export function accountSessionReady(session: AccountSession) { if (managed && expectedDevice === session.deviceId && !session.passwordChangeRequired && !session.mfaEnrollmentRequired) startWebPushSession(session.deviceId); }
 export function accountSignedOut(notice?: string) { setAccountDevice(''); window.dispatchEvent(new CustomEvent('tavern:signout', { detail: typeof notice === 'string' ? notice.slice(0, 600) : '' })); }
 
-export function notifyAccountRequirement(data:any){if(['MFA_ENROLLMENT_REQUIRED','PASSWORD_CHANGE_REQUIRED'].includes(data?.errcode||data?.code))window.dispatchEvent(new Event('tavern:account-requirement'));}
+export function notifyAccountRequirement(data:any){if(['MFA_ENROLLMENT_REQUIRED','PASSWORD_CHANGE_REQUIRED'].includes(data?.errcode||data?.code)){stopWebPushSession();window.dispatchEvent(new Event('tavern:account-requirement'));}}

@@ -1,0 +1,37 @@
+# Optional background notifications
+
+Background notifications are disabled by default. When the operator enables `WEB_PUSH_ENABLED`, a signed-in user can opt in from **Settings → Notifications → Background notifications**. Granting browser permission elsewhere does not subscribe Tavern. The account session, browser subscription and current worker must all agree before notifications are restored after a reload.
+
+The notice says **“You have new activity in Tavern.”** It contains no sender, room name, message body or attachment. Clicking it focuses an existing Tavern window without changing its URL, preserving pending invitations and other deep links. With no window open, the worker opens only the instance root. A push payload cannot supply a navigation URL.
+
+Encrypted mentions and incoming-call detection still need an open, connected client. Background activity follows native push rules plus the account service's current notification policy; the homeserver cannot inspect encrypted message bodies. Browser background limits, connectivity and expired account sessions can delay or prevent delivery. Re-enable notifications after signing in when a session or browser subscription expires.
+
+## Ownership and delivery
+
+The worker stores only an opaque subscription generation, its expiry, and an optional disabled-generation tombstone in the `tavern-push` IndexedDB database. This storage is separate from the static offline shell cache. It contains no Matrix credentials, account identifiers, profiles, room IDs, messages or notification tickets.
+
+The authenticated configuration returns a subscription fingerprint: SHA-256 of UTF-8 `JSON.stringify([endpoint, p256dh, auth])`. Passive restoration requires this fingerprint to match the actual browser subscription and never calls `requestPermission()` or `subscribe()`. Each explicit subscription registration receives a fresh backend generation. A delayed response from a previous page owner cannot bind a new owner, including an account A → B → A transition.
+
+Every worker binding also requires a fresh `/api/push/bind` confirmation using the current same-origin account cookie and the caller's expected device header. Only generation and expiry are returned. Cookies and device headers are used for this request but never persisted by the worker. Pending bindings are fenced against intervening owner changes and generation-specific clears, including an empty-owner transition. A stale clear that changes nothing does not cancel the current owner's delivery check.
+
+Before displaying a notice, the worker validates a bounded payload and its current persisted generation, then posts its short-lived ticket to `/api/push/check` with credentials omitted. The server rechecks current eligibility. Any malformed, expired, revoked, offline or failed check suppresses display. The worker rechecks its local generation after asynchronous work and closes a notice if logout races with the browser creating it.
+
+Explicit subscription changes and passive restoration share a browser-wide Web Lock. Disabling notifications rechecks the current server registration, clears the matching worker generation and removes that server registration. Browser unsubscription additionally requires matching worker ownership and the original subscription fingerprint inside the same lock. Key changes recheck authenticated configuration inside the lock before replacing the provider subscription. A stale tab cannot unsubscribe a newer tab's provider. A failed cleanup remains available as a retry action; a persisted tombstone prevents passive restoration of that disabled registration.
+
+Logout clears known owner state synchronously in the page and performs generation-scoped worker cleanup. It deliberately leaves the shared browser provider subscribed, since another tab may already have reused it. An unknown or stale page never reads another tab's generation merely to clear it. Server session revocation makes the retained provider incapable of authorizing old-account notices. A successful replacement login expires the previous browser cookie session and its push registration transactionally, while preserving other devices and the old native Matrix device's keys.
+
+## Browser behavior and open tabs
+
+A responsive, connected Tavern tab renews a foreground lease every 20 seconds while its normal SDK alert handler is active. The server expires each lease 35 seconds after the last accepted heartbeat and suppresses provider delivery while a valid lease exists. Each tab has its own random identifier and increasing sequence; an inactive tombstone rejects older requests for 35 seconds, and one tab cannot release another tab's lease. Handler loss, page hide and account changes release the tab's lease best-effort.
+
+A browser can suspend a hidden tab without running page cleanup. Its last accepted heartbeat can suppress background delivery for another 35 seconds; a delayed in-flight heartbeat may be accepted after the tab freezes or after the inactive tombstone expires. A closing page's release request may also be interrupted. No lease proves that a particular encrypted event was rendered, and this is not exact event deduplication. The worker's one-second current-tab acknowledgement remains a narrow fallback for a delivery already in flight; frozen or closed tabs cannot acknowledge.
+
+Browsers control notification display and subscription lifetime. In particular, WebKit requires `userVisibleOnly` subscriptions to produce visible notifications and may revoke subscriptions after silent deliveries. Security rejection must still suppress revoked or stale notices; Tavern does not use a declarative fallback that could bypass the current-owner check. See [WebKit's Web Push contract](https://webkit.org/blog/12945/meet-web-push/). On iOS and iPadOS, permission requests require a user gesture in a web app installed on the Home Screen; see [WebKit's platform guidance](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/).
+
+## Integration and verification
+
+`startWebPushSession(deviceId)` runs only after a managed account is authenticated and required security gates are complete. An initial page reload must not call stop solely because the first authenticated device differs from the page's initially empty device value. `stopWebPushSession()` runs on real account boundaries, proven logout and security gates. `setWebPushForegroundHandler()` receives the SDK's current device/readiness check without adding Matrix SDK imports to the authentication entry point. `refreshWebPushForeground()` rechecks immediately when SDK sync state changes, including disconnection.
+
+The existing PWA update handshake and explicit static-asset cache allowlist remain unchanged. Push state and HTTP requests never enter the shell cache.
+
+Validation includes frontend consent/fingerprint/retry/account races, worker restart and generation-CAS races, backend-check revocation, late OS-notice cleanup, generic payloads, safe clicks, and the existing PWA guard regressions. Browser tests register the actual worker, use native IndexedDB, and call native `showNotification`. They substitute the external PushManager subscription and HTTP backend. Chromium headless may accept `showNotification` without retaining an OS notification; tests observe completed native calls and do not claim delivery through an external provider, a locked desktop, Safari or iOS.

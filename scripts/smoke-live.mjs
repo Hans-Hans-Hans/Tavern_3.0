@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { privateDiscussionSmoke } from './smoke-private-discussions.mjs';
 import { afkSmoke } from './smoke-afk.mjs';
+import { eligibilitySmoke } from './smoke-eligibility.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
@@ -229,7 +230,8 @@ try {
   await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   console.log('PASS: a cropped profile avatar uploads, persists in the account and room, and loads through authenticated thumbnails for another user after reload.');
   await privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent });
-  await afkSmoke({ admin, alice, adminSession, aliceSession, api });
+  const afkFixture = await afkSmoke({ admin, alice, adminSession, aliceSession, api });
+  await eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, encryptedProbe: { roomId, eventId }, origin, api, ready, encryptedResponse, encryptedEvent });
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
 } catch (error) {
   console.error('Live browser errors:', errors);

@@ -2,7 +2,8 @@ import { brandingAsset } from '@/lib/branding';
 import { SecurityEnrollment } from './security-enrollment';
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Beer, Loader2, ShieldCheck } from 'lucide-react';
-import { requestApi, setManagedAccount, setAccountDevice, type AccountSession } from '@/lib/api';
+import { requestApi, setManagedAccount, setAccountDevice, accountSessionReady, type AccountSession } from '@/lib/api';
+import { stopWebPushSession } from '@/lib/web-push';
 import './product.css';
 import { useInstanceStatus, InstanceNotices } from './instance-status';
 import { readInstanceConfig } from '@/lib/instance';
@@ -26,13 +27,16 @@ export function AuthGateway() {
   const status=useInstanceStatus(!!config&&['ready','maintenance','login','bootstrap'].includes(mode));
   useEffect(() => { setPwaReloadAllowed(!busy && ['login', 'failure', 'legacy'].includes(mode)); return () => setPwaReloadAllowed(false); }, [mode, busy]);
   useEffect(() => { const reconnect = () => { if (mode === 'failure') void initialize(); }; window.addEventListener('tavern:reconnect', reconnect); return () => window.removeEventListener('tavern:reconnect', reconnect); }, [mode]);
-  useEffect(()=>{if(session&&!session.admin&&status?.maintenance.enabled&&mode==='ready'){void import('@/lib/matrix').then(m=>m.clearLocalMatrixSession());setMode('maintenance');}},[status,session,mode]);
+  useEffect(()=>{if(session&&!session.admin&&status?.maintenance.enabled&&mode==='ready'){stopWebPushSession();void import('@/lib/matrix').then(m=>m.clearLocalMatrixSession());setMode('maintenance');}},[status,session,mode]);
   async function openSession(value: AccountSession) {
     setAccountDevice(value.deviceId);
-    if (value.passwordChangeRequired) { setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
-    if(value.mfaEnrollmentRequired){setSession(value);setPassword('');setNewPassword('');setConfirmation('');setCode('');setMode('security-enrollment');return;}
+    if (value.passwordChangeRequired) { stopWebPushSession(); setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
+    if(value.mfaEnrollmentRequired){stopWebPushSession();setSession(value);setPassword('');setNewPassword('');setConfirmation('');setCode('');setMode('security-enrollment');return;}
     const health=await requestApi('/system/status').catch(()=>null);
-    if(health?.maintenance?.enabled&&!value.admin){setSession(value);setMode('maintenance');return;}
+    if(health?.maintenance?.enabled&&!value.admin){stopWebPushSession();setSession(value);setMode('maintenance');return;}
+    // Reconcile the browser's notification owner before potentially slow crypto
+    // initialization. Foreground handling remains off until Matrix sync is ready.
+    accountSessionReady(value);
     const { attachManagedMatrixSession } = await import('@/lib/matrix');
     if(!location.pathname.startsWith('/admin'))await attachManagedMatrixSession(value);
     setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('ready');
@@ -44,7 +48,7 @@ export function AuthGateway() {
       if (typeof value.bootstrapRequired !== 'boolean') { if((await readInstanceConfig()).managedAuth)throw new Error('The account service returned invalid configuration.');setManagedAccount(false); setMode('legacy'); return; }
       setManagedAccount(true); setConfig(value);
       try { await openSession(await requestApi<AccountSession>('/auth/session')); }
-      catch (e: any) { if (e.status !== 401) throw e; setMode(value.bootstrapRequired ? 'bootstrap' : 'login'); }
+      catch (e: any) { if (e.status !== 401) throw e; setAccountDevice(''); setMode(value.bootstrapRequired ? 'bootstrap' : 'login'); }
     } catch (e: any) {
       // Older static deployments have no companion service; preserve their login.
       if (e.status === 404) { setManagedAccount(false); setMode('legacy'); }

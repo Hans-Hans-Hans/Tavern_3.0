@@ -352,12 +352,19 @@ class Service:
         if not row or row["expires"] <= now:
             return None
         session = dict(row)
-        if now - row["rotated"] > 900:
+        # Nginx auth_request cannot deliver this subresponse's cookie rotation
+        # to the browser. Authenticate normally, but leave rotation to ordinary
+        # API/Matrix responses so a signaling check cannot strand the old cookie.
+        # Worker ownership checks also must not restore an old cookie after a
+        # newer login completes while their request body is still arriving.
+        rotate_cookie = (request.method, request.path) not in {
+            ('GET', '/api/calls/sfu-authorize'), ('POST', '/api/push/bind')}
+        if rotate_cookie and now - row["rotated"] > 900:
             fresh = secrets.token_urlsafe(32)
             self.store.db.execute("UPDATE sessions SET previous_hash=cookie_hash,previous_until=?,cookie_hash=?,cookie=?,rotated=? WHERE id=?",
                                   (now + 30, self.store.digest(fresh), self.store.seal(fresh), now, row["id"]))
             request["cookie"] = (fresh, session)
-        elif digest != row["cookie_hash"]:
+        elif rotate_cookie and digest != row["cookie_hash"]:
             request["cookie"] = (self.store.open(row["cookie"]), session)
         if now - row["last_seen"] > 30:
             self.store.db.execute("UPDATE sessions SET last_seen=? WHERE id=?", (now, row["id"]))
@@ -407,6 +414,7 @@ class Service:
 
     async def issue_session(self, request, login, remember=False):
         user = login['user_id']
+        previous_session_id = (request.get('session') or {}).get('id')
         def lifetime():
             journal = self.store.db.execute('SELECT id,phase,updated FROM account_deactivations WHERE user_id=? ORDER BY created DESC,id DESC LIMIT 1', (user,)).fetchone()
             return self.store.account(user).get('credential_epoch', 0), tuple(journal) if journal else None
@@ -440,6 +448,12 @@ class Service:
                 self.store.db.execute("INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)", (user, now))
                 self.store.db.execute('UPDATE accounts SET known_admin=? WHERE user_id=?', (int(result['admin']), user))
                 self.store.db.execute("INSERT INTO sessions(" + ",".join(session) + ") VALUES(" + ",".join("?" for _ in session) + ")", tuple(session.values()))
+                if previous_session_id:
+                    # A replacement cookie retires only its previous browser
+                    # session. Keep the native device and encryption keys intact.
+                    self.store.db.execute('UPDATE sessions SET expires=MIN(expires,?) WHERE id=?', (time.time(), previous_session_id))
+                    if getattr(self, 'push', None):
+                        self.push.revoke_session(previous_session_id)
                 self.audit(user, "login", session["device_id"])
                 self.store.db.execute('COMMIT')
             except BaseException:
@@ -1037,6 +1051,8 @@ class Service:
         # Every credential path goes through Tavern so MFA cannot be bypassed.
         if re.search(r"/_matrix/client/(?:api/v1|[^/]+)/(login|register|refresh|account/password|account/deactivate|account/3pid)(/|$)", path) and request.method != "GET":
             raise APIError(403, "Use Tavern account settings for this operation.", "ACCOUNT_ROUTE_REQUIRED")
+        if re.search(r"/_matrix/client/(?:api/v1|[^/]+)/pushers/set(?:/|$)", path):
+            raise APIError(403, "Use Tavern notification settings to manage browser push delivery.", "ACCOUNT_ROUTE_REQUIRED")
         if re.search(r"/_matrix/client/(?:api/v1|[^/]+)/logout(?:/all)?$", path):
             raise APIError(403, "Use Tavern session settings to sign out.", "ACCOUNT_ROUTE_REQUIRED")
         upload_path = re.fullmatch(r"/_matrix/(?:media/(?:r0|v3)|client/(?:v1|v3|unstable)/media)/upload", path)
@@ -1070,16 +1086,16 @@ def text_value(value: object, maximum: int) -> str:
     return value
 
 
-async def body_json(request):
+async def body_json(request, limit=32768):
     if request.content_type != "application/json":
         raise APIError(415, "Send this request as JSON.", "INVALID_CONTENT_TYPE")
-    if request.content_length and request.content_length > 32768:
+    if request.content_length and request.content_length > limit:
         raise APIError(413, "This request is too large.")
     try:
         raw = bytearray()
         async for chunk in request.content.iter_chunked(8192):
             raw.extend(chunk)
-            if len(raw) > 32768:
+            if len(raw) > limit:
                 raise APIError(413, "This request is too large.")
         data = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
@@ -1093,12 +1109,19 @@ async def body_json(request):
 async def boundary(request, handler):
     service = request.app["service"]
     try:
-        if request.path != "/health":
+        # Synapse authenticates this one server-to-server callback with the
+        # registration capability. It must never consume a browser cookie.
+        push_delivery = request.method == 'POST' and request.path == '/_matrix/push/v1/notify'
+        push_ticket = request.method == 'POST' and request.path == '/api/push/check'
+        if request.path != "/health" and not push_delivery:
             if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("Origin") != service.config.public_url:
                 raise APIError(403, "The request origin was not accepted. Reload Tavern and try again.", "CSRF_REJECTED")
             if request.headers.get("Sec-Fetch-Site") == "cross-site":
                 raise APIError(403, "Cross-site requests are not accepted.", "CSRF_REJECTED")
-            service.authenticate(request)
+            # A display ticket permits only a short-lived eligibility check;
+            # normal same-origin POST protections still apply to this route.
+            if not push_ticket:
+                service.authenticate(request)
         if request.method not in {"GET", "HEAD", "OPTIONS"} and request.path.startswith("/api/account/") and request.get("session"):
             # Prevent concurrent factor replacement and other sensitive operations
             # from racing one another on independent requests from the same user.
@@ -1134,14 +1157,28 @@ async def response_headers(request, response):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    publish_cookie = False
     if request.get("clearCookie"):
         response.del_cookie(COOKIE, path="/", secure=True, httponly=True, samesite="Strict")
+        publish_cookie = True
     elif request.get("cookie"):
         cookie, session = request["cookie"]
-        response.set_cookie(COOKIE, cookie, path="/", secure=True, httponly=True, samesite="Strict", max_age=max(0, int(session["expires"] - time.time())) if session["persistent"] else None)
+        service, now = request.app['service'], time.time()
+        row = service.store.db.execute('SELECT * FROM sessions WHERE id=? AND expires>?', (session['id'], now)).fetchone()
+        if row:
+            digest = service.store.digest(cookie)
+            matches = hmac.compare_digest(digest, row['cookie_hash']) or bool(row['previous_hash'] and row['previous_until'] > now and hmac.compare_digest(digest, row['previous_hash']))
+            policy = service.security_policy()
+            maximum = row['created'] + (policy['persistentDays'] * 86400 if row['persistent'] else policy['sessionHours'] * 3600)
+            expires = min(row['expires'], maximum)
+            if matches and expires > now:
+                # A delayed rotation response may still be within its grace
+                # period. Publish the current cookie, never roll back a rotation.
+                response.set_cookie(COOKIE, service.store.open(row['cookie']), path="/", secure=True, httponly=True, samesite="Strict", max_age=max(0, int(expires - now)) if row['persistent'] else None)
+                publish_cookie = True
     # aiohttp serializes cookies before on_response_prepare. Add the newly set
     # cookie explicitly here so streamed Matrix responses can rotate it too.
-    if request.get("clearCookie") or request.get("cookie"):
+    if publish_cookie:
         response.headers.add("Set-Cookie", response.cookies[COOKIE].output(header="").strip())
 
 
@@ -1176,7 +1213,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation"):
+    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "push_notifications", "server_eligibility"):
         import_module(prefix + module).register_routes(app)
     return app
 

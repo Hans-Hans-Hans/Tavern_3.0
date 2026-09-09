@@ -190,6 +190,13 @@ loaded directly by RTC authorization. No copying of LiveKit secrets into stack
 environment fields is needed. Existing `prepare-calls.py` credentials are
 preserved and converted to the file interface when both config files exist.
 
+The account API checks current room and account permissions before issuing a
+conference token and before every signaling connection or reconnect. Keep the
+issuer and LiveKit HTTP services private and use the shipped gateway routes;
+see [conference authorization](RTC_AUTHORIZATION.md) for removal timing and
+service-outage limits. Raw issuer logs are disabled because upstream transport
+errors can contain credentials; the account API records sanitized diagnostics.
+
 | Public ports forwarded to Docker host | Purpose |
 |---|---|
 | TCP443 to NPM | HTTPS, Matrix signaling, LiveKit WebSockets |
@@ -202,6 +209,32 @@ Create the TURN hostname as **DNS-only**. Enable WebSockets on the Tavern NPM
 host. UDP ports go directly to the Docker host, not through an HTTP proxy.
 Test calls between separate networks, including one mobile-data participant;
 passing a local health endpoint does not prove external media routing.
+
+## Background notifications
+
+Signing in again in the same browser replaces its previous cookie session.
+Other devices keep their sessions, and native Matrix devices and encryption keys
+are retained. Delayed responses from the retired session cannot restore its cookie.
+
+Set `WEB_PUSH_ENABLED=true` in the existing `.env`, then run
+`docker compose up -d --build`. Users opt in separately from **Settings →
+Notifications → Background notifications**. Tavern creates the VAPID signing
+key once in the existing account data volume; preserve that volume and its
+encryption key during updates and backups. No browser vendor account or manually
+copied push secret is required.
+
+Synapse must reach `https://TAVERN_DOMAIN/_matrix/push/v1/notify`, and the account
+API must reach public browser push providers over HTTPS. The shipped Compose
+networks provide outbound access. Keep private-address SSRF protection enabled:
+a DNS override inside the Synapse container that resolves Tavern to a LAN or
+Docker address will block this callback. Clients may still use local DNS while
+the server resolves the public hostname through its external route.
+
+Notices contain only generic activity text. Session expiry, browser permission,
+native notification rules, DND and current room access affect delivery. Encrypted
+mentions and incoming-call recognition still require an open client. See
+[background notification behavior](WEB_PUSH.md) for browser restrictions,
+foreground handoff and the remaining real-device acceptance.
 
 ## Webhook bot
 

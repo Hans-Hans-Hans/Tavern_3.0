@@ -1,8 +1,25 @@
 # Tavern validation record
 
-This records observed checks for the 0.4 development code, including the `923d726` test checkpoint pushed to `V3` on 2026-09-09. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
+This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
 ## Observed continuous integration
+
+[Run 34362064249](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34362064249)
+passed the complete workflow at development commit `12c5c54`: production build,
+242 JavaScript tests, 116 browser tests, 317 Python checks, offline PWA, Compose,
+remote Docker builds, restricted gateway and fresh-stack restart/persistence.
+Live TLS SMTP/bootstrap and ordinary-account authorization passed, alongside
+actual encrypted messages, edits, threads, files and avatar reload. Private
+discussion creation/invitation/source exclusion, bidirectional encryption,
+source-access loss, archive and stale-state enforcement all passed. Native AFK
+settings enforced custom authority beyond native power, revision checks,
+destination validity and redaction protection. The final account-settings probe
+deactivated the isolated Bob account in Synapse, completed its durable local
+journal, rejected its former session cookie and left Alice signed in. The
+independent failed-update fixture restored healthy application images, data and
+signing identity. This development commit does not include the later Web Push or
+conference admission gateway. At the time of that run, `V3` was the separate
+`923d726` checkpoint; subsequent branch updates require their own CI evidence.
 
 [Run 34357539438](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34357539438) reached the new private-discussion acceptance at `3677751`. It passed the earlier build/browser/Python/Docker stages, real encrypted messages and files, native self-profile hydration, avatar reload and isolated update rollback. Native private creation required explicit source permission; source-owner joins/reads and privacy widening were rejected. Alice and invited Bob exchanged actual encrypted private messages and retained same-device decryption after reload. Direct encrypted sends were denied after source permission or membership loss. The overall workflow then failed because an archive state write received Synapse's HTTP 429 rate limit. The probe now respects bounded server-reported retry delays for its GET/PUT requests; room creation and ambiguous network failures are not replayed. Archive/stale-revision acceptance still needs the rerun.
 
@@ -43,6 +60,27 @@ Development run [34358857688](https://github.com/Hans-Hans-Hans/Tavern_3.0/actio
 Development run [34360606392](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34360606392) at `a84c23e` passed 239 JavaScript and 116 browser tests, 317 Python checks, production/PWA/Docker validation, fresh stack, TLS setup, encrypted message/edit/thread/file and avatar-reload acceptance, and isolated failed-update rollback. The real three-account private-discussion probe completed: explicit creation grants, source-owner exclusion, invitation acceptance, bidirectional encryption/reload, source permission and membership loss, archive rejection and stale-state rejection all passed. AFK setup then hit `M_LIMIT_EXCEEDED` while Alice joined its explicitly created fixture rooms. A bounded retry now rechecks native membership before repeating that known-room join; network ambiguity is not automatically replayed. That failed run did not reach native AFK assertions or account deactivation.
 
 ## Subsequent local verification
+
+The conference authorization, background Web Push and server account requirements
+working tree passed the production build/typecheck, offline PWA check, 272
+JavaScript tests, 124 browser tests and 428 Python checks (eight Windows/platform
+skips). Call checks exercise actual API sessions, signed modern/legacy scope,
+refreshed-token admission, native/custom authority, revocation retries and exact
+participant removal. Seven actual HTTP cookie-lifecycle cases include a delayed
+old-account response after replacement login. Eligibility regressions cover
+native account fields, current verification, all canonical parents, private
+source inheritance and changes to settings authority during awaited checks.
+
+Push transport tests use real local TLS, recipient payload decryption and VAPID
+signature verification, including post-DNS revocation and redirect rejection.
+Browser tests include two actual tabs sharing the worker, IndexedDB and Web Locks,
+with native `showNotification` calls and provider/HTTP fixtures. Independent
+reviews reproduced and retested stale binding, cleanup and permission races.
+These results do not prove delivery through an external provider, Safari/iOS or
+physical call media. The new isolated Docker fixture exercises the built Nginx
+HTTP/WebSocket routes, credential/body stripping and alternate-route denial.
+That fixture and the native Synapse email/account-age probe await this
+checkpoint's CI run.
 
 The combined call-quality, AFK, durable deactivation, historical-thread and welcome-sync checkpoint passed production build/typecheck, all 239 JavaScript tests and all 116 browser tests. Python ran 317 checks successfully with eight Windows/platform or optional-dependency skips. Deactivation review independently reproduced and retested four asynchronous/native-response failure cases. Thread checks use the pinned SDK models and exercise the actual Matrix API projection, including missing decryption keys. Browser call-quality checks use canvas tracks and negotiated native WebRTC senders; they do not establish physical camera, microphone or external TURN behavior. New native AFK policy and Bob deactivation probes are integrated after private-discussion checks and await this checkpoint's Docker workflow.
 

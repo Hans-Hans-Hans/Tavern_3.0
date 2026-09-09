@@ -1,4 +1,5 @@
 import { readPresenceMode } from './presence';
+import { refreshWebPushForeground, setWebPushForegroundHandler } from './web-push';
 import { readThreadNotification } from './thread-preferences';
 import { notificationDefaultsEvent, notificationEligible, notificationServerForRoom, readNotificationDefaults, readNotificationPreferences, resolveNotificationPreference, updateNotificationPreferences, type NotificationPreferences } from './notification-preferences';
 import { ClientEvent, MatrixEventEvent, RoomEvent, RoomStateEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
@@ -62,9 +63,9 @@ function queueDefaults() {
   }, 250);
 }
 const defaultsChanged = (event: MatrixEvent) => { if ([notificationDefaultsEvent, 'm.space.parent', 'm.space.child'].includes(event.getType()) || event.getType() === 'm.room.member' && event.getStateKey() === client?.getUserId()) queueDefaults(); };
-const synced=(state:string)=>{if(state==='PREPARED'||state==='SYNCING'){ready=true;queueDefaults();}};
-export function initializeNotifications(c:MatrixClient){resetNotifications();client=c;started=Date.now();c.on(ClientEvent.Sync,synced);c.on(RoomEvent.Timeline,eventReceived);c.on(MatrixEventEvent.Decrypted,eventReceived);c.on(RoomStateEvent.Events,defaultsChanged);}
-export function resetNotifications(){client?.off(ClientEvent.Sync,synced);client?.off(RoomEvent.Timeline,eventReceived);client?.off(MatrixEventEvent.Decrypted,eventReceived);client?.off(RoomStateEvent.Events,defaultsChanged);client=null;ready=false;seen.clear();appliedDefaults.clear();if(defaultTimer)clearTimeout(defaultTimer);defaultTimer=undefined;retryAfter=0;defaultsError='';if(soundContext){void soundContext.close().catch(()=>{});soundContext=null;}}
+const synced=(state:string)=>{if(state==='PREPARED'||state==='SYNCING'){ready=true;queueDefaults();}refreshWebPushForeground();};
+export function initializeNotifications(c:MatrixClient){resetNotifications();client=c;started=Date.now();setWebPushForegroundHandler(device=>client===c&&ready&&['PREPARED','SYNCING'].includes(c.getSyncState()||'')&&c.getDeviceId()===device&&(document.visibilityState==='visible'||browserNotificationsEnabled()));c.on(ClientEvent.Sync,synced);c.on(RoomEvent.Timeline,eventReceived);c.on(MatrixEventEvent.Decrypted,eventReceived);c.on(RoomStateEvent.Events,defaultsChanged);}
+export function resetNotifications(){setWebPushForegroundHandler(null);client?.off(ClientEvent.Sync,synced);client?.off(RoomEvent.Timeline,eventReceived);client?.off(MatrixEventEvent.Decrypted,eventReceived);client?.off(RoomStateEvent.Events,defaultsChanged);client=null;ready=false;seen.clear();appliedDefaults.clear();if(defaultTimer)clearTimeout(defaultTimer);defaultTimer=undefined;retryAfter=0;defaultsError='';if(soundContext){void soundContext.close().catch(()=>{});soundContext=null;}}
 export async function setRoomNotifications(c:MatrixClient,roomId:string,mode:'all'|'mentions'|'mute'){
   await nativeRoomNotifications(c,roomId,mode);
   await updateNotificationPreferences(p=>({...p,rooms:{...p.rooms,[roomId]:{mode:mode==='mute'?'nothing':mode,mutedUntil:0}}}),c);
