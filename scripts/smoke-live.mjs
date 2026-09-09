@@ -185,6 +185,40 @@ try {
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   assert.deepEqual(Buffer.concat(chunks), fileBytes);
   console.log('PASS: Synapse stores the uploaded file as ciphertext and it decrypts byte-for-byte for the receiving user.');
+
+  await bob.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await alice.getByRole('button', { name: 'Your profile', exact: true }).click();
+  const profileForm = alice.locator('.community-profile-form');
+  await expect(profileForm.getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('CI Alice');
+  const avatarPng = Buffer.from(await alice.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#3456aa'; context.fillRect(0, 0, 64, 64);
+    context.fillStyle = '#f0cf55'; context.fillRect(16, 16, 32, 32);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }), 'base64');
+  await profileForm.getByLabel('Choose avatar', { exact: true }).setInputFiles({ name: 'ci-avatar.png', mimeType: 'image/png', buffer: avatarPng });
+  await expect(profileForm.getByRole('img', { name: 'Crop preview', exact: true })).toBeVisible();
+  const avatarUpload = await responseDuring(alice,
+    response => response.request().method() === 'POST' && /\/_matrix\/(media|client)\/.*\/upload(?:\?|$)/.test(response.url()),
+    () => profileForm.getByRole('button', { name: 'Use cropped image', exact: true }).click());
+  assert.equal(avatarUpload.status(), 200);
+  const avatarUri = (await avatarUpload.json()).content_uri;
+  const ownAvatar = profileForm.getByRole('img', { name: 'Avatar', exact: true });
+  await expect(ownAvatar).toHaveAttribute('src', /^blob:/);
+  await ownAvatar.scrollIntoViewIfNeeded();
+  await expect.poll(() => ownAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  await profileForm.getByRole('button', { name: 'Save profile', exact: true }).click();
+  await expect(alice.getByText('Profile saved', { exact: true })).toBeVisible();
+  assert.equal((await api(alice, '/_matrix/client/v3/profile/' + encodeURIComponent(aliceSession.userId) + '/avatar_url', undefined, true)).data.avatar_url, avatarUri);
+  assert.equal((await api(alice, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/state/m.room.member/' + encodeURIComponent(aliceSession.userId), undefined, true)).data.avatar_url, avatarUri);
+  await alice.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await bob.reload(); await ready(bob);
+  const sharedAvatar = bob.getByRole('button', { name: 'View CI Alice profile', exact: true }).first().getByRole('img', { name: 'CI Alice', exact: true });
+  await expect(sharedAvatar).toHaveAttribute('src', /^blob:/);
+  await sharedAvatar.scrollIntoViewIfNeeded();
+  await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  console.log('PASS: a cropped profile avatar uploads, persists in the account and room, and loads through authenticated thumbnails for another user after reload.');
 } catch (error) {
   console.error('Live browser errors:', errors);
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));

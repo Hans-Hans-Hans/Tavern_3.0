@@ -213,9 +213,10 @@ def main():
         prefixes = {'tavern-web': 'ghcr.io/hans-hans-hans/tavern', 'tavern-api': 'ghcr.io/hans-hans-hans/tavern-api'}
         old, pinned = {}, {}
         for service, prefix in prefixes.items():
-            old[service] = prefix + ':0.4.0-ci-base.' + nonce
+            tag = '0.4.0-ci-base.' + nonce
+            old[service] = prefix + ':' + tag
             image = engine.images.get(source[service].attrs['Image'])
-            image.tag(old[service])
+            image.tag(prefix, tag=tag)
             owned_tags.append(old[service])
             assert engine.images.get(old[service]).id == image.id
             candidate = prefix + ':' + version
