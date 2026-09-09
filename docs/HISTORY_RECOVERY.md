@@ -45,3 +45,10 @@ preservation, busy-tab handling and cancellation after a session change. Recover
 UI tests separately cover wrong keys, full-history restoration by default, and
 clearing entered secrets after a session change. See [VALIDATION.md](VALIDATION.md)
 for native server test results.
+
+The live CI probe has also passed managed logout/relogin recovery using retained
+browser keys and recovery in a separate fresh browser from the native encrypted
+backup. It verifies an incorrect recovery key leaves the existing backup and
+signing identity intact. This proves those paths on the isolated test server;
+availability of your older history still depends on the keys your devices or
+backup retained.

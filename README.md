@@ -2,7 +2,7 @@
 
 Tavern is a self-hosted messaging and community application built on Matrix. Encrypted conversations, communities, account security, calls, and administration run in one Docker Compose stack.
 
-The **0.4 development test checkpoint** is on `V3`; ongoing work continues on `codex/tavern-completion`. It is undergoing integration testing; no 0.4 release or container image has been published. See the [features](docs/FEATURES.md), [implementation checklist](docs/IMPLEMENTATION_CHECKLIST.md), and [validation record](docs/VALIDATION.md) for implemented behavior and remaining acceptance checks.
+The **0.4 development test checkpoints** and further updates are on `V3`. It is undergoing integration testing; no 0.4 release or container image has been published. See the [features](docs/FEATURES.md), [implementation checklist](docs/IMPLEMENTATION_CHECKLIST.md), and [validation record](docs/VALIDATION.md) for implemented behavior and remaining acceptance checks.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ The **0.4 development test checkpoint** is on `V3`; ongoing work continues on `c
 For a **fresh test installation** of the development version:
 
 ```sh
-git clone --branch codex/tavern-completion https://github.com/Hans-Hans-Hans/Tavern_3.0.git tavern
+git clone --branch V3 https://github.com/Hans-Hans-Hans/Tavern_3.0.git tavern
 cd tavern
 cp .env.example .env
 nano .env

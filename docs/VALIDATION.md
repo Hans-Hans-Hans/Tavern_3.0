@@ -16,11 +16,22 @@ full-history restore selected by default, wrong-key retry and clearing secrets
 when the session changes. Node checks also distinguish a usable backup key
 from an unrelated cached key and stop stale recovery operations.
 
-The new live recovery probe is mounted before the other feature probes. It
-exercises managed logout/relogin, retained browser keys, an actual native
-encrypted backup upload and recovery in a fresh browser without changing the
-backup or signing identity. Its six local scope/fixture/secret-cleanup tests
-pass; native execution of this newly added probe is pending CI.
+The live recovery probe passed in `V3` checkpoint `344e8c8`, workflow
+[34395227904](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34395227904).
+A managed logout/relogin created a new device that decrypted history from the
+retained browser store. A separate fresh browser initially lacked those keys,
+rejected a wrong recovery key without changing the native backup or signing
+identity, and restored the real encrypted message using the saved recovery key.
+The probe verified that the exact message session reached the encrypted native
+backup before logout. It preserved the old browser store and used an isolated
+ordinary account without changing the other live messaging fixtures.
+
+That workflow also passed its 404 JavaScript, 210 browser and 572 Python checks,
+production PWA, Docker/gateway, binary backup/restore, failed-update rollback,
+and native messaging/private-discussion/AFK/eligibility/profile checks. The full
+workflow failed later: system-notice settings returned 500, with the targeted
+diagnostic identifying `initial_authority (PermissionError)`. The failure does
+not negate the completed recovery proofs or establish passing system notices.
 
 The previous `V3` checkpoint `e6d294b` passed build, JavaScript, browser, Python,
 PWA, Docker/gateway and native messaging stages through profile-policy checks.

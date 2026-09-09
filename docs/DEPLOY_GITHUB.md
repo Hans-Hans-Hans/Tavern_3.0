@@ -1,7 +1,7 @@
 # Deploy Tavern from GitHub with Dockhand and NPM
 
-`V3` contains the 0.4 test checkpoint. Ongoing development is on
-`codex/tavern-completion`; no 0.4 release images have been published yet.
+`V3` contains the 0.4 development checkpoints. Further test updates are pushed
+to `V3`; no 0.4 release images have been published yet.
 Use [Installation and operations](INSTALLATION.md) for the complete setup and
 [V3 migration](V3_MIGRATION.md) before upgrading an existing deployment.
 
@@ -47,7 +47,7 @@ Use the actual existing data path and network. A fresh installation can leave
 `TAVERN_DATA_DIR` empty to use named volumes. Copy `.env.example` only for a fresh
 installation; never overwrite an existing private environment file.
 
-For ongoing development, select `codex/tavern-completion` as both the Dockhand
+For ongoing testing, select `V3` as both the Dockhand
 branch and `TAVERN_GIT_REF`. For a fixed checkpoint, use its full commit SHA for
 both. Keep the Compose definition and remote build source at the same revision.
 The initializer generates and preserves configuration and credentials; fresh
@@ -70,6 +70,11 @@ administrator identity, a new password and email verification. Existing
 installations use their existing Synapse administrator account. Configure SMTP
 through the private environment or the administrator Email settings. Account
 creation then follows the instance registration policy or administrator workflow.
+
+After rebuilding, reload Tavern on its existing HTTPS hostname. For older
+messages that cannot decrypt, open **History recovery** and follow
+[these recovery steps](HISTORY_RECOVERY.md). Keep the original browser site data;
+it may contain message keys from previous sign-ins.
 
 To enable calls, add these values using your real public WAN IPv4:
 
