@@ -23,7 +23,9 @@ services:
     volumes:
       - ./scripts/ci-mail.py:/ci/ci-mail.py:ro
       - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
-    networks: [private]
+    # Docker's internal network blocks the runner's published-port access.
+    # The additional test proxy network makes the loopback-only inbox reachable.
+    networks: [private, proxy]
     ports: [127.0.0.1:18085:8085]
     read_only: true
     cap_drop: [ALL]

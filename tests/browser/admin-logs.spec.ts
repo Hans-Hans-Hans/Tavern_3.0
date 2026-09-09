@@ -10,9 +10,9 @@ test('logs filters and exported snapshot preserve measured unavailable states', 
   await expect(page.getByRole('region', { name: 'Service log results' })).toContainText('access_token=[redacted]');
   const sample = page.locator('.admin-resource-table tbody tr');
   await expect(sample).toContainText('Unavailable'); await expect(sample).not.toContainText('0.0%');
-  await page.getByLabel('Component', { exact: true }).selectOption('tavern-api');
-  await page.getByLabel('Severity', { exact: true }).selectOption('ERROR');
-  await page.getByLabel('Time window', { exact: true }).selectOption('60');
+  await page.getByRole('combobox', { name: 'Component', exact: true }).selectOption('tavern-api');
+  await page.getByRole('combobox', { name: 'Severity', exact: true }).selectOption('ERROR');
+  await page.getByRole('combobox', { name: 'Time window', exact: true }).selectOption('60');
   await page.getByLabel('Search message', { exact: true }).fill('Database');
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect.poll(() => requests.length).toBe(2);

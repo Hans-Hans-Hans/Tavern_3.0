@@ -67,7 +67,10 @@ async def smtp(reader, writer):
         pass
     finally:
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except (ConnectionError, ssl.SSLError):
+            pass
 
 
 async def main():
