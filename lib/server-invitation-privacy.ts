@@ -4,8 +4,12 @@ import { getMatrixClient } from './matrix';
 export type ServerInvitationRules = Record<string, 'contacts' | 'nobody'>;
 export type ServerInvitationPrivacy = { servers: ServerInvitationRules; invalid: boolean; revision: string; invitations: 'everyone' | 'contacts' | 'shared_server' | 'nobody' };
 const record = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
+// Room v12 uses an unpadded URL-safe SHA-256 create-event hash. Its final
+// sextet has two zero padding bits; accepting the shape grants no membership.
+const serverId = (value: string) => /^![^\s/\\?#\x00-\x1f\x7f]{1,254}:[^\s/\\?#\x00-\x1f\x7f]{1,254}$/.test(value)
+  || /^![A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(value);
 export function validServerInvitationRules(value: unknown): value is ServerInvitationRules {
-  return record(value) && Object.keys(value).length <= 200 && Object.entries(value).every(([key, mode]) => /^![^\s/\\?#\x00-\x1f\x7f]{1,254}:[^\s/\\?#\x00-\x1f\x7f]{1,254}$/.test(key) && ['contacts', 'nobody'].includes(mode));
+  return record(value) && Object.keys(value).length <= 200 && Object.entries(value).every(([key, mode]) => serverId(key) && ['contacts', 'nobody'].includes(mode));
 }
 export function parseServerInvitationPrivacy(value: unknown): ServerInvitationPrivacy {
   if (!record(value) || !validServerInvitationRules(value.servers) || typeof value.invalid !== 'boolean'

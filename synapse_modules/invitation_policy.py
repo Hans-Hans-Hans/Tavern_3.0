@@ -8,6 +8,10 @@ import time
 
 PRIVACY = 'io.tavern.privacy'
 CHECK_TIMEOUT = 15
+# Preserve legacy room IDs and accept the canonical unpadded URL-safe SHA-256
+# create-event hash used by v12. The last sextet has two zero padding bits.
+# Shared Space membership is still read from native state in shared_servers.
+SERVER_ID = re.compile(r'(?:![^\s/\\?#\x00-\x1f\x7f]{1,254}:[^\s/\\?#\x00-\x1f\x7f]{1,254}|![A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])')
 
 
 class InvitationPolicy:
@@ -15,7 +19,7 @@ class InvitationPolicy:
     def server_rules(value):
         if not isinstance(value, Mapping) or len(value) > 200:
             return None
-        if any(not isinstance(key, str) or not re.fullmatch(r'![^\s/\\?#\x00-\x1f\x7f]{1,254}:[^\s/\\?#\x00-\x1f\x7f]{1,254}', key)
+        if any(not isinstance(key, str) or not SERVER_ID.fullmatch(key)
                or mode not in ('contacts', 'nobody') for key, mode in value.items()):
             return None
         return dict(value)

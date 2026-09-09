@@ -12,6 +12,7 @@ from tests import test_api as api_fixture
 from tests import test_invitation_privacy as native_fixture
 
 SERVER, SECOND = '!server:test', '!second:test'
+V12_SERVER = '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ'
 
 
 class ServerInvitationNativeTests(unittest.IsolatedAsyncioTestCase):
@@ -33,6 +34,43 @@ class ServerInvitationNativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.policy.check(self.event))
         self.privacy.update(invitations='nobody', serverInvitations={})
         self.assertFalse(await self.policy.check(self.event))
+
+    async def test_v12_stored_override_uses_actual_shared_space_and_current_contacts(self):
+        self.privacy.update(invitations='everyone', serverInvitations={V12_SERVER: 'contacts'})
+        self.event.content.update(is_direct=True, serverId=V12_SERVER)
+        self.api.http_client.get_json.return_value = {'allowed': False}
+        self.assertTrue(await self.policy.check(self.event), 'A valid-looking key or claimed parent does not establish a shared Space')
+        self.shared(V12_SERVER)
+        self.state[V12_SERVER][('m.room.create', '')].content['room_version'] = '12'
+        self.assertFalse(await self.policy.check(self.event))
+        self.api.http_client.get_json.return_value = {'allowed': True}
+        self.assertTrue(await self.policy.check(self.event))
+        self.privacy['serverInvitations'][V12_SERVER] = 'nobody'
+        self.assertFalse(await self.policy.check(self.event))
+        self.state[V12_SERVER][('m.room.member', '@bob:test')].content['membership'] = 'leave'
+        self.assertTrue(await self.policy.check(self.event), 'Departure removes this scope even while the earlier joined-room list still contains it')
+
+    async def test_v12_scope_preserves_multiple_server_global_and_ignored_intersections(self):
+        self.shared(V12_SERVER); self.shared(SECOND)
+        self.state[V12_SERVER][('m.room.create', '')].content['room_version'] = '12'
+        self.privacy.update(invitations='shared_server', serverInvitations={V12_SERVER: 'contacts', SECOND: 'nobody'})
+        self.assertFalse(await self.policy.check(self.event))
+        del self.privacy['serverInvitations'][SECOND]
+        self.assertTrue(await self.policy.check(self.event))
+        self.privacy['invitations'] = 'nobody'
+        self.assertFalse(await self.policy.check(self.event))
+        self.privacy['invitations'] = 'everyone'
+        self.ignored['ignored_users'] = {'@bob:test': {}}
+        self.assertFalse(await self.policy.check(self.event))
+
+    async def test_forged_v12_keys_fail_closed_even_when_global_privacy_allows_everyone(self):
+        self.privacy['invitations'] = 'everyone'
+        for identity in ('!short', '!' + 'A' * 42, '!' + 'A' * 44, '!' + 'A' * 42 + 'B', V12_SERVER + '=', V12_SERVER + '/state', V12_SERVER + '\n', V12_SERVER + '\x00'):
+            with self.subTest(identity=identity):
+                self.privacy['serverInvitations'] = {identity: 'nobody'}
+                self.assertFalse(await self.policy.check(self.event))
+        self.privacy['serverInvitations'] = {'!' + 'A' * 43: 'nobody'}
+        self.assertTrue(await self.policy.check(self.event), 'A canonical hash is valid input but provides no native shared membership')
 
     async def test_claimed_dm_parent_and_nonshared_or_channel_membership_do_not_select_a_policy(self):
         self.privacy['serverInvitations'] = {SERVER: 'nobody'}
@@ -203,6 +241,31 @@ class ServerInvitationAPITests(unittest.IsolatedAsyncioTestCase):
         changed = await self.request('PUT', '/api/social/invitation-privacy', {'invitations': 'nobody'}, self.cookie)
         self.assertEqual(changed.status, 200)
         self.assertEqual(self.saved['serverInvitations'], {SERVER: 'nobody'})
+
+    async def test_v12_saved_map_reads_and_updates_through_the_shared_native_validator(self):
+        self.saved['serverInvitations'] = {V12_SERVER: 'contacts'}
+        self.joined = [V12_SERVER]; self.creation['room_version'] = '12'
+        previous = await self.read()
+        self.assertFalse(previous['invalid'])
+        self.assertEqual(previous['servers'], {V12_SERVER: 'contacts'})
+        response = await self.save({V12_SERVER: 'nobody'}, previous)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())['servers'], {V12_SERVER: 'nobody'})
+        self.assertEqual(self.saved['invitations'], 'contacts')
+        self.assertEqual(self.saved['anotherPreference'], 'retained')
+        self.assertEqual((await self.save({}, previous)).status, 409)
+        self.joined = []
+        self.assertEqual((await self.save({})).status, 200, 'Departed v12 rules remain removable')
+
+    async def test_v12_shape_does_not_bypass_joined_space_checks_and_forged_hash_cannot_save(self):
+        self.assertEqual((await self.save({V12_SERVER: 'nobody'})).status, 403)
+        self.joined = [V12_SERVER]; self.creation = {'room_version': '12'}
+        self.assertEqual((await self.save({V12_SERVER: 'nobody'})).status, 400)
+        self.creation['type'] = 'm.space'
+        for identity in ('!' + 'A' * 42 + 'B', V12_SERVER + '=', V12_SERVER + '\n', V12_SERVER + '/state'):
+            with self.subTest(identity=identity):
+                self.assertEqual((await self.save({identity: 'contacts'})).status, 400)
+        self.assertEqual(self.writes, [])
 
     async def test_new_rules_require_joined_space_but_departed_rules_can_be_removed(self):
         self.joined = []

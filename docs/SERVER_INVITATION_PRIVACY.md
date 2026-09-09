@@ -16,6 +16,8 @@ memberships and history intact.
 Synapse enforces these settings using the recipient's native `io.tavern.privacy`
 account data. The optional `serverInvitations` map contains up to 200 actual Space
 IDs mapped to `contacts` or `nobody`; omitted entries inherit the global policy.
+Both legacy IDs and native room-version-12 hash IDs are supported. A valid ID
+shape does not establish membership; the same native Space checks apply.
 A restriction applies only while both people are actually joined to that Space.
 Leaving a server does not erase its saved preference. The editor allows removing
 departed-server entries; new or changed restrictions require current membership.
