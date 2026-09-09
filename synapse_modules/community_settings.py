@@ -4,13 +4,16 @@ from collections.abc import Mapping
 
 NOTIFICATIONS = 'io.tavern.notification.defaults'
 ONBOARDING = 'io.tavern.server.onboarding'
+BRANDING = 'io.tavern.server.branding'
 
 
 def check_settings(event, state):
-    if event.type not in (NOTIFICATIONS, ONBOARDING):
+    if event.type not in (NOTIFICATIONS, ONBOARDING, BRANDING):
         return True
     value = event.content
-    if getattr(event, 'state_key', None) != '' or not isinstance(value, Mapping) or type(value.get('version')) is not int or value['version'] != 1:
+    if getattr(event, 'state_key', None) != '' or not isinstance(value, Mapping):
+        return False
+    if event.type != BRANDING and (type(value.get('version')) is not int or value.get('version') != 1):
         return False
     if 'io.tavern.previous_event' in value:
         previous = state.get((event.type, ''))
@@ -21,7 +24,16 @@ def check_settings(event, state):
     create = state.get(('m.room.create', ''))
     if not create or create.content.get('type') != 'm.space':
         return False
-    if set(value) - {'version', 'enabled', 'startChannel', 'welcomeChannel', 'rulesChannel', 'recommended', 'interests', 'io.tavern.previous_event'} or type(value.get('enabled')) is not bool:
+    if event.type == BRANDING:
+        if set(value) - {'banner', 'accent', 'welcome', 'inviteSplash', 'io.tavern.previous_event'}:
+            return False
+        for key in ('banner', 'inviteSplash'):
+            image = value.get(key, '')
+            if not isinstance(image, str) or len(image) > 1024 or image and not re.fullmatch(r'mxc://[^/\s?#\\]+/[A-Za-z0-9_-]+', image):
+                return False
+        accent, welcome = value.get('accent', ''), value.get('welcome', '')
+        return isinstance(accent, str) and (not accent or bool(re.fullmatch(r'#[0-9a-fA-F]{6}', accent))) and isinstance(welcome, str) and len(welcome) <= 2000
+    if set(value) - {'version', 'enabled', 'startChannel', 'welcomeChannel', 'rulesChannel', 'announcementChannel', 'recommended', 'interests', 'io.tavern.previous_event'} or type(value.get('enabled')) is not bool:
         return False
 
     def channel(room_id, optional=False):
@@ -35,7 +47,7 @@ def check_settings(event, state):
     def channels(values):
         return isinstance(values, (list, tuple)) and len(values) <= 20 and all(channel(room_id) for room_id in values) and len(set(values)) == len(values)
 
-    if not all(channel(value.get(key, ''), True) for key in ('startChannel', 'welcomeChannel', 'rulesChannel')) or not channels(value.get('recommended')):
+    if not all(channel(value.get(key, ''), True) for key in ('startChannel', 'welcomeChannel', 'rulesChannel', 'announcementChannel')) or not channels(value.get('recommended')):
         return False
     interests = value.get('interests')
     if not isinstance(interests, (list, tuple)) or len(interests) > 12:

@@ -32,6 +32,53 @@ function defaultsFixture() {
   return f;
 }
 
+function brandingFixture() {
+  const f = defaultsFixture(); f.actor = '@owner:test';
+  f.server.put('m.room.name', { name: 'Gaming' });
+  const event = f.server.put('io.tavern.server.branding', { banner: 'mxc://test/banner', welcome: 'Keep the rules', accent: '#123456' });
+  event.getId = () => '$branding';
+  const read = f.client.roomState;
+  f.client.roomState = async id => (await read(id)).map(value => ({ ...value, event_id: '$branding' }));
+  const send = f.client.sendStateEvent;
+  f.client.sendStateEvent = async (...args) => { await send(...args); return { event_id: '$saved' }; };
+  f.branding = loadTs('../lib/server-branding.ts', { './matrix': { getMatrixClient: () => f.active }, './channel-administration': f.api, './invitation-artwork': loadTs('../lib/invitation-artwork.ts', {}) });
+  return f;
+}
+
+test('branding splash preserves existing artwork and welcome with current native and custom authority', async () => {
+  const f = brandingFixture(), before = f.branding.readServerBranding('!server:test');
+  f.actor = '@moderator:test'; assert.equal(f.branding.canEditServerBranding('!server:test'), false);
+  f.policy.roles[1].permissions.push('manage_server'); assert.equal(f.branding.canEditServerBranding('!server:test'), true);
+  const powers = f.server.currentState.getStateEvents('m.room.power_levels', '').content;
+  powers.events['io.tavern.server.branding'] = 100; assert.equal(f.branding.canEditServerBranding('!server:test'), false);
+  delete powers.events['io.tavern.server.branding'];
+  const saved = await f.branding.saveServerBranding('!server:test', { ...before, inviteSplash: 'mxc://test/shareable' }, before);
+  assert.deepEqual(f.writes, [['!server:test', 'io.tavern.server.branding', { banner: 'mxc://test/banner', welcome: 'Keep the rules', accent: '#123456', inviteSplash: 'mxc://test/shareable', 'io.tavern.previous_event': '$branding' }, '']]);
+  assert.equal(saved.revision, '$saved');
+});
+
+test('branding saves reject stale revisions and changes in native details before overwriting', async () => {
+  const f = brandingFixture(), before = f.branding.readServerBranding('!server:test');
+  await assert.rejects(f.branding.saveServerBranding('!server:test', { ...before, inviteSplash: 'mxc://test/art' }, { ...before, revision: '$stale' }), /branding changed/);
+  f.server.put('m.room.name', { name: 'Changed remotely' });
+  await assert.rejects(f.branding.saveServerBranding('!server:test', { ...before, name: 'Local change' }, before), /details changed/);
+  assert.equal(f.writes.length, 0);
+  // Editing only artwork does not overwrite a concurrently changed room name.
+  await f.branding.saveServerBranding('!server:test', { ...before, inviteSplash: 'mxc://test/art' }, before);
+  assert.equal(f.writes.length, 1); assert.equal(f.writes[0][1], 'io.tavern.server.branding');
+});
+
+test('branding reauthorizes after each await and reports partial saves without further writes', async () => {
+  const f = brandingFixture(), before = f.branding.readServerBranding('!server:test');
+  f.afterWrite = () => { f.server.currentState.getStateEvents('m.room.power_levels', '').content.users['@owner:test'] = 0; };
+  await assert.rejects(f.branding.saveServerBranding('!server:test', { ...before, name: 'New name', inviteSplash: 'mxc://test/art' }, before), /Some server details were saved/);
+  assert.equal(f.writes.length, 1);
+  const other = brandingFixture(), previous = other.branding.readServerBranding('!server:test');
+  other.beforeRead = () => { other.active = { ...other.client }; };
+  await assert.rejects(other.branding.saveServerBranding('!server:test', previous, previous), /account or room permissions changed/);
+  assert.equal(other.writes.length, 0);
+});
+
 test('notification default writes use native custom event thresholds, category authority and current revisions', async () => {
   const f = defaultsFixture();
   assert.equal(f.defaults.canEditNotificationDefault('!server:test'), false);

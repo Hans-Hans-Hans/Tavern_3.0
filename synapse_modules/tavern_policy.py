@@ -7,14 +7,16 @@ from collections.abc import Mapping
 import re
 from urllib.parse import urlsplit
 try:
-    from community_settings import check_settings, NOTIFICATIONS, ONBOARDING
+    from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
+    from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
-    from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING
+    from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
+    from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
@@ -23,7 +25,7 @@ except ImportError:
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
-PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
+PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
 CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server", "manage_nicknames"}
 
 
@@ -248,7 +250,15 @@ class TavernPolicy:
         self.threads = ThreadPolicy(api, self.channels)
         self.invitations = InvitationPolicy(config, api)
         self.temporary_bans = TemporaryBanPolicy(api, permissions, rank)
-        api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed)
+        self.private_threads = PrivateThreadPolicy(self, permissions, rank, native_member_power, valid_policy, valid_layout)
+        api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed, on_create_room=self.on_create_room,
+            check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid)
+
+    async def on_create_room(self, requester, request_content, is_requester_admin):
+        error = await self.private_threads.create(requester.user.to_string(), request_content)
+        if error:
+            from synapse.module_api.errors import SynapseError
+            raise SynapseError(403, error, 'M_FORBIDDEN')
 
     @staticmethod
     def parse_config(config):
@@ -278,6 +288,11 @@ class TavernPolicy:
     async def check_event_allowed(self, event, state_events):
         if not check_settings(event, state_events):
             return False, None
+        if not await self.invitations.check(event):
+            return False, None
+        private_result = await self.private_threads.check(event, state_events)
+        if private_result is not None:
+            return private_result
         policies = await self._policies(event, state_events)
         if any(not valid_policy(policy) for _, policy, _ in policies):
             return False, None
@@ -292,8 +307,6 @@ class TavernPolicy:
             now = int(time.time() * 1000)
             if temporary_ban_active(state_events, event.sender, now) or any(temporary_ban_active(parent, event.sender, now) for _, _, parent in policies):
                 return True, None
-        if not await self.invitations.check(event):
-            return False, None
         if event.type == POLICY:
             create = state_events.get(("m.room.create", ""))
             if getattr(event, "state_key", None) != "" or not create or create.content.get("type") != "m.space" or create.content.get("m.federate", True):
@@ -326,7 +339,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, LAYOUT, NOTIFICATIONS, ONBOARDING, NICKNAME, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None

@@ -4,6 +4,14 @@ This records observed checks for the 0.4 development code, including the `923d72
 
 ## Observed continuous integration
 
+[GitHub run 34351342245](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34351342245) is a fully successful workflow for development commit `9f65f11`. It passed 166 JavaScript tests, 74 browser tests and 261 Python tests with no recorded skips, production build/PWA/Compose checks, clean-stack setup and restart, real TLS SMTP, account authorization, encrypted send/reload/edit/reaction/thread flows, stored attachment ciphertext verification and byte-for-byte recipient download.
+
+Its separate failed-update fixture also passed: a deliberately broken replacement web image exited with code 78; the real operations job restored the original healthy web/API images, gateway routes, SQL row, binary file and Synapse signing identity, retaining a valid pre-update backup. The main test stack's container start times were unchanged. Release metadata and image-download adapters use pinned local fixture images for this isolated test, so this proves the Docker/job/backup/health/rollback path, not a published GitHub/GHCR release download. Subsequent development commits need their own CI evidence.
+
+[Run 34352418468](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34352418468) passed the complete workflow again at `4dfc543`, adding actual ordinary-account avatar crop/upload, account and room profile persistence, and another user's authenticated thumbnail after reload. Native display-name hydration for a user without Tavern profile metadata is a subsequent fix and has a separate pending live assertion.
+
+The earlier `V3` test checkpoint has a different result:
+
 [GitHub run 34343989783](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34343989783) tested `923d726`. These stages passed:
 
 | Check | Result and scope |
@@ -22,15 +30,19 @@ This records observed checks for the 0.4 development code, including the `923d72
 
 The overall run failed at the messaging stage. The deep-link sync race was fixed and the later run reached the correct room. Follow-up runs showed the send button blocked by a fixed-position PWA banner: first a self-signed service-worker storage failure, then a false first-install update notice. CI now trusts only its ephemeral certificate fingerprint. The app reserves a measured status row, and update availability requires a distinct waiting replacement for an existing active worker. Local production PWA smoke passed with an explicit assertion that first installation shows no update notice. [Run 34347506287](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34347506287) validates the combined development fixes at `5cb349b`.
 
-That run passed HTTPS setup, ordinary-account authorization, two-user encrypted send/decryption, same-device reload decryption, encrypted edits, reaction sync and thread replies. Its upload returned HTTP 200, but the smoke script could not inspect binary upload bytes through Playwright's `postDataBuffer()` and failed that assertion. The corrected script verifies stored ciphertext through authenticated media download. [Run 34348386957](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34348386957) tested that correction at `7cc5e55`: stored ciphertext verification and encrypted file delivery passed, but recipient download exposed a real SDK media-URL bug. The SDK discarded the managed `/api/matrix` prefix, sending authenticated media requests to the wrong route and receiving 401. The shared media helper now preserves the configured gateway prefix for attachments, profile thumbnails and conference downloads; 18 focused tests include the actual installed SDK conversion. Byte-for-byte recipient file download and actual failed-update rollback remain pending until recorded passing. The next workflow runs browser acceptance and the separate rollback fixture independently so a browser failure does not prevent rollback evidence.
+That run passed HTTPS setup, ordinary-account authorization, two-user encrypted send/decryption, same-device reload decryption, encrypted edits, reaction sync and thread replies. Its upload returned HTTP 200, but the smoke script could not inspect binary upload bytes through Playwright's `postDataBuffer()` and failed that assertion. The corrected script verifies stored ciphertext through authenticated media download. [Run 34348386957](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34348386957) tested that correction at `7cc5e55`: stored ciphertext verification and encrypted file delivery passed, but recipient download exposed a real SDK media-URL bug. The SDK discarded the managed `/api/matrix` prefix, sending authenticated media requests to the wrong route and receiving 401. The shared media helper now preserves the configured gateway prefix for attachments, profile thumbnails and conference downloads; 18 focused tests include the actual installed SDK conversion. The later successful 9f65f11 run above verifies byte-for-byte recipient download and failed-update rollback. Browser acceptance and the separate rollback fixture now run independently so a browser failure does not prevent rollback evidence.
 
 Earlier failures exposed binary archive extraction, restored-database readiness, read-only proxy mounts and the runner's access to the SMTP inbox. The successful stages above validate their fixes; the failures are not counted as successful checks.
 
 ## Subsequent local verification
 
+The combined private-discussion, invitation-artwork, announcement-channel, self-profile and video-playback working tree passed production build/typecheck, all 195 JavaScript tests and all 91 browser tests. Python ran 283 checks successfully with eight Windows/platform or optional-dependency skips. Browser coverage includes the actual workspace routing and Composer, explicit private invitation acceptance, scoped attachment galleries, historical private message links and personal discovery after source departure. The new three-account live probe still requires its own GitHub workflow; these local fixtures do not establish live private-room authorization or encryption interoperability.
+
 The combined channel integrations, server defaults, activity alerts, nickname moderation and call-controls working tree passed production build/typecheck, 156 JavaScript tests and 74 browser tests. Python ran 261 checks with eight Windows/platform or optional-dependency skips; those skipped cases require the Linux CI environment. These are local working-tree results, not a passing deployment workflow.
 
 A subsequent image-cache review fixed stale account ownership, explicit object-URL disposal and streamed image size limits. The final production rebuild, 35 affected JavaScript tests and eight affected browser flows passed. Ten new regression cases cover those cleanup and response-boundary changes; focused counts overlap the earlier suites.
+
+Later local media work passed four browser flows using an actual generated WebM file: poster/duration extraction, playback and seeking, byte-for-byte download, presentation cleanup and phone layout. Fourteen focused JavaScript checks passed for attachment transfer, gateway routing and native self-profile hydration, including account changes during download/decryption and a User created during a profile request. These working-tree checks precede their next deployment workflow.
 
 The working tree after account metadata, associated-email verification, delegated reports, forum history and call navigation changes passed 56 browser tests, 120 JavaScript tests and 222 Python tests (three platform/optional-dependency skips). These working-tree totals include channel-administration work later committed separately; final CI logs identify exact commit coverage.
 
@@ -48,7 +60,7 @@ The Windows development workspace has no local Docker daemon. Container and real
 - Gmail App Password delivery and external NPM/Cloudflare cookie/routing validation.
 - Independent ordinary/moderator account tests for role/category/thread/invitation policies against deployed Synapse.
 - TURN/LiveKit voice, video and screen sharing from independent networks and supported devices.
-- Preserved-data upgrades, failed-update rollback and a full server/E2EE recovery drill before production cutover.
+- Published-release upgrades and a full server/E2EE recovery drill before production cutover; the isolated failed-update Docker rollback test passed.
 - Mobile/PWA installation, keyboard/screen-reader/contrast behavior, representative load and independent security review.
 
 Healthy services and unit tests do not establish external media connectivity or production-scale performance. No independent security audit, capacity certification or complete mature-platform parity is claimed.

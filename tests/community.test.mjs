@@ -2,8 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 let client;
-const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {}, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}) });
+const selfProfile = loadTs('../lib/self-profile.ts', { 'matrix-js-sdk/lib/http-api/method': { Method: { Get: 'GET' } } });
+const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {}, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}), './server-branding': {}, './self-profile': loadTs('../lib/self-profile.ts', { 'matrix-js-sdk/lib/http-api/method': { Method: { Get: 'GET' } } }) });
 const { normalizeProfile, normalizeServerLayout, moveChannel, normalizeChannelAppearance, cleanMxc } = community;
+
+test('own profile form reads authenticated native identity after reload without replacing server overrides or metadata', async () => {
+  const communityWithProfile = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {}, './server-nickname': {}, './matrix-media': {}, './response-image': {}, './server-branding': {}, './self-profile': selfProfile });
+  const metadata = { bio: 'Preserved personal bio', pronouns: 'they/them' };
+  client = { getUserId: () => '@bob:local', getUser: () => null, getAccountData: () => ({ getContent: () => metadata }), getRoom: () => ({ currentState: { getStateEvents: () => ({ getContent: () => ({ displayname: 'Server Bob', avatar_url: 'mxc://local/server-avatar', 'io.tavern.profile': { serverOverride: '!server:local', bio: 'Server bio' } }) }) } }), http: { authedRequest: async () => ({ displayname: 'CI Bob', avatar_url: 'mxc://local/global-avatar' }) } };
+  await selfProfile.hydrateSelfProfile(client, () => true);
+  const global = communityWithProfile.readOwnProfile(), server = communityWithProfile.readOwnProfile('!server:local');
+  assert.equal(global.name, 'CI Bob'); assert.equal(global.avatar, 'mxc://local/global-avatar'); assert.equal(global.bio, metadata.bio);
+  assert.equal(server.name, 'Server Bob'); assert.equal(server.avatar, 'mxc://local/server-avatar'); assert.equal(server.bio, 'Server bio');
+  assert.deepEqual(metadata, { bio: 'Preserved personal bio', pronouns: 'they/them' }); client = null;
+});
 
 test('profile thumbnails bound streaming bytes and cancel instead of buffering oversized bodies', async t => {
   client = { getUserId: () => '@me:local', getHomeserverUrl: () => 'https://chat.local/api/matrix', getAccessToken: () => 'cookie-session:A', mxcUrlToHttp: () => 'https://chat.local/_matrix/client/v1/media/thumbnail/local/avatar' };

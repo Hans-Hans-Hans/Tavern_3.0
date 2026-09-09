@@ -23,7 +23,7 @@ export function serverCreationState(owner: string, options: { notificationMode?:
   return [
     { type: notificationDefaultsEvent, state_key: '', content: normalizeNotificationDefault({ mode: options.notificationMode ?? 'mentions' }) },
     { type: 'io.tavern.server.branding', state_key: '', content: { welcome } },
-    { type: 'io.tavern.server.onboarding', state_key: '', content: { version: 1, enabled: options.welcomeEnabled === true, startChannel: '', welcomeChannel: '', rulesChannel: '', recommended: [], interests: [] } },
+    { type: 'io.tavern.server.onboarding', state_key: '', content: { version: 1, enabled: options.welcomeEnabled === true, startChannel: '', welcomeChannel: '', rulesChannel: '', announcementChannel: '', recommended: [], interests: [] } },
     ...(rolePolicyEnabled ? [{ type: rolesEvent, state_key: '', content: defaultRolePolicy(owner) }] : []),
   ];
 }

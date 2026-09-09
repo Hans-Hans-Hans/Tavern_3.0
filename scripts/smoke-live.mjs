@@ -4,6 +4,7 @@ import { randomBytes, createHash, X509Certificate } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { privateDiscussionSmoke } from './smoke-private-discussions.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
 if (!process.env.TAVERN_CI_TLS) throw new Error('The isolated CI certificate directory is required.');
@@ -24,14 +25,14 @@ async function page() {
   value.on('response', response => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.request().method() + ' ' + new URL(response.url()).pathname); });
   pages.push(value); return value;
 }
-async function api(page, path, body, matrix = false, binary = false) {
-  return page.evaluate(async ({ path, body, matrix, binary }) => {
+async function api(page, path, body, matrix = false, binary = false, method) {
+  return page.evaluate(async ({ path, body, matrix, binary, method }) => {
     const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json();
     const headers = { 'Content-Type': 'application/json', 'X-Tavern-Device': session.deviceId };
     if (matrix) headers.Authorization = 'Bearer cookie-session:' + session.deviceId;
-    const response = await fetch((matrix ? '/api/matrix' : '') + path, { method: body === undefined ? 'GET' : 'POST', headers, cache: 'no-store', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch((matrix ? '/api/matrix' : '') + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers, cache: 'no-store', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, data: binary ? Array.from(new Uint8Array(await response.arrayBuffer())) : await response.json() };
-  }, { path, body, matrix, binary });
+  }, { path, body, matrix, binary, method });
 }
 async function ready(page) {
   // The first-run dialog aria-hides the page behind it, so use its visual shell
@@ -125,7 +126,10 @@ try {
   await bob.reload(); await ready(bob);
   assert.equal((await api(bob, '/api/auth/session')).data.deviceId, bobSession.deviceId);
   await expect(bob.locator('.message-body').filter({ hasText: text })).toBeVisible({ timeout: 60000 });
-  console.log('PASS: real HTTPS administrator email verification, ordinary account login, server authorization, encrypted two-user messaging, and same-device reload decryption.');
+  await bob.getByRole('button', { name: 'Your profile', exact: true }).click();
+  await expect(bob.locator('.community-profile-form').getByRole('textbox', { name: 'Display name', exact: true })).toHaveValue('CI Bob');
+  await bob.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  console.log('PASS: real HTTPS administrator email verification, ordinary account login, server authorization, encrypted two-user messaging, same-device reload decryption, and native profile hydration.');
 
   const aliceMessage = message(alice, eventId), bobMessage = message(bob, eventId);
   const edited = text + ' edited';
@@ -178,7 +182,10 @@ try {
   const fileCard = bob.locator('.file-card').filter({ hasText: fileName });
   await fileCard.click();
   await expect(bob.locator('.media-viewport')).toContainText('A preview is not available for this file.', { timeout: 15000 });
-  const [download] = await Promise.all([bob.waitForEvent('download'), bob.getByRole('dialog').getByRole('button', { name: 'Download', exact: true }).click()]);
+  const saveFile = bob.getByRole('dialog').getByRole('link', { name: 'Download', exact: true });
+  await expect(saveFile).toHaveAttribute('href', /^blob:/);
+  await expect(saveFile).toHaveAttribute('download', fileName);
+  const [download] = await Promise.all([bob.waitForEvent('download'), saveFile.click()]);
   assert.equal(download.suggestedFilename(), fileName);
   const stream = await download.createReadStream(), chunks = [];
   assert.ok(stream, 'The receiving user must be able to download the decrypted file.');
@@ -219,6 +226,7 @@ try {
   await sharedAvatar.scrollIntoViewIfNeeded();
   await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   console.log('PASS: a cropped profile avatar uploads, persists in the account and room, and loads through authenticated thumbnails for another user after reload.');
+  await privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent });
 } catch (error) {
   console.error('Live browser errors:', errors);
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));

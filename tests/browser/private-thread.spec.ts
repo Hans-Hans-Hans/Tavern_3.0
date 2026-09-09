@@ -1,0 +1,63 @@
+import { expect, test } from '@playwright/test';
+test.beforeEach(async ({ page }) => {
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const matrixApi=(...args)=>window.matrixApi(...args);export const resolveMatrixMessage=async(room,id)=>window.fixture.messages.get(room)?.find(message=>message.id===id);export const onMatrixUpdate=fn=>{window.listeners.add(fn);return()=>window.listeners.delete(fn)};' }));
+  await page.route(url => url.pathname === '/lib/notifications.ts', route => route.fulfill({ contentType: 'text/javascript', body: "export const setRoomNotifications=async(c,id,mode)=>window.fixture.writes.push({action:'notifications',roomId:id,mode});" }));
+  await page.route('**/private-thread-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/private-thread.tsx')).mountFixture();</script></body></html>` }));
+  await page.goto('/private-thread-test');
+  await expect(page.getByRole('heading', { name: 'Source channel stays open' })).toBeVisible();
+});
+test('create and send privately keeps source visible and submits no source copy or public index', async ({ page }) => {
+  await page.getByText('Private discussions (1)', { exact: true }).click();
+  await page.getByRole('button', { name: 'Create private discussion', exact: true }).click();
+  await page.getByLabel('Discussion title', { exact: true }).fill('Small private group');
+  await page.getByLabel('Charlie @other:test').check();
+  await page.getByRole('button', { name: 'Create encrypted discussion' }).click();
+  await expect(page.getByRole('heading', { name: 'Source channel stays open' })).toBeVisible();
+  const panel = page.getByRole('complementary', { name: 'Private discussion', exact: true });
+  await expect(panel.getByRole('heading', { name: 'Small private group' })).toBeVisible();
+  await panel.getByLabel('Private message', { exact: true }).fill('Only this group sees this message');
+  await panel.getByRole('button', { name: 'Send private message' }).click();
+  await expect(panel.getByText('Only this group sees this message', { exact: true })).toBeVisible();
+  const writes = await page.evaluate(() => (window as any).fixture.writes);
+  expect(writes.map((w: any) => w.action)).toEqual(['create', 'send']);
+  expect(writes[0].request.initial_state.some((e: any) => ['m.space.parent', 'm.space.child', 'm.room.message'].includes(e.type))).toBe(false);
+  expect(writes[1].roomId).toBe('!created:test');
+  expect(JSON.stringify(writes)).not.toContain('A source message that must never be copied');
+});
+test('settings conflict preserves draft, archive disables send, explicit reload permits reopen', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open existing private discussion' }).click();
+  await page.getByText('Discussion settings and 2 members', { exact: true }).click();
+  await page.getByLabel('Discussion title', { exact: true }).fill('Preserved draft');
+  await page.evaluate(() => { const f = (window as any).fixture; f.states.get(f.privateId).find((e: any) => e.type === 'io.tavern.private_thread.settings').event_id = '$other'; });
+  await page.getByRole('button', { name: 'Save discussion settings' }).click();
+  await expect(page.getByRole('alert')).toContainText('changed elsewhere');
+  await expect(page.getByLabel('Discussion title', { exact: true })).toHaveValue('Preserved draft');
+  await page.getByRole('button', { name: 'Reload discussion settings' }).click();
+  await page.getByLabel('Archive discussion', { exact: true }).check();
+  await page.getByRole('button', { name: 'Save discussion settings' }).click();
+  await expect(page.getByRole('button', { name: 'Send private message' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Reopen discussion' }).click();
+  await expect(page.getByLabel('Private message', { exact: true })).toBeEnabled();
+});
+test('invitation discovery accepts only explicit join and removal requires typed confirmation', async ({ page }) => {
+  await page.evaluate(() => { const f = (window as any).fixture; f.seedPrivate('!invited:test', [f.author]); f.notify(); });
+  await page.getByText('Private discussions (2)', { exact: true }).click();
+  await page.getByRole('button', { name: 'Private help · Invitation' }).click();
+  await expect(page.getByLabel('Private message', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Accept private discussion' }).click();
+  await expect(page.getByLabel('Private message', { exact: true })).toBeVisible();
+  await page.getByText('Discussion settings and 2 members', { exact: true }).click();
+  await page.getByRole('button', { name: 'Remove Bob', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirm removal' })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).fixture.writes.some((w: any) => w.action === 'kick'))).toBe(false);
+  await page.getByLabel('Type @member:test to confirm', { exact: true }).fill('@member:test');
+  await page.getByRole('button', { name: 'Confirm removal' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Member removed' })).toBeVisible();
+});
+test('role changes hide unauthorized invitation and member removal controls', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open existing private discussion' }).click();
+  await page.getByText('Discussion settings and 2 members', { exact: true }).click();
+  await page.evaluate(() => { const f = (window as any).fixture; f.policy.overrides[f.sourceId] = { users: { [f.author]: { invite: -1, kick: -1 } } }; f.notify(); });
+  await expect(page.getByRole('button', { name: 'Remove Bob', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send private invitation', exact: true })).toHaveCount(0);
+});

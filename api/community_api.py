@@ -45,6 +45,8 @@ def schema(store):
     """)
     if 'default_roles' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
         store.db.execute("ALTER TABLE invitations ADD COLUMN default_roles TEXT NOT NULL DEFAULT '[]'")
+    if 'splash_mxc' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
+        store.db.execute("ALTER TABLE invitations ADD COLUMN splash_mxc TEXT NOT NULL DEFAULT ''")
     report_schema(store)
 
 
@@ -79,6 +81,27 @@ def invitation_email(invitation, email, verified):
         raise APIError(403, "This invitation is restricted to a different email address.", "INVITATION_RESTRICTED")
     if invitation["domain"] and email.rsplit("@", 1)[-1] != invitation["domain"]:
         raise APIError(403, "Your verified email domain does not match this invitation.", "INVITATION_RESTRICTED")
+
+
+def invitation_splash(value):
+    return value if isinstance(value, str) and len(value) <= 1024 and re.fullmatch(r'mxc://[^/\s?#\\]+/[A-Za-z0-9_-]+', value) else ''
+
+
+async def snapshot_invitation_splash(service, room_id, token):
+    # Read as the joined issuer only when creating an invitation. Previews use
+    # this explicit shareable field from SQLite, never private Space state.
+    prefix = '/_matrix/client/v3/rooms/' + quote(room_id, safe='') + '/state/'
+    status, create = await service.matrix('GET', prefix + 'm.room.create/', token=token, expected=False)
+    if status == 404 or status == 200 and create.get('type') != 'm.space':
+        return ''
+    if status != 200:
+        raise APIError(502, 'Server invitation artwork could not be checked. Try again.')
+    status, branding = await service.matrix('GET', prefix + 'io.tavern.server.branding/', token=token, expected=False)
+    if status == 404:
+        return ''
+    if status != 200:
+        raise APIError(502, 'Server invitation artwork could not be checked. Try again.')
+    return invitation_splash(branding.get('inviteSplash'))
 
 
 async def issuer_authority(service, room_id: str, issuer: str, token=None):
@@ -141,6 +164,8 @@ async def invitations(request):
     await issuer_authority(service, room_id, session["user_id"], token)
     await checked_roles(service, room_id, session["user_id"], default_roles)
     status, name = await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/m.room.name/", token=token, expected=False)
+    splash = await snapshot_invitation_splash(service, room_id, token)
+    await issuer_authority(service, room_id, session['user_id'], token)
     now, secret, identity = time.time(), secrets.token_urlsafe(32), secrets.token_urlsafe(18)
     room_name = name.get("name", room_id) if status == 200 else room_id
     # Matrix room names are user-controlled, while SMTP subjects must be one
@@ -150,8 +175,8 @@ async def invitations(request):
         room_name = room_id
     room_name = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", room_name).strip()[:255] or room_id
     service.require_session(request)
-    service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                             (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles)))
+    service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles,splash_mxc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles), splash))
     service.audit(session["user_id"], "invitation_created", room_id, identity)
     value = invite_view(service.store.db.execute("SELECT * FROM invitations WHERE id=?", (identity,)).fetchone())
     value.update(token=secret, url=service.config.public_url + "/?invite=" + secret)
@@ -187,7 +212,18 @@ async def preview_invitation(request):
     resume = bool(session and service.store.db.execute("SELECT 1 FROM invitation_redemptions WHERE invitation_id=? AND user_id=?", (value['id'], session['user_id'])).fetchone())
     if value["uses"] >= value["max_uses"] and not resume:
         raise APIError(404, "This invitation has no uses remaining.", "INVITATION_UNAVAILABLE")
-    return web.json_response({"roomId": value["room_id"], "roomName": value["room_name"], "expiresAt": int(value["expires"] * 1000), "requiresEmail": bool(value["email"] or value["domain"])})
+    splash = invitation_splash(value['splash_mxc'])
+    if value['email'] or value['domain']:
+        splash = ''
+        if session:
+            try:
+                service.require_session(request)
+                account = service.store.account(session['user_id'])
+                invitation_email(value, account.get('email'), account.get('verified'))
+                splash = invitation_splash(value['splash_mxc'])
+            except APIError:
+                pass
+    return web.json_response({"roomId": value["room_id"], "roomName": value["room_name"], "expiresAt": int(value["expires"] * 1000), "requiresEmail": bool(value["email"] or value["domain"]), 'splashMxc': splash})
 
 
 async def redeem(service, session, secret):

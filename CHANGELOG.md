@@ -19,6 +19,9 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Webhook name/avatar/enabled/creator management and delegated channel access, with disabled queue cancellation and immutable destination bindings.
 - Server nickname moderation with protected native/custom hierarchy and preserved member-selected profiles.
 - Direct-call fullscreen/Picture-in-Picture, measured speaking and browser connection statistics with no extra capture.
+- Tavern video playback/seek/volume/speed controls, local video posters and metadata, and downloads that reuse an already decrypted preview.
+- Designated announcement-channel navigation and optimized invitation artwork shared through scoped invitation metadata.
+- Private discussions in separate encrypted rooms, with explicit invitations, source permission checks, shared slow mode, archive controls and private-room navigation.
 - Installable app shell, offline/reconnect behavior, guarded app updates, and automated browser/API/deployment coverage.
 
 ### Changed
@@ -34,6 +37,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Binary backup transfer and PostgreSQL readiness during isolated restore.
 - Authenticated Matrix media URLs retain the account gateway path for attachment, profile and conference downloads; webhook artwork uses the same device-bound gateway authentication.
 - Account changes dispose cached image URLs and reject stale uploads/downloads; streamed profile artwork stops at its byte limit.
+- Native profile hydration preserves names and avatars after reload when presence has not populated the browser's user cache.
+- Message links validate cached/native event identity and room membership through fetching and decryption, including account changes.
 - Room deep links requested before Matrix sync, status banners overlapping the composer, and false app-update prompts during first installation.
 - Native channel/member administration now checks fresh Matrix and Tavern role authority, including native equal/higher members in manual role assignments.
 

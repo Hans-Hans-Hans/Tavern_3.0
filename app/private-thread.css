@@ -1,0 +1,9 @@
+.private-thread-launcher{padding:.65rem 0;border-top:1px solid var(--border)}
+.private-thread-launcher summary,.private-thread-panel summary{cursor:pointer;font-weight:600;padding:.5rem 0}
+.private-thread-panel{width:min(440px,100%);min-width:300px;max-height:100%;overflow:auto;border-left:1px solid var(--border);padding:1rem;display:flex;flex-direction:column;gap:.8rem;background:var(--background)}
+.private-thread-panel>header{display:flex;align-items:start;justify-content:space-between;gap:1rem}
+.private-thread-panel h2{font-size:1.1rem;overflow-wrap:anywhere}.private-thread-panel ul,.private-thread-launcher ul{list-style:none;padding:0}
+.private-thread-panel li{margin:.65rem 0;overflow-wrap:anywhere}.private-thread-panel li small{display:block}.private-member-options{max-height:220px;overflow:auto}
+.private-thread-messages{max-height:55vh;overflow:auto;flex:1}.private-membership-confirm{border:1px solid var(--border);padding:.75rem;border-radius:8px}
+.private-member-options label{display:flex;gap:.5rem;flex-wrap:wrap}.private-thread-messages{display:flex;flex-direction:column;gap:.8rem;min-height:120px}.private-thread-messages article{overflow-wrap:anywhere;padding:.7rem;border:1px solid var(--border);border-radius:8px}.private-thread-messages time{display:block;font-size:.7rem;opacity:.7}.private-thread-messages p{white-space:pre-wrap}.private-thread-panel textarea{min-height:80px}
+@media(max-width:760px){.private-thread-panel{position:absolute;inset:0;z-index:30;width:100%;min-width:0;max-height:none}}

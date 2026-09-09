@@ -1,0 +1,5 @@
+.private-discussion-sheet .private-thread-panel{position:relative;inset:auto;width:100%;min-width:0;flex:1;min-height:0;border-left:0;overflow:auto}
+.private-discussion-sheet .private-thread-messages .message{border:0;border-radius:0;padding:12px 8px}
+.private-discussion-sheet .private-thread-messages .message-meta time{display:inline}
+.private-discussion-sheet .private-thread-messages .message-actions{right:8px}
+.private-discussion-sheet .composer-wrap{padding:0}

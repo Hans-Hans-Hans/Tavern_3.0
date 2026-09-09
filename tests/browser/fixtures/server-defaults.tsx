@@ -20,7 +20,7 @@ export function mountFixture() {
   const server = makeRoom('!server:local', 'Gaming'), general = makeRoom('!general:local', 'General'), rules = makeRoom('!rules:local', 'Rules');
   w.server = server;
   server.put('io.tavern.roles', { version: 1, owner: '@owner:local', roles: [{ id: 'everyone', name: 'Member', position: 0, permissions: ['send_messages'] }], members: {}, overrides: {}, categoryOverrides: {} });
-  server.put('io.tavern.server.onboarding', { version: 1, enabled: true, startChannel: '', welcomeChannel: '', rulesChannel: query.has('welcome') ? rules.roomId : '', recommended: [], interests: [] });
+  server.put('io.tavern.server.onboarding', { version: 1, enabled: true, startChannel: '', welcomeChannel: '', rulesChannel: query.has('welcome') ? rules.roomId : '', announcementChannel: query.has('welcome') ? rules.roomId : '', recommended: [], interests: [] });
   server.put('io.tavern.notification.defaults', { version: 1, mode: 'mentions' });
   for (const room of [general, rules]) { server.put('m.space.child', { via: ['local'] }, room.roomId); room.put('m.space.parent', { via: ['local'], canonical: true }, server.roomId); }
   const rooms: any = { [server.roomId]: server, [general.roomId]: general, [rules.roomId]: rules };

@@ -3,14 +3,14 @@ from types import SimpleNamespace
 
 from tests import test_roles as fixture
 from api.room_authority import power, APIError
-from synapse_modules.community_settings import NOTIFICATIONS, ONBOARDING
+from synapse_modules.community_settings import NOTIFICATIONS, ONBOARDING, BRANDING
 
 
 class CommunitySettingsTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixture.EventTests.asyncSetUp
 
     def welcome(self):
-        return {'version': 1, 'enabled': True, 'startChannel': '!channel:local', 'welcomeChannel': '', 'rulesChannel': '!channel:local', 'recommended': ['!channel:local'], 'interests': [{'id': 'games', 'label': 'Games', 'channels': ['!channel:local']}]}
+        return {'version': 1, 'enabled': True, 'startChannel': '!channel:local', 'welcomeChannel': '', 'rulesChannel': '!channel:local', 'announcementChannel': '!channel:local', 'recommended': ['!channel:local'], 'interests': [{'id': 'games', 'label': 'Games', 'channels': ['!channel:local']}]}
 
     async def setting(self, kind, body, *, actor='@owner:local', state=None, room='!server:local', key=''):
         return await self.module.check_event_allowed(fixture.event(kind, sender=actor, key=key, body=body, room=room), state if state is not None else self.server)
@@ -18,7 +18,7 @@ class CommunitySettingsTests(unittest.IsolatedAsyncioTestCase):
     async def test_welcome_requires_real_space_children_and_bounds_every_reference(self):
         self.server[('m.room.create', '')] = fixture.event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False})
         self.assertEqual(await self.setting(ONBOARDING, self.welcome()), (True, None))
-        for key in ('startChannel', 'welcomeChannel', 'rulesChannel', 'recommended', 'interests'):
+        for key in ('startChannel', 'welcomeChannel', 'rulesChannel', 'announcementChannel', 'recommended', 'interests'):
             body = self.welcome()
             body[key] = ['!stranger:local'] if key == 'recommended' else [{'id': 'games', 'label': 'Games', 'channels': ['!stranger:local']}] if key == 'interests' else '!stranger:local'
             self.assertEqual(await self.setting(ONBOARDING, body), (False, None), key)
@@ -49,10 +49,28 @@ class CommunitySettingsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.setting(NOTIFICATIONS, {'version': 1, 'mode': 'all'}, key='stranger'), (False, None))
 
     async def test_settings_cannot_be_removed_through_redaction(self):
-        for kind in (NOTIFICATIONS, ONBOARDING):
+        for kind in (NOTIFICATIONS, ONBOARDING, BRANDING):
             async def lookup(*args, **kwargs): return fixture.event(kind, sender='@owner:local')
             self.module.api._store.get_event = lookup
             self.assertEqual(await self.setting('m.room.redaction', {'redacts': '$settings'}), (False, None))
+
+    async def test_branding_requires_real_space_custom_authority_and_current_revision(self):
+        self.server[('m.room.create', '')] = fixture.event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False})
+        body = {'banner': 'mxc://local/banner', 'welcome': 'Welcome!', 'accent': '#123456', 'inviteSplash': 'mxc://local/shareable'}
+        self.assertEqual(await self.setting(BRANDING, body, actor='@mod:local'), (False, None))
+        self.policy['roles'][1]['permissions'].append('manage_server')
+        self.assertEqual(await self.setting(BRANDING, body, actor='@mod:local'), (True, None))
+        self.assertEqual(await self.setting(BRANDING, body, state=self.room, room='!channel:local'), (False, None))
+        self.server[(BRANDING, '')] = fixture.event(BRANDING, body=body, eid='$latest')
+        self.assertEqual(await self.setting(BRANDING, {**body, 'io.tavern.previous_event': '$stale'}), (False, None))
+        self.assertEqual(await self.setting(BRANDING, {**body, 'io.tavern.previous_event': '$latest'}), (True, None))
+        # Initial creation state from older Tavern versions remains valid.
+        self.assertEqual(await self.setting(BRANDING, {'welcome': 'Legacy welcome'}), (True, None))
+
+    async def test_branding_rejects_unbounded_and_external_artwork_even_from_owner(self):
+        self.server[('m.room.create', '')] = fixture.event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False})
+        for body in ({'inviteSplash': 'https://tracker.test/pixel'}, {'inviteSplash': 'mxc://local/art?token=secret'}, {'inviteSplash': []}, {'inviteSplash': 'mxc://local/' + 'x' * 1024}, {'banner': 'data:image/png;base64,secret'}, {'accent': 'red'}, {'welcome': 'x' * 2001}, {'unreviewed': True}):
+            self.assertEqual(await self.setting(BRANDING, body), (False, None), body)
 
     def test_companion_native_power_matches_canonical_native_model(self):
         state = {('m.room.create', ''): SimpleNamespace(sender='@creator:local', content={'room_version': '12', 'additional_creators': ['@coowner:local']})}

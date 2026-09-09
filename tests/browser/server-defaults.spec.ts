@@ -15,11 +15,13 @@ test('server defaults and welcome channels save actual state with revision check
   await expect(page.getByRole('status')).toHaveText('Notification default saved.');
   await page.getByRole('combobox', { name: 'Rules channel', exact: true }).selectOption('!rules:local');
   await page.getByRole('combobox', { name: 'Welcome channel', exact: true }).selectOption('!general:local');
+  await page.getByRole('combobox', { name: 'Announcement channel', exact: true }).selectOption('!rules:local');
   await page.getByRole('button', { name: 'Save welcome experience', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).writes.length)).toBe(2);
   const writes = await page.evaluate(() => (window as any).writes);
   expect(writes[0][2]).toEqual({ version: 1, mode: 'nothing', 'io.tavern.previous_event': '$io.tavern.notification.defaults:0' });
   expect(writes[1][2].rulesChannel).toBe('!rules:local'); expect(writes[1][2].welcomeChannel).toBe('!general:local');
+  expect(writes[1][2].announcementChannel).toBe('!rules:local');
 });
 
 test('settings hide without custom authority and reject permissions removed while saving', async ({ page }) => {
@@ -47,6 +49,10 @@ test('creation submits welcome and notification choices and welcome rules links 
   await expect.poll(() => page.evaluate(() => (window as any).selected)).toBe('!rules:local');
   expect(await page.evaluate(() => (window as any).actions)).toEqual([['join', { id: '!rules:local' }]]);
   expect(await page.evaluate(() => (window as any).accounts['io.tavern.server_welcome']['!server:local'].completed)).toBe(true);
+  await fixture(page, 'welcome');
+  await page.getByRole('button', { name: 'Announcements: Rules', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).selected)).toBe('!rules:local');
+  expect(await page.evaluate(() => (window as any).actions)).toEqual([['join', { id: '!rules:local' }]]);
 });
 
 test('choosing a personal global notification mode opts out of community defaults', async ({ page }) => {
