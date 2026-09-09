@@ -17,6 +17,20 @@ const HOOK = 'ci-system-notices', CONTROL = 'http://127.0.0.1:18086';
 const run = promisify(execFile);
 const roomId = value => typeof value === 'string' && /^![^\s/\\?#:]{1,200}:chat\.example\.test$/.test(value);
 
+export async function openSystemMessageSettings(page, serverName) {
+  const trigger = page.locator('.workspace-select');
+  await trigger.click();
+  await page.getByRole('menuitem', { name: serverName, exact: true }).click();
+  await expect(trigger.locator('strong')).toHaveText(serverName);
+  // Radix retains its closing content through the exit animation. Re-clicking
+  // the toggle before that layer is removed can close the newly opened menu.
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.workspace-menu')).toHaveCount(0);
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('menuitem', { name: 'Server settings & categories', exact: true }).click();
+}
+
 async function isolatedHelperNetwork() {
   const docker = async args => (await run('docker', args, { timeout: 15000, maxBuffer: 262144 })).stdout.trim();
   assert.equal(await docker(['ps','--filter','label=com.docker.compose.project=tavern-ci','--filter','label=com.docker.compose.service=integrations','-q']), '', 'The canonical integration service must stay excluded from this isolated fixture.');
@@ -214,10 +228,7 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     await startBot(identity);
     for (const page of [alice,bob]) { await page.goto(ORIGIN+'/#room='+encodeURIComponent(channel)); await ready(page); }
     // Save once through the actual mounted server editor, including typed ID.
-    await alice.locator('.workspace-select').click();
-    await alice.getByRole('menuitem',{name:serverName,exact:true}).click();
-    await alice.locator('.workspace-select').click();
-    await alice.getByRole('menuitem',{name:'Server settings & categories',exact:true}).click();
+    await openSystemMessageSettings(alice, serverName);
     const editor=alice.locator('section.product-section').filter({has:alice.getByRole('heading',{name:'System notices',exact:true})});
     await expect(editor.getByText('System notices: Off',{exact:true})).toBeVisible();
     await editor.getByLabel('Post system notices',{exact:true}).check();
