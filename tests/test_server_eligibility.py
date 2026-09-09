@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from synapse_modules.server_eligibility import ELIGIBILITY, EligibilityDenied, valid_settings, signature, fingerprint
+from synapse_modules.server_account_eligibility import ELIGIBILITY, EligibilityDenied, valid_settings, signature, fingerprint
 from tests import test_roles as fixture
 
 OWNER, MEMBER, SERVER, ROOM = '@owner:local', '@member:local', '!server:local', '!channel:local'

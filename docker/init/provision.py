@@ -145,7 +145,7 @@ def provision(root, env):
               'root': {'level': level, 'handlers': ['console']}, 'disable_existing_loggers': False}, indent=2) + '\n')
     if calls:
         provision_calls(root, config, domain, turn_domain, str(public_ip))
-    install_policy(root, config)
+    install_policy(root, config, integrations)
     # Permissions only on known configuration files/directories; never walk existing media.
     for path in (synapse, config_path, synapse / 'log.config'):
         own(path, 991)
@@ -167,7 +167,7 @@ def provision(root, env):
     print('Tavern configuration validated. Existing identity, database credentials, and media preserved.')
 
 
-def install_policy(root, config):
+def install_policy(root, config, integrations=False):
     bundled = Path(__file__).parent / 'modules'
     if not bundled.exists():
         bundled = Path(__file__).resolve().parents[2] / 'synapse_modules'
@@ -191,7 +191,8 @@ def install_policy(root, config):
         pending.replace(target / module.name)
     modules = config.setdefault('modules', [])
     installed = next((item for item in modules if item.get('module') == 'tavern_policy.TavernPolicy'), None)
-    privacy_config = {'privacy_api_url': 'http://tavern-api:8090', 'privacy_key_file': '/data/tavern-privacy.key'}
+    privacy_config = {'privacy_api_url': 'http://tavern-api:8090', 'privacy_key_file': '/data/tavern-privacy.key',
+                      'system_messages_enabled': integrations}
     if installed is None or any(installed.get('config', {}).get(key) != value for key, value in privacy_config.items()):
         # This one additive migration installs server-side authorization. Preserve
         # an exact before image; do not alter existing accounts, rooms, or keys.

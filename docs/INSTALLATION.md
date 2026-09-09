@@ -246,6 +246,14 @@ set `COMPOSE_PROFILES=calls,integrations` (or `integrations` without calls) and
 Admin integration settings write the shared bot configuration and HMAC key files;
 the bot's encryption identity and message queue remain in its separate data volume.
 
+After the bot and an encrypted channel webhook are configured, server managers
+can open **Server settings → System notices** to select that destination and
+enable join/leave notices. The existing integrations profile enables the native
+worker; each server's route starts off. Redeploy and restart Synapse after
+updating the policy modules. The account service creates the private signing
+configuration on first enable. Recipient and device approvals remain required;
+see [system notice setup and delivery limits](SYSTEM_MESSAGES.md).
+
 ## Installed app, calls, and offline behavior
 
 Use Settings → About → Install Tavern to open the browser installation prompt or

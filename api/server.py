@@ -1113,7 +1113,11 @@ async def boundary(request, handler):
         # registration capability. It must never consume a browser cookie.
         push_delivery = request.method == 'POST' and request.path == '/_matrix/push/v1/notify'
         push_ticket = request.method == 'POST' and request.path == '/api/push/check'
-        if request.path != "/health" and not push_delivery:
+        # Only these exact internal POST routes use purpose-bound HMAC bodies.
+        # Their handlers verify signatures; browser cookies cannot authorize them.
+        system_delivery = request.method == 'POST' and request.path in {
+            '/api/internal/system-events', '/api/internal/system-deliveries/authorize'}
+        if request.path != "/health" and not push_delivery and not system_delivery:
             if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("Origin") != service.config.public_url:
                 raise APIError(403, "The request origin was not accepted. Reload Tavern and try again.", "CSRF_REJECTED")
             if request.headers.get("Sec-Fetch-Site") == "cross-site":
@@ -1213,7 +1217,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "push_notifications", "server_eligibility"):
+    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "system_messages", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "push_notifications", "server_eligibility"):
         import_module(prefix + module).register_routes(app)
     return app
 

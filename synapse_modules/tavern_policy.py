@@ -11,8 +11,9 @@ try:
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from server_afk import ServerAfkPolicy, AFK
-    from server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
+    from server_account_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
     from profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
+    from server_system_messages import SystemMessagesPolicy, SYSTEM_MESSAGES, valid_settings as valid_system_message_settings
     from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
@@ -22,8 +23,9 @@ except ImportError:
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from synapse_modules.server_afk import ServerAfkPolicy, AFK
-    from synapse_modules.server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
+    from synapse_modules.server_account_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
     from synapse_modules.profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
+    from synapse_modules.server_system_messages import SystemMessagesPolicy, SYSTEM_MESSAGES, valid_settings as valid_system_message_settings
     from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
@@ -263,8 +265,11 @@ class TavernPolicy:
             valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
         self.profile_metadata = ProfileMetadataPolicy(api, SimpleNamespace(POLICY=POLICY,
             valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
+        self.system_messages = SystemMessagesPolicy(config, api, SimpleNamespace(POLICY=POLICY,
+            valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_with_errors, on_create_room=self.on_create_room,
-            check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid)
+            check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid,
+            on_new_event=self.system_messages.on_new_event)
 
     async def on_create_room(self, requester, request_content, is_requester_admin):
         error = await self.private_threads.create(requester.user.to_string(), request_content)
@@ -292,7 +297,11 @@ class TavernPolicy:
         parsed = urlsplit(url)
         if url and (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.path or parsed.query or parsed.fragment):
             raise ValueError('privacy_api_url must be the account gateway origin')
-        return {'privacy_api_url': url.rstrip('/'), 'privacy_key_file': config.get('privacy_key_file', '/data/tavern-privacy.key')}
+        system_messages_enabled = config.get('system_messages_enabled', False)
+        if type(system_messages_enabled) is not bool:
+            raise ValueError('system_messages_enabled must be a boolean')
+        return {'privacy_api_url': url.rstrip('/'), 'privacy_key_file': config.get('privacy_key_file', '/data/tavern-privacy.key'),
+            'system_messages_enabled': system_messages_enabled}
 
     async def _policies(self, event, state):
         own = content(state, POLICY)
@@ -316,6 +325,8 @@ class TavernPolicy:
             return False, None
         if eligibility_cleanup(event, state_events):
             return True, None  # Native auth still applies; account requirements cannot trap members.
+        if not await self.system_messages.check(event, state_events):
+            return False, None
         if not await self.profile_metadata.check(event, state_events):
             return False, None
         if not await self.server_afk.check(event, state_events):
@@ -373,7 +384,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, ELIGIBILITY, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, ELIGIBILITY, SYSTEM_MESSAGES, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None

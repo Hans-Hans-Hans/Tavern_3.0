@@ -86,6 +86,8 @@ server {
     location = /health { return 200 'ok'; }
     location = /health/live { proxy_pass $tavern_api$request_uri; }
     location = /health/ready { proxy_pass $tavern_api$request_uri; }
+    # Signed service callbacks use the private Docker network directly.
+    location ^~ /api/internal/ { return 404; }
     location ^~ /api/ {
         # Keep the incoming proxy chain. The API trusts it only against the
         # explicitly configured proxy CIDRs; bootstrap otherwise fails closed.

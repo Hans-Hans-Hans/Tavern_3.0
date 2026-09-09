@@ -59,6 +59,12 @@ def load_configuration(path):
         raise ValueError('Invalid bot configuration')
     if len(value['hooks']) > 100:
         raise ValueError('Too many hooks')
+    if 'system_messages' in value:
+        try:
+            from system_messages import configured_key
+        except ImportError:
+            from integrations.system_messages import configured_key
+        configured_key(value, path.parent)
     keys = {}
     for name, hook in value['hooks'].items():
         if not re.fullmatch(r'[a-z0-9_-]{1,64}', name) or not isinstance(hook, dict):

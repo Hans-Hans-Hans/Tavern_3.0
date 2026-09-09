@@ -155,6 +155,9 @@ def main():
             assert request(path, headers=headers)[0] == 404
         for version in ('v3', 'r0', 'unstable', 'api/v1'):
             assert request('/_matrix/client/' + version + '/pushers/set', 'POST', headers, '{}')[0] == 403
+        for path in ('/api/internal/system-events', '/api/internal/system-deliveries/authorize', '/api/internal/server-eligibility'):
+            for method in ('GET', 'POST'):
+                assert request(path, method, headers)[0] == 404, 'Internal callbacks must not be publicly routed.'
         counts = json.loads(request('/api/__fixture/counters')[1])
         assert counts == {'sfu': 6, 'raw': 0}, 'Denied and unknown requests must never reach private raw services.'
         print('PASS: built Nginx enforces call admission for HTTP/WebSocket paths, routes auth and push requests explicitly, strips cookies from SFU/push traffic, and blocks alternate native pusher and raw service paths.')

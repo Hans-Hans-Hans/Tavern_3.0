@@ -46,6 +46,20 @@ class ProvisionTests(unittest.TestCase):
         self.run_init()
         self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
 
+    def test_optional_system_notice_worker_tracks_integration_profile_without_rotating_identity(self):
+        self.run_init()
+        def module():
+            return next(item['config'] for item in self.config()['modules'] if item['module'] == 'tavern_policy.TavernPolicy')
+        identity = self.config()['registration_shared_secret']
+        key = (self.root / 'synapse/tavern-privacy.key').read_bytes()
+        self.assertIs(module()['system_messages_enabled'], False)
+        for enabled in (True, True, False):
+            self.run_init(INTEGRATIONS_ENABLED=str(enabled).lower(), COMPOSE_PROFILES='integrations' if enabled else '')
+            self.assertIs(module()['system_messages_enabled'], enabled)
+            self.assertEqual(self.config()['registration_shared_secret'], identity)
+            self.assertEqual((self.root / 'synapse/tavern-privacy.key').read_bytes(), key)
+            self.assertTrue((self.root / 'synapse/tavern_modules/server_system_messages.py').is_file())
+
     def test_existing_database_without_identity_is_rejected(self):
         (self.root / 'postgres').mkdir()
         (self.root / 'postgres/PG_VERSION').write_text('17')

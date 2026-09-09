@@ -4,6 +4,19 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34372590506](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34372590506)
+at development commit `c4c9688` passed the production build, 285 JavaScript
+checks, 136 browser tests, 446 Python tests, offline PWA, Compose, remote Docker
+builds and both gateway fixtures. The fresh stack passed bootstrap/TLS SMTP,
+ordinary account authorization, encrypted messages/edits/threads/files, profile
+avatar reload, native private discussions and AFK. Eligibility assertions passed
+for age, email, fresh joins, native call membership and owner recovery, then the
+script stopped on the first HTTP 429 while the SDK was sending the final recovery
+message. It now observes the SDK's retry of the same transaction within the
+existing deadline; it never clicks Send again or manually replays the message.
+Profile-rule acceptance and the final restart were not reached. Independent
+failed-update rollback passed.
+
 [Run 34370886413](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34370886413)
 at development commit `41abdee` passed the production build, all 272 JavaScript
 and 124 browser tests, Python checks, offline PWA, Compose, both remote-context
@@ -89,6 +102,18 @@ Development run [34358857688](https://github.com/Hans-Hans-Hans/Tavern_3.0/actio
 Development run [34360606392](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34360606392) at `a84c23e` passed 239 JavaScript and 116 browser tests, 317 Python checks, production/PWA/Docker validation, fresh stack, TLS setup, encrypted message/edit/thread/file and avatar-reload acceptance, and isolated failed-update rollback. The real three-account private-discussion probe completed: explicit creation grants, source-owner exclusion, invitation acceptance, bidirectional encryption/reload, source permission and membership loss, archive rejection and stale-state rejection all passed. AFK setup then hit `M_LIMIT_EXCEEDED` while Alice joined its explicitly created fixture rooms. A bounded retry now rechecks native membership before repeating that known-room join; network ambiguity is not automatically replayed. That failed run did not reach native AFK assertions or account deactivation.
 
 ## Subsequent local verification
+
+The subsequent encrypted system-notice integration passed the production build,
+291 JavaScript tests, 141 browser tests and 485 Python tests (eight platform
+skips). Additional review reproduced and fixed public/system transaction-ID
+collision, malformed send confirmations, native bot suspension and verification
+changes during final state reads, worker exit on a temporary database error,
+and unbounded partial-state lookup. All 88 final system, provisioning, native
+eligibility and import-layout checks pass. A separate isolated process reproduces the
+container's flat API imports and deployed native module tree, including retained
+older module files; distinct native names fix its previously observed HTTP 503
+policy-load failure. Real encrypted system-notice delivery through a live bot
+remains pending.
 
 The subsequent profile metadata rules passed 282 JavaScript tests, 446 Python
 checks (eight Windows/platform skips), and the production build/typecheck.

@@ -31,6 +31,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Conference token and reconnect authorization with durable modern participant identities, revocation retries and exact-device channel-plus-call removal.
 - Protected per-server verified-email and account-age requirements, with native join/post/call enforcement, source inheritance for private discussions, owner recovery and revision-safe settings.
 - Optional native server profile metadata rules for structured links, custom fields, bio and status, with inherited limits, revision-safe settings, compliant room copies and preserved rejected editor drafts.
+- Optional encrypted server join/leave notices through existing verified webhook destinations, with protected settings, durable bounded queues, current recipient checks and delivery status.
 
 ### Changed
 
@@ -39,6 +40,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Production configuration is generated once and retained across restarts. Migration preserves existing Matrix server identity and data.
 
 ### Fixed
+
+- Native eligibility and system-message module names remain distinct from the flat API modules, so deployed permission checks load correctly.
 
 - Nginx startup configuration and gateway routing regressions.
 - Session/device races, sensitive-action reauthentication, role inheritance boundaries, and stale administration edits covered by regression tests.

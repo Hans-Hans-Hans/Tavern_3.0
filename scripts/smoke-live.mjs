@@ -9,6 +9,7 @@ import { afkSmoke } from './smoke-afk.mjs';
 import { eligibilitySmoke } from './smoke-eligibility.mjs';
 import { profilePolicySmoke } from './smoke-profile-policy.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
+import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
 if (!process.env.TAVERN_CI_TLS) throw new Error('The isolated CI certificate directory is required.');
@@ -67,12 +68,22 @@ async function responseDuring(page, predicate, action) {
   return response;
 }
 function encryptedResponse(page, action) {
-  return responseDuring(page, response => response.request().method() === 'PUT' && response.url().includes('/send/m.room.encrypted/'), action);
+  let transaction;
+  return responseDuring(page, async response => {
+    if (response.request().method() !== 'PUT' || !response.url().includes('/send/m.room.encrypted/')) return false;
+    transaction ||= response.url();
+    if (response.url() !== transaction) return false;
+    if (response.status() !== 429) return true;
+    const data = await response.json().catch(() => null), delay = data?.retry_after_ms;
+    // Observe the SDK's retry of this same transaction. Never click Send again
+    // or replay its request; other failures and the page deadline still fail.
+    return !(data?.errcode === 'M_LIMIT_EXCEEDED' && Number.isInteger(delay) && delay >= 0 && delay <= 30000);
+  }, action);
 }
 async function encryptedEvent(page, roomId, response, plaintext) {
   assert.equal(response.status(), 200);
   const { event_id: eventId } = await response.json();
-  const stored = await api(page, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/event/' + encodeURIComponent(eventId), undefined, true);
+  const stored = await matrixSmokeRequest(() => api(page, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/event/' + encodeURIComponent(eventId), undefined, true));
   assert.equal(stored.status, 200); assert.equal(stored.data.type, 'm.room.encrypted');
   assert.ok(stored.data.content.ciphertext); assert.ok(!JSON.stringify(stored.data).includes(plaintext));
   return eventId;

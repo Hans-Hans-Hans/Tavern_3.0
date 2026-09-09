@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from aiohttp import web
 from api.server import APIError
 from api.server_eligibility import register_routes, require_room_eligibility
-from synapse_modules.server_eligibility import ELIGIBILITY, signature
+from synapse_modules.server_account_eligibility import ELIGIBILITY, signature
 from tests import test_api as fixture
 from tests.test_server_eligibility import config
 

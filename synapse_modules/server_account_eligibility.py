@@ -1,4 +1,4 @@
-"""Account eligibility for local Spaces; ciphertext and client claims are irrelevant."""
+"""Native account eligibility, separately named from the flat API companion."""
 from collections.abc import Mapping
 import hashlib
 import hmac
