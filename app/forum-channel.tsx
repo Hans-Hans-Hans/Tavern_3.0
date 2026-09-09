@@ -1,3 +1,4 @@
+import { DraftIndicator } from './message-drafts';
 import { useRef, useState } from 'react';
 import { matrixApi, getMatrixClient } from '@/lib/matrix';
 import { postingRestriction } from '@/lib/channel-policy';
@@ -44,7 +45,7 @@ export function ForumChannel({ roomId, messages, onOpen, onSent, onProfile, hasM
       <h3><button className='forum-open' onClick={() => onOpen(message)}>{message.pinned ? '📌 ' : ''}{message.forum?.title || message.body.split('\n')[0].slice(0, 120)}</button></h3>
       <p>{message.body.slice(0, 220)}</p><div>{message.forum?.tags?.map((value: string) => <span className='forum-tag' key={value}>{value}</span>)}</div>
       {message.restriction && <p className='composer-restriction'>{message.restriction}</p>}
-      <small>{message.author_name} · {message.replies} replies · {new Date(message.created_at).toLocaleDateString()}</small>
+      <small>{message.author_name} · {message.replies} replies · {new Date(message.created_at).toLocaleDateString()} <DraftIndicator roomId={roomId} parent={message.id} label={'Draft reply to '+(message.forum?.title || 'forum post')}/></small>
       <div className='product-actions'><ReactionBar roomId={roomId} eventId={message.id} reactions={message.reactions || []} canReact={messagePermissions(roomId, message.author_id).react} onProfile={onProfile}/>{messagePermissions(roomId, message.author_id).react && <DropdownMenu><DropdownMenuTrigger asChild><button className='secondary-button' aria-label={'React to ' + (message.forum?.title || 'discussion')}>React</button></DropdownMenuTrigger><DropdownMenuContent><EmojiPicker serverId={serverId} onSelect={emoji => void react(message.id, emoji)} onSelectCustom={emoji => void react(message.id, emoji.uri)}/></DropdownMenuContent></DropdownMenu>}</div>
     </article>)}
     {!shown.length && <p>No discussions match this view.{hasMore ? ' Earlier history may contain more matches.' : canPost ? ' Start a discussion to get things going.' : ''}</p>}

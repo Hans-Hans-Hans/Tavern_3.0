@@ -1,8 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
-const { parseSearchQuery, matchesSearch, searchWords, createSearchKeys, searchTag, sealSearchDocument, openSearchDocument, projectSearchDocument } = loadTs('../lib/search-index.ts', { 'matrix-js-sdk': {} });
+const { parseSearchQuery, matchesSearch, searchWords, createSearchKeys, searchTag, sealSearchDocument, openSearchDocument, projectSearchDocument, searchFileMetadata } = loadTs('../lib/search-index.ts', { 'matrix-js-sdk': {} });
 const document = { id: '$secret-id', roomId: '!room:local', roomName: 'General', authorId: '@alice:local', authorName: 'Alice Smith', body: 'Private launch plan https://example.com', timestamp: Date.parse('2026-09-08'), editedAt: Date.parse('2026-09-08'), has: ['file', 'link'], mentions: ['@bob:local'], mentionRoom: false };
+
+test('filename and media metadata are indexed only as encrypted records and keyed postings', async () => {
+  const file = searchFileMetadata({ msgtype: 'm.file', body: 'Quarterly report', filename: 'Secret_roadmap-final.pdf', info: { mimetype: 'application/pdf', size: 123 }, file: { url: 'mxc://private/asset', key: 'never-index-this-key' } });
+  assert.deepEqual(file, { name: 'Secret_roadmap-final.pdf', mime: 'application/pdf', size: 123, kind: 'file' });
+  const doc = { ...document, body: 'Quarterly report', file }, keys = await createSearchKeys(), row = await sealSearchDocument(doc, keys);
+  assert.equal(matchesSearch(doc, parseSearchQuery('roadmap pdf has:file'), ''), true);
+  assert.equal(matchesSearch(doc, parseSearchQuery('"Secret_roadmap-final.pdf"'), ''), true);
+  for (const secret of ['Quarterly', 'roadmap', 'application/pdf', 'never-index-this-key', 'mxc://']) assert.equal(JSON.stringify(row).includes(secret), false);
+  assert.ok(row.tags.includes(await searchTag(keys.search, 'roadmap')));
+  assert.deepEqual(await openSearchDocument(row, keys), doc);
+  assert.equal(searchFileMetadata({ msgtype: 'm.text', filename: 'forged.pdf' }), undefined);
+  assert.deepEqual(searchFileMetadata({ msgtype: 'm.audio', filename: {}, body: 'Voice note', info: { mimetype: 'invalid', size: -1 } }), { name: 'Voice note', mime: '', size: null, kind: 'audio' });
+});
 test('search parser handles quoted names, phrases, and exact date bounds', () => { const query = parseSearchQuery('"launch plan" from:"Alice Smith" in:General after:2026-09-07 before:2026-09-09 has:link mentions:me'); assert.equal(matchesSearch(document, query, '@bob:local'), true); assert.equal(matchesSearch(document, query, '@mallory:local'), false); assert.equal(matchesSearch(document, parseSearchQuery('before:2026-09-08'), '@bob:local'), false); assert.equal(matchesSearch(document, parseSearchQuery('from:alice in:general'), '@bob:local'), true); });
 test('search parser rejects malformed operators and invalid calendar dates', () => { for (const query of ['"unclosed', 'from:', 'has:executable', 'mentions:all', 'before:2026-02-31', 'after:2026-09-09 before:2026-09-08']) assert.throws(() => parseSearchQuery(query)); });
 test('word indexing normalizes Unicode and avoids substring false positives', () => { assert.deepEqual(searchWords('Hello ＨＥＬＬＯ café'), ['hello', 'café']); assert.equal(matchesSearch(document, parseSearchQuery('plan'), ''), true); assert.equal(matchesSearch(document, parseSearchQuery('laun'), ''), false); });

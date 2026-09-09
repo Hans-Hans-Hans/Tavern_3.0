@@ -15,14 +15,18 @@ const compiled = ts.transpileModule('async function send(p:any){const c=client,m
 const token = loadTs('../lib/role-mention-token.ts', {});
 function setup() {
   const f = privateFixture(); f.ownerGeneration = {}; f.pendingFiles = new Map(); f.messages.set(f.sourceId, []);
-  for (const room of f.client.getRooms()) room.getJoinedMemberCount = () => room.getJoinedMembers().length;
+  f.client.getDeviceId = () => 'ROLE_SEND';
+  f.client.getHomeserverUrl = () => 'https://role-send.local';
+  const putFile = f.pendingFiles.set.bind(f.pendingFiles); f.pendingFiles.set = (id, file) => putFile(id, { id, owned: () => true, ...file });
+  for (const room of f.client.getRooms()) { room.getJoinedMemberCount = () => room.getJoinedMembers().length; room.hasEncryptionStateEvent = () => true; }
   f.policy.roles[1].mentionable = true; f.policy.roles[1].name = 'Helpers'; f.policy.members[f.member] = ['mod'];
   const roles = loadTs('../lib/roles.ts', { './matrix': { getMatrixClient: () => f.client } });
   const privateThreads = loadTs('../lib/private-threads.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': { getMatrixClient: () => f.client }, './roles': roles });
   const markdown = loadTs('../lib/message-markdown.ts', { 'markdown-it': { default: MarkdownIt }, './role-mention-token': token });
   const helper = loadTs('../lib/role-mentions.ts', { './message-markdown': markdown, './roles': roles, './private-threads': privateThreads, './role-mention-token': token });
-  const runtime = new Function('f', 'helper', 'let client=f.client;const accountArtworkOwner=()=>f.ownerGeneration,pendingFiles=f.pendingFiles,notify=()=>{},safeString=value=>typeof value==="string"?value:"",readServerEmoji=()=>[],serverEmojiHtml=()=>null,roomRequired=id=>client.getRoom(id);const {expandRoleMentions,checkRoleMentionSize}=helper;' + compiled + ';return{send,replaceClient(value){client=value}};')(f, helper);
-  return { ...f, fixture: f, runtime, body: token.roleMentionToken({ serverId: f.serverId, roleId: 'mod', name: 'Helpers' }), send: changes => runtime.send({ conversation: f.sourceId, body: 'Hi', nonce: 'stable-outbox-transaction', ...changes }) };
+  const transaction = loadTs('../lib/send-matrix-transaction.ts', {}), attachments = loadTs('../lib/outbox-attachments.ts', {}), attempts=loadTs('../lib/matrix-send-attempt.ts',{});
+  const runtime = new Function('f', 'helper', 'let client=f.client;const accountArtworkOwner=()=>f.ownerGeneration,pendingFiles=f.pendingFiles,notify=()=>{},safeString=value=>typeof value==="string"?value:"",readServerEmoji=()=>[],serverEmojiHtml=()=>null,roomRequired=id=>client.getRoom(id);const {expandRoleMentions,checkRoleMentionSize,sendMatrixTransaction,attachmentTransaction,validateQueuedAttachments,readMatrixSendAttempt,rememberMatrixSendAttempt,forgetMatrixSendAttempt,assertMatrixSendAttemptCapacity}=helper;' + compiled + ';return{send,replaceClient(value){client=value}};')(f, {...helper, ...transaction, ...attachments,...attempts});
+  return { ...f, fixture: f, runtime,attempts, body: token.roleMentionToken({ serverId: f.serverId, roleId: 'mod', name: 'Helpers' }), send: changes => runtime.send({ conversation: f.sourceId, body: 'Hi', nonce: 'stable-outbox-transaction', ...changes }) };
 }
 test('actual send builds native explicit mentions with current roles and existing person/everyone semantics', async () => {
   const f = setup(); await f.send({ body: f.body + ' @Charlie @everyone', serverId: '!forged:test' });
@@ -103,4 +107,53 @@ test('recipient drift after asynchronous attachment delivery is reported before 
   f.client.sendMessage = async (...args) => { const result = await nativeSend(...args); f.policy.members[f.member] = []; return result; };
   await assert.rejects(f.send({ body: f.body, attachments: ['file'] }), /recipients changed/);
   assert.equal(f.writes.length, 1); assert.equal(f.writes[0].content.msgtype, 'm.file'); assert.equal(f.pendingFiles.size, 1);
+});
+test('retry reuses original content and explicit mentions after unrelated live names and emoji formatting change', async () => {
+  const f=setup();await f.send({body:'Hi @Charlie'});const original=structuredClone(f.writes[0].content);
+  original.format='org.matrix.custom.html';original.formatted_body='Hi <strong>original emoji snapshot</strong>';
+  for(const member of f.client.getRoom(f.sourceId).getJoinedMembers())member.name='A changed name';
+  let prepared;
+  await f.send({body:'Hi @Charlie',preparedContent:original,preparedEncrypted:true,preparedRoleUsers:[],checkpoint:{prepare:async content=>{prepared=content;},body:async()=>{}}});
+  assert.deepEqual(prepared,original);assert.deepEqual(f.writes[1].content,original);
+  assert.ok(original['m.mentions'].user_ids.includes(f.other));
+});
+test('saved native content cannot silently retarget a changed role audience',async()=>{
+  const f=setup();await f.send({body:f.body});const original=structuredClone(f.writes[0].content);
+  f.policy.members[f.member]=[];
+  await assert.rejects(f.send({body:f.body,preparedContent:original,preparedEncrypted:true,preparedRoleUsers:[f.author,f.member].sort(),outboxAttachments:[],checkpoint:{prepare:async()=>assert.fail('must reject before checkpoint')}}),/recipients changed/);
+  assert.equal(f.writes.length,1);
+});
+test('an acknowledged direct attachment is excluded when retrying the remaining text with a new caption transaction',async()=>{
+  const f=setup();f.pendingFiles.set('file',{roomId:f.sourceId,type:'application/octet-stream',name:'ciphertext',size:32,file:{url:'mxc://test/ciphertext'}});
+  const native=f.client.sendMessage;f.client.sendMessage=async(...args)=>{if(args[1].msgtype==='m.text')throw new Error('Caption failed');return native(...args);};
+  await assert.rejects(f.send({body:'Caption',attachments:['file']}),/Caption failed/);
+  assert.equal(f.pendingFiles.get('file').eventId,'$sent1');f.client.sendMessage=native;
+  await f.send({body:'Updated caption',attachments:['file'],nonce:'new-caption'});
+  assert.equal(f.writes.filter(value=>value.content.msgtype==='m.file').length,1);assert.equal(f.writes.at(-1).transactionId,'new-caption');
+});
+test('a failed direct send carries immutable original content and attempted lineage into an explicit outbox transfer',async()=>{
+  const f=setup(),native=f.client.sendMessage;f.client.sendMessage=async()=>{throw new Error('Unconfirmed direct text');};
+  await assert.rejects(f.send({body:'Hi @Charlie'}),/Unconfirmed/);
+  const snapshot=f.attempts.readMatrixSendAttempt(f.client,f.client.getRoom(f.sourceId),undefined,'stable-outbox-transaction');
+  assert.equal(snapshot.attempted,true);assert.ok(snapshot.preparedContent['m.mentions'].user_ids.includes(f.other));
+  f.client.sendMessage=native;for(const member of f.client.getRoom(f.sourceId).getJoinedMembers())member.name='Different name';
+  await f.send({body:'Hi @Charlie'});assert.deepEqual(f.writes[0].content,snapshot.preparedContent);
+  assert.equal(f.attempts.readMatrixSendAttempt(f.client,f.client.getRoom(f.sourceId),undefined,'stable-outbox-transaction'),undefined);
+});
+test('unconfirmed direct-send capacity preserves old transactions and rejects new uploads before side effects',async()=>{
+  const f=setup(),room=f.client.getRoom(f.sourceId),content={attempted:true,preparedContent:{msgtype:'m.text',body:'Saved'},preparedRoleUsers:[],encrypted:true};
+  for(let i=0;i<100;i++)f.attempts.rememberMatrixSendAttempt(f.client,room,undefined,'old-'+i,content,()=>true);
+  await assert.rejects(f.send({outboxAttachments:[],checkpoint:{prepare:async()=>assert.fail('capacity must fail before preparing/uploading')}}),/100 unconfirmed/);
+  assert.equal(f.writes.length,0);assert.deepEqual(f.attempts.readMatrixSendAttempt(f.client,room,undefined,'old-0').preparedContent,content.preparedContent);
+  f.attempts.forgetMatrixSendAttempt(f.client,'old-50');await f.send({body:'New send now fits'});assert.equal(f.writes.length,1);
+  assert.deepEqual(f.attempts.readMatrixSendAttempt(f.client,room,undefined,'old-0').preparedContent,content.preparedContent);
+});
+test('invalid acknowledgement in the actual direct/fallback send branch preserves pending attachments and attempt lineage',async()=>{
+  for(const attachment of [false,true]){
+    const f=setup();if(attachment)f.pendingFiles.set('file',{roomId:f.sourceId,type:'application/octet-stream',name:'file',size:3,file:{url:'mxc://test/ciphertext'}});
+    f.client.sendMessage=async()=>({event_id:'invalid'});
+    await assert.rejects(f.send({body:'Keep draft',attachments:attachment?['file']:[]}),/invalid message acknowledgement/);
+    assert.ok(f.attempts.readMatrixSendAttempt(f.client,f.client.getRoom(f.sourceId),undefined,'stable-outbox-transaction'));
+    if(attachment){assert.equal(f.pendingFiles.size,1);assert.equal(f.pendingFiles.get('file').eventId,undefined);}
+  }
 });

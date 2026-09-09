@@ -6,6 +6,11 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Encrypted attachment retry copies with per-file delivery checkpoints, explicit retry/cancel controls, stable native transaction content and rejection of malformed acknowledgements.
+- Account-owned per-conversation/thread drafts with navigation indicators and revision-safe clearing after acknowledged sends.
+- Unified encrypted message/file search, loaded shared-room people and joined server/channel results, bounded history indexing and command-palette query handoff.
+- Independent interface density and message spacing, synced appearance controls and responsive settings at narrow widths.
+- Explicit administrator browser TURN allocation diagnostics with current short-lived credentials, bounded execution and cancellation cleanup.
 - Independent conference server mute/deafen with protected native scope/role authority, durable device reconciliation, member status and explicit pending/rejoin outcomes. The calls profile builds a pinned SFU with audio-kind enforcement and real RTP checks; moderator controls are opt-in.
 - Stable-room-compatible state keys for moderator timeouts, temporary bans and server nicknames, with legacy-state reading, canonical clear precedence and revision-checked migration.
 - Single Compose stack with persistent initialization, account service, and optional calls, integrations, and operations profiles.
@@ -50,6 +55,7 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Fixed
 
+- Native smoke readiness handles optional onboarding that disappears when saved account data finishes loading, while still rejecting an unusable persistent dialog.
 - Search indexing and history exports continue through empty filtered pages, retain the requested room during older-event decryption, and reject stale identity/membership results before output or storage.
 - Staff room details and join-block controls accept native room-version-12 hash IDs while retaining administrator authority, bounded ID validation and exact confirmation.
 - Per-server invitation privacy accepts native room-version-12 IDs in saved preferences while retaining current shared-Space checks and intersecting restrictions.

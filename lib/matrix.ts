@@ -20,6 +20,9 @@ import { indexReactions, type Reaction } from './message-projection';
 import { applyPresenceMode } from './presence';
 import { initializeAppearance, resetAppearance } from './appearance';
 import { initializeOutbox, resetOutbox } from './outbox';
+import { attachmentTransaction, validateQueuedAttachments, type QueuedAttachment, type UploadedAttachment } from './outbox-attachments';
+import { sendMatrixTransaction } from './send-matrix-transaction';
+import { readMatrixSendAttempt, rememberMatrixSendAttempt, forgetMatrixSendAttempt, resetMatrixSendAttempts, assertMatrixSendAttemptCapacity } from './matrix-send-attempt';
 import { initializeSearch, resetSearch, searchMessages } from './search-index';
 import { initializeNotifications, resetNotifications } from './notifications';
 import { initializeCalls, resetCalls } from './calls';
@@ -73,8 +76,8 @@ async function attachSession(s:any){
   void prepareHistoryRecovery(c).catch(()=>{});
   await hydrateSelfProfile(c,()=>client===c);
   await applyPresenceMode(c).catch(()=>{});
-  initializeAppearance(c);void initializeOutbox(c,item=>matrixApi('send',{conversation:item.roomId,parent:item.parent,serverId:item.serverId,body:item.body,nonce:item.id})).catch(error=>console.warn('Local outbox unavailable:',error.message));
-  void initializeSearch(c).catch(error=>console.warn('Local search unavailable:',error.message));
+  initializeAppearance(c);const outboxAccount=accountArtworkOwner();void initializeOutbox(c,(item,checkpoint)=>matrixApi('send',{conversation:item.roomId,parent:item.parent,serverId:item.serverId,body:item.body,nonce:item.id,outboxAttachments:item.attachments,bodyEventId:item.bodyEventId,preparedContent:item.preparedContent,preparedRoleUsers:item.preparedRoleUsers,preparedEncrypted:item.encrypted,checkpoint}),{current:()=>client===c&&accountArtworkOwner()===outboxAccount,cancelled:id=>forgetMatrixSendAttempt(c,id),upload:async(file,item)=>{const uploaded=await uploadMatrixFile(file,item.roomId);discardMatrixFile(uploaded.id);return uploaded;}}).catch(error=>console.warn('Local outbox unavailable:',error.message));
+  const searchOwner=accountArtworkOwner();void initializeSearch(c,()=>client===c&&accountArtworkOwner()===searchOwner).catch(error=>console.warn('Local search unavailable:',error.message));
   return true;
  }catch(e){stopReadCounts?.();stopReadCounts=null;resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
 }
@@ -93,7 +96,7 @@ async function performConnect(server:string,user:string,password:string,onStatus
  const s={baseUrl:base,accessToken:result.access_token,userId:result.user_id,deviceId:result.device_id};
  onStatus('Preparing encryption and syncing your rooms…');try{await attachSession(s);sessionStorage.setItem(sessionKey,JSON.stringify(s))}catch(e){const cleanup=sdk.createClient({baseUrl:base,accessToken:s.accessToken});await cleanup.logout().catch(()=>{});throw e}notify();
 }
-export function clearLocalMatrixSession(){stopReadCounts?.();stopReadCounts=null;const c=client;if(c){disposeCachedImageOwner(c);clearSelfProfile(c);}resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export function clearLocalMatrixSession(){stopReadCounts?.();stopReadCounts=null;const c=client;if(c){disposeCachedImageOwner(c);clearSelfProfile(c);}resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();resetMatrixSendAttempts();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
 export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');if(isManagedAccount())await requestApi('/auth/logout',{});else if(client)await client.logout();clearLocalMatrixSession();if(isManagedAccount())accountSignedOut()}
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
@@ -183,21 +186,39 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='read'){const room=roomRequired(p.conversation);const event=p.id?room.findEventById(p.id):null;if(event&&!event.status&&lastReceipts.get(room.roomId)!==p.id){lastReceipts.set(room.roomId,p.id);try{await c.sendReadReceipt(event,sdk.ReceiptType.ReadPrivate)}catch(e){lastReceipts.delete(room.roomId);throw e}}return {ok:true}}
  if(action==='send'){
   const room=roomRequired(p.conversation);if(p.parent){const root=room.findEventById(p.parent);if(root&&root.getRoomId()!==room.roomId)throw new Error('Thread belongs to another room.');}
-  const owner=accountArtworkOwner(),actor=c.getUserId(),current=()=>client===c&&accountArtworkOwner()===owner&&c.getUserId()===actor&&c.getRoom(room.roomId)===room&&room.getMyMembership()==='join';
+  const owner=accountArtworkOwner(),actor=c.getUserId(),device=c.getDeviceId(),homeserver=c.getHomeserverUrl(),encryptedRoom=room.hasEncryptionStateEvent(),current=()=>client===c&&accountArtworkOwner()===owner&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===homeserver&&c.getRoom(room.roomId)===room&&room.getMyMembership()==='join'&&room.hasEncryptionStateEvent()===encryptedRoom;
   const expanded=p.suppressMentions?null:await expandRoleMentions(c,room.roomId,p.body,current);
   if(!current())throw new Error('Your account or conversation changed. Your draft is kept.');
   const mentionBody=expanded?.bodyForUserMentions??p.body;
-  const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:[...new Set([...room.getJoinedMembers().filter(m=>mentionBody.includes('@'+m.name)||mentionBody.includes(m.userId)).map(m=>m.userId),...(expanded?.userIds||[])])]}};
+  let content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:[...new Set([...room.getJoinedMembers().filter(m=>mentionBody.includes('@'+m.name)||mentionBody.includes(m.userId)).map(m=>m.userId),...(expanded?.userIds||[])])]}};
   const formatted=serverEmojiHtml(p.body,readServerEmoji(p.serverId));if(formatted){content.format='org.matrix.custom.html';content.formatted_body=formatted;}
   if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
   if(!p.suppressMentions&&mentionBody.includes('@everyone'))content['m.mentions'].room=true;
+  const roleUsers=[...(expanded?.userIds||[])].sort();
+  const original=p.preparedContent?{preparedContent:p.preparedContent,preparedRoleUsers:p.preparedRoleUsers||[],encrypted:p.preparedEncrypted}:readMatrixSendAttempt(c,room,p.parent,p.nonce);
+  if(original){
+   if(original.preparedContent.msgtype!=='m.text'||original.preparedContent.body!==p.body||original.encrypted!==room.hasEncryptionStateEvent())throw new Error('The original pending message or conversation encryption changed. Check the conversation before replacing it.');
+   if(JSON.stringify(original.preparedRoleUsers)!==JSON.stringify(roleUsers))throw new Error('Role mention recipients changed after the original send attempt. The saved transaction will not notify a different audience.');
+   content=structuredClone(original.preparedContent);
+  }
   if(expanded)checkRoleMentionSize(content['m.mentions'],content);
   const checkSend=()=>{if(!current())throw new Error('Your account or conversation changed. Your draft is kept.');expanded?.assertCurrent();};
-  const attachments=(p.attachments||[]).map((id:string)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId)throw new Error('Reattach this file before sending.');return f});
-  if(attachments.length){for(let i=0;i<attachments.length;i++){checkSend();const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type,...f.info},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
-  if(p.body.trim()){checkSend();if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}
+  const remember=()=>rememberMatrixSendAttempt(c,room,p.parent,p.nonce,{attempted:true,preparedContent:content,preparedRoleUsers:roleUsers,encrypted:room.hasEncryptionStateEvent()},current);
+  const attachments:any[]=p.outboxAttachments?structuredClone(p.outboxAttachments):(p.attachments||[]).map((id:string,i:number)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId||!f.owned?.())throw new Error('Reattach this file before sending.');if(f.transactionId&&f.parent!==p.parent)throw new Error('This attempted file belongs to another thread. Check its original conversation.');f.transactionId??=attachmentTransaction(p.nonce,i);f.parent=p.parent;return {id,name:f.name,size:f.size,type:f.type,transactionId:f.transactionId,eventId:f.eventId,descriptor:f};});
+  if(p.outboxAttachments)validateQueuedAttachments(attachments,room.roomId);
+  checkSend();assertMatrixSendAttemptCapacity(c,p.nonce);await p.checkpoint?.prepare(content,room.hasEncryptionStateEvent(),roleUsers);checkSend();
+  for(const attachment of attachments){
+   if(attachment.eventId)continue;checkSend();
+   const f=attachment.descriptor||await p.checkpoint?.upload(attachment.id,checkSend);checkSend();
+   if(!f||f.roomId!==room.roomId||room.hasEncryptionStateEvent()&&!f.file)throw new Error('This pending file does not match the conversation encryption. Reattach it before sending a replacement.');
+   const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type,...f.info},...(f.file?{file:f.file}:{url:f.url})};
+   remember();const ack=await sendMatrixTransaction(c,room,fc,attachment.transactionId,p.parent,current);
+   if(!p.outboxAttachments){const pending=pendingFiles.get(attachment.id);if(pending?.owned?.()&&pending.transactionId===attachment.transactionId)pending.eventId=ack.event_id;}
+   await p.checkpoint?.attachment(attachment.id,attachment.transactionId,ack.event_id);
+  }
+  if(p.body.trim()&&!p.bodyEventId){checkSend();remember();const ack=await sendMatrixTransaction(c,room,content,p.nonce,p.parent,current);await p.checkpoint?.body(ack.event_id);}
   if(!current())throw new Error('Your account changed after sending. Reopen the conversation.');
-  for(const id of p.attachments||[])pendingFiles.delete(id);notify();return {ok:true};
+  for(const id of p.attachments||[])pendingFiles.delete(id);forgetMatrixSendAttempt(c,p.nonce);notify();return {ok:true};
  }
  if(['react','save','pin','edit','delete'].includes(action)){
   const room=joined().find(r=>r.findEventById(p.id)||r.getThreads().some(t=>t.findEventById(p.id))||eventCache.get(p.id)?.getRoomId()===r.roomId);
@@ -254,26 +275,40 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
 }
 export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:AbortSignal;onProgress?:(loaded:number,total:number)=>void}={}){
  const c=requireClient(),room=roomRequired(roomId);if(file.size>10*1024*1024)throw new Error('Files can be up to 10 MB.');if(!file.size)throw new Error('This file is empty.');
- options.signal?.throwIfAborted();
+ const actor=c.getUserId(),device=c.getDeviceId(),owner=accountArtworkOwner(),homeserver=c.getHomeserverUrl(),encryptedRoom=room.hasEncryptionStateEvent();
+ const owned=()=>client===c&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===homeserver&&accountArtworkOwner()===owner&&c.getRoom(roomId)===room&&room.getMyMembership()==='join'&&room.hasEncryptionStateEvent()===encryptedRoom;
+ const check=()=>{options.signal?.throwIfAborted();if(!owned())throw new Error('Your account, membership or encryption changed during upload. Attach the file again from the current conversation.');};
+ check();
  let descriptor:any=null,data:Blob=file;
- if(room.hasEncryptionStateEvent()){const {encryptAttachment}=await import('matrix-encrypt-attachment');const encrypted=await encryptAttachment(await file.arrayBuffer());descriptor=encrypted.info;data=new Blob([encrypted.data],{type:'application/octet-stream'});}
- options.signal?.throwIfAborted();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});
- let uploaded;try{uploaded=await c.uploadContent(data,{includeFilename:false,type:descriptor?'application/octet-stream':file.type||'application/octet-stream',abortController,progressHandler:p=>options.onProgress?.(p.loaded,p.total||data.size)});}finally{options.signal?.removeEventListener('abort',abort);}
- options.signal?.throwIfAborted();if(client!==c)throw new Error('Your account changed during upload. Sign in and attach the file again.');
+ if(encryptedRoom){const {encryptAttachment}=await import('matrix-encrypt-attachment');check();const bytes=await file.arrayBuffer();check();const encrypted=await encryptAttachment(bytes);check();descriptor=encrypted.info;data=new Blob([encrypted.data],{type:'application/octet-stream'});}
+ check();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});
+ let uploaded;try{uploaded=await c.uploadContent(data,{includeFilename:false,type:descriptor?'application/octet-stream':file.type||'application/octet-stream',abortController,progressHandler:p=>{if(owned())options.onProgress?.(p.loaded,p.total||data.size);}});}finally{options.signal?.removeEventListener('abort',abort);}
+ check();
  const info:any={};
- const {createMediaPreview}=await import('./media-processing');const preview=await createMediaPreview(file,options.signal);
+ const {createMediaPreview}=await import('./media-processing');check();const preview=await createMediaPreview(file,options.signal);check();
  if(preview){info.w=preview.sourceWidth;info.h=preview.sourceHeight;if(preview.duration!==undefined)info.duration=preview.duration;try{
   let thumbnailData=preview.blob,thumbnailFile:any=null;
-  if(descriptor){const {encryptAttachment}=await import('matrix-encrypt-attachment');const encrypted=await encryptAttachment(await preview.blob.arrayBuffer());thumbnailData=new Blob([encrypted.data],{type:'application/octet-stream'});thumbnailFile=encrypted.info;}
-  options.signal?.throwIfAborted();const thumbAbort=new AbortController(),cancelThumb=()=>thumbAbort.abort();options.signal?.addEventListener('abort',cancelThumb,{once:true});let result;
+  if(descriptor){const {encryptAttachment}=await import('matrix-encrypt-attachment');check();const bytes=await preview.blob.arrayBuffer();check();const encrypted=await encryptAttachment(bytes);check();thumbnailData=new Blob([encrypted.data],{type:'application/octet-stream'});thumbnailFile=encrypted.info;}
+  check();const thumbAbort=new AbortController(),cancelThumb=()=>thumbAbort.abort();options.signal?.addEventListener('abort',cancelThumb,{once:true});let result;
   try{result=await c.uploadContent(thumbnailData,{includeFilename:false,type:thumbnailData.type,abortController:thumbAbort});}finally{options.signal?.removeEventListener('abort',cancelThumb);}
-  if(thumbnailFile)info.thumbnail_file={...thumbnailFile,url:result.content_uri};else info.thumbnail_url=result.content_uri;
+  check();if(thumbnailFile)info.thumbnail_file={...thumbnailFile,url:result.content_uri};else info.thumbnail_url=result.content_uri;
   info.thumbnail_info={w:preview.width,h:preview.height,size:preview.blob.size,mimetype:preview.blob.type};
- }catch(error){if(options.signal?.aborted)throw error;}}
- options.signal?.throwIfAborted();if(client!==c)throw new Error('Your account changed during upload. Sign in and attach the file again.');
- const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,info,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,record);return record;
+ }catch(error){check();}}
+ check();
+ const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,info,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,{...record,owned});return record;
+}
+/** Copy only encrypted delivery metadata, never the captured live SDK owner. */
+export function snapshotMatrixAttachments(ids:readonly string[],roomId:string,parent:string|undefined,nonce:string):QueuedAttachment[]{
+ roomRequired(roomId);const result=ids.map((id,index)=>{const pending=pendingFiles.get(id);
+  if(!pending||pending.roomId!==roomId||!pending.owned?.())throw new Error('This attachment belongs to an earlier account or conversation. Reattach it.');
+  if(pending.transactionId&&pending.parent!==parent)throw new Error('An attempted file belongs to its original thread. Check that conversation before replacing it.');
+  const {name,size,type,url,file,info}=pending;
+  const descriptor:UploadedAttachment={id,roomId,name,size,type,url,file,info};
+  return {id,name,size,type,descriptor:structuredClone(descriptor),transactionId:pending.transactionId||attachmentTransaction(nonce,index),...(pending.eventId?{eventId:pending.eventId}:{})};
+ });validateQueuedAttachments(result,roomId);return result;
 }
 export function discardMatrixFile(id:string){pendingFiles.delete(id);}
+export function snapshotMatrixSendAttempt(roomId:string,parent:string|undefined,nonce:string){return readMatrixSendAttempt(requireClient(),roomRequired(roomId),parent,nonce)||{};}
 export async function matrixFileBlob(a:any,signal?:AbortSignal,maxBytes=20*1024*1024){
  const c=requireClient();return readMatrixAttachment(c,a,maxBytes,()=>client===c,signal);
 }

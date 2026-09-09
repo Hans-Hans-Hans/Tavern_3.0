@@ -3,8 +3,8 @@ import { test, expect, type Page, type Locator } from '@playwright/test';
 async function fixture(page: Page) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'application/javascript', body: `
     const records={};export const onMatrixUpdate=()=>()=>{};
-    export const getMatrixClient=()=>({getAccountData:key=>records[key]?{getContent:()=>records[key]}:undefined,
-      getAccountDataFromServer:async key=>records[key],setAccountData:async(key,value)=>{records[key]=value;}});` }));
+    const client={getAccountData:key=>records[key]?{getContent:()=>records[key]}:undefined,
+      getAccountDataFromServer:async key=>records[key],setAccountData:async(key,value)=>{records[key]=value;}};export const getMatrixClient=()=>client;` }));
   await page.route('**/modal-layout-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head><body><div id='root'></div><script type='module'>import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/modal-layout.tsx')).mountFixture();</script></body></html>` }));
   await page.emulateMedia({ reducedMotion: 'reduce' }); await page.goto('/modal-layout-test');
 }

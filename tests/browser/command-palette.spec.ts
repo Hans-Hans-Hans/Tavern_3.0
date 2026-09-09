@@ -16,6 +16,9 @@ test('quick switcher searches rooms, runs commands, and restores keyboard focus'
   await page.keyboard.press('Control+Shift+p'); await expect(input).toBeVisible(); await input.fill('appearance'); await expect(input).toHaveValue('appearance'); await expect(page.getByRole('option', { name: 'Appearance and theme' })).toBeVisible(); await input.press('Enter');
   expect(await page.evaluate(() => (window as any).chosen)).toEqual(['room:!project:local', 'settings:appearance']);
   await page.getByRole('button', { name: 'Open switcher' }).click(); await expect(input).toBeVisible(); await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0); await expect(page.getByRole('button', { name: 'Open switcher' })).toBeFocused();
+  await page.getByRole('button', { name: 'Open switcher' }).click(); await input.fill('roadmap.pdf');
+  await expect(page.getByRole('option', { name: 'Search Tavern for “roadmap.pdf”' })).toBeVisible(); await input.press('Enter');
+  expect(await page.evaluate(() => (window as any).chosen)).toEqual(['room:!project:local', 'settings:appearance', 'search:roadmap.pdf']);
 });
 
 test('palette finds cached people by nickname and applies authenticated status commands', async ({ page }) => {

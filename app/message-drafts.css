@@ -1,0 +1,5 @@
+.message-draft-badge{display:inline-flex;flex:0 0 auto;color:var(--primary);font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap;vertical-align:middle}
+.channel-link>.message-draft-badge{flex:0 0 auto}
+.channel-nav-row:has(.message-draft-badge) .channel-link{padding-right:48px}
+.channel-nav-row>.message-draft-badge{position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none}
+.thread-link>.message-draft-badge{color:var(--primary);font-size:10px}

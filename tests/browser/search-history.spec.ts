@@ -31,12 +31,27 @@ async function fixture(page: Page) {
           getContent() { return this.clear || raw.content; }, replacingEventDate: () => null };
       },
     };
-    await search.initializeSearch(client); f.search = search; f.controller = new AbortController();
+    const owner = f.owner = {};
+    await search.initializeSearch(client, () => f.owner === owner); f.search = search; f.controller = new AbortController();
     f.start = () => { void search.indexRoomHistory(room.roomId, (value: any) => f.progress.push(value), f.controller.signal)
       .then((value: any) => { f.result = { ok: true, ...value }; }, (error: Error) => { f.result = { ok: false, error: error.message }; }); };
   });
 }
 const event = (id: string, extra = {}) => ({ event_id: id, sender: '@writer:local', origin_server_ts: 123, type: 'm.room.encrypted', plain: { msgtype: 'm.text', body: 'Older searchable secret' }, ...extra });
+
+test('a stale initializer cannot close a replacement account index or create its old device database', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(raw => { const f = (window as any).historyFixture; f.pages = [{ chunk: [raw] }]; f.start(); }, event('$replacement'));
+  await expect.poll(() => page.evaluate(() => (window as any).historyFixture.result?.ok)).toBe(true);
+  const result = await page.evaluate(async () => {
+    const f = (window as any).historyFixture, before = (await indexedDB.databases()).map(value => value.name);
+    const stale = { getUserId: () => '@old:local', getDeviceId: () => 'OLD_DEVICE', getRooms: () => [], on() {}, off() {} };
+    await f.search.initializeSearch(stale, () => false);
+    return { hits: (await f.search.searchMessages('searchable')).hits.map((hit: any) => hit.id),
+      before, after: (await indexedDB.databases()).map(value => value.name) };
+  });
+  expect(result.hits).toEqual(['$replacement']); expect(result.after).toEqual(result.before);
+});
 
 test('empty advancing pages reach encrypted older messages and supply the scoped decryption room', async ({ page }) => {
   await fixture(page);
@@ -58,6 +73,25 @@ test('empty cursor cycles and invalid pages fail without claiming the history is
     expect(await page.evaluate(() => (window as any).historyFixture.progress.some((p: any) => p.complete))).toBe(false);
     expect(await page.evaluate(async () => (await (window as any).historyFixture.search.searchIndexStatus()).indexedCount)).toBe(0);
   }
+});
+
+test('history indexing stops at twenty pages with an explicit cursor and continues only on request', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { const f = (window as any).historyFixture; f.pages = Array.from({ length: 21 }, (_, index) => ({ chunk: [], end: 'older-' + index })); f.start(); });
+  await expect.poll(() => page.evaluate(() => (window as any).historyFixture.result)).toEqual({ ok: true, indexed: 0, complete: false, nextCursor: 'older-19' });
+  expect(await page.evaluate(() => (window as any).historyFixture.requests.length)).toBe(20);
+  const result = await page.evaluate(async raw => { const f = (window as any).historyFixture; f.pages = [{ chunk: [raw] }]; return f.search.indexRoomHistory(f.room.roomId, undefined, f.controller.signal, { cursor: f.result.nextCursor }); }, event('$continued'));
+  expect(result).toEqual({ indexed: 1, complete: true });
+  expect(await page.evaluate(() => (window as any).historyFixture.requests.at(-1).token)).toBe('older-19');
+});
+
+test('API owner generation changes discard an in-flight index page even if native actor and device return unchanged', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(raw => { const f = (window as any).historyFixture; f.pages = [{ chunk: [raw] }]; f.holdDecrypt = true; f.start(); }, event('$old-api'));
+  await page.waitForFunction(() => typeof (window as any).historyFixture.releaseDecrypt === 'function');
+  await page.evaluate(() => { const f = (window as any).historyFixture; f.owner = {}; f.owner = {}; f.releaseDecrypt(); });
+  await expect.poll(() => page.evaluate(() => (window as any).historyFixture.result?.ok)).toBe(false);
+  expect(await page.evaluate(async () => (await (window as any).historyFixture.search.searchIndexStatus()).indexedCount)).toBe(0);
 });
 
 test('account, room and membership changes or cancellation while a page waits discard its result', async ({ page }) => {

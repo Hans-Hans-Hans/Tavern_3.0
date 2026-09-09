@@ -104,7 +104,7 @@ test('closed optional panels load on demand and a slow import preserves the conv
   release();await response;
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button',{name:'Search conversations',exact:true}).click();
-  await expect(page.getByRole('textbox',{name:'Search messages',exact:true})).toBeVisible();
+  await expect(page.getByRole('textbox',{name:'Search Tavern',exact:true})).toBeVisible();
   expect(requests).toBe(1);
   await page.keyboard.press('Escape');
   await expect(composer).toHaveValue('Keep this unsent draft');

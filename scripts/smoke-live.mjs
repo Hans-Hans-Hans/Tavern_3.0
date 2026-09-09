@@ -17,6 +17,7 @@ import { callAudioSmoke } from './smoke-call-audio.mjs';
 import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
+import { dismissOptionalOnboarding } from './smoke-workspace-ready.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
 if (!process.env.TAVERN_CI_TLS) throw new Error('The isolated CI certificate directory is required.');
@@ -51,9 +52,7 @@ async function ready(page) {
   // for the initial wait and dismiss onboarding before querying page roles.
   await page.locator('.workspace-rail').waitFor();
   await expect(page.locator('.connection')).toContainText('Connected', { timeout: 60000 });
-  const finish = page.getByRole('button', { name: 'Finish later', exact: true });
-  if (await finish.isVisible()) await finish.click();
-  await expect(page.getByRole('button', { name: 'Tavern home', exact: true })).toBeVisible();
+  await dismissOptionalOnboarding(page);
   await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.active, undefined, { timeout: 15000 });
   await expect(page.getByText('Offline app storage is unavailable.', { exact: false })).toHaveCount(0);
   await expect(page.getByText('An app update is ready', { exact: true })).toHaveCount(0);

@@ -8,3 +8,16 @@
 .appearance-theme-options{display:flex;gap:10px}.appearance-theme-options button{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;border:1px solid var(--border);border-radius:8px;font-size:12px}.appearance-theme-options button[aria-pressed=true]{background:var(--accent);color:var(--primary);border-color:var(--ring)}
 .appearance-preview{border:1px solid var(--border);background:var(--subtle);border-radius:10px;padding:16px;margin-top:18px}.appearance-preview strong{font-size:12px}.appearance-preview p{margin:8px 0}.appearance-preview small{color:var(--muted-foreground);font-size:11px}.appearance-settings input[type=range]{padding:0;accent-color:var(--primary)}
 @media(min-width:1600px){:root .message-body{font-size:calc(16px * var(--tavern-chat-scale))}}
+
+/* Density changes navigation and settings, independently of chat text size. */
+:root[data-density=compact] .channel-link,:root[data-density=compact] .quick-nav button{min-height:32px;padding-top:4px;padding-bottom:4px}
+:root[data-density=compact] .setting-row{padding-top:10px;padding-bottom:10px}
+:root[data-density=compact] .device-row{padding-top:8px;padding-bottom:8px}
+/* Auto preserves the existing Compact messages preference and its avatar size. */
+:root[data-message-spacing=compact] .message{padding-top:5px;padding-bottom:5px}
+:root[data-message-spacing=comfortable] .message{padding-top:11px;padding-bottom:13px}
+:root[data-message-spacing=spacious] .message{padding-top:18px;padding-bottom:18px}
+.appearance-message-preview{margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow-wrap:anywhere}
+.appearance-message-preview .message{padding-left:12px;padding-right:12px}
+.appearance-message-preview .message+.message{border-top:1px solid var(--border)}
+@media(pointer:coarse){:root[data-density=compact] .channel-link,:root[data-density=compact] .quick-nav button{min-height:44px}}

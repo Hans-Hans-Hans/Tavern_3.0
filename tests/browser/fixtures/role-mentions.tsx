@@ -8,8 +8,13 @@ import '../../../app/globals.css';
 export async function mountFixture() {
   const f = privateFixture(), w = window as any;
   f.actor = f.owner; f.account = {}; f.errors = []; f.drafts = new Map(); f.pendingFiles = new Map(); f.React = React; f.icons = icons;
+  f.client.getDeviceId = () => 'ROLE_FIXTURE_DEVICE';
+  f.client.getHomeserverUrl = () => 'https://chat.example.test';
   f.messages.set(f.sourceId, []);
-  for (const room of f.client.getRooms()) room.getJoinedMemberCount = () => room.getJoinedMembers().length;
+  for (const room of f.client.getRooms()) {
+    room.getJoinedMemberCount = () => room.getJoinedMembers().length;
+    room.hasEncryptionStateEvent = () => !!room.currentState.getStateEvents('m.room.encryption','');
+  }
   f.policy.roles[1].name = 'Helpers'; f.policy.roles[1].mentionable = false; f.policy.members[f.member] = ['mod'];
   f.policy.roles.push({ id: 'other', name: 'Helpers', position: 60, permissions: [], mentionable: false });
   f.policy.members[f.other] = ['other'];

@@ -2,15 +2,49 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Drafts, attachment retries, search, appearance and TURN diagnostics
+
+The combined frontend checkpoint passed the production build, 492 JavaScript
+tests and all 293 browser tests. Four additional browser tests cover the native
+smoke's optional-onboarding dismissal, including a control that disappears during
+click stability checks and a persistent unusable control that must still fail.
+
+The checks cover account-owned conversation/thread drafts; encrypted original-file
+storage, partial acknowledgements, restart/retry and SDK transaction reuse;
+unified encrypted message/file search, bounded loaded people/room inventory and
+explicit history indexing; independent appearance density/spacing and responsive
+modals; and the mounted admin TURN diagnostic with real SDK credential transport.
+Malformed message acknowledgements, stale replacement-session initializers,
+foreign homeserver clients and missing TURN credential lifetimes have regressions.
+See [drafts](DRAFTS.md), [attachment retries](ATTACHMENT_RETRIES.md),
+[search](SEARCH.md), [appearance](APPEARANCE.md) and [TURN diagnostics](TURN_DIAGNOSTICS.md)
+for the measured scope and remaining limits.
+
+Controlled transports and RTC boundaries in these local tests do not establish
+new native delivery or external TURN connectivity. The workflow now invokes a
+separate disposable real-Chromium/coturn allocation and invalid-credential check;
+its first Linux execution is pending.
+
 ## Responsive modals and encrypted history recovery
+
+Checkpoint `a964dca` [started the complete calls-enabled stack successfully](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34408368894),
+including healthy coturn, token issuer and SFU services. All six actual Linux
+UID/group policy and call-configuration permission checks passed. The run also
+passed isolated backup restoration and failed-update rollback, ordinary account
+authorization, encrypted two-user messages/edit/thread/reaction synchronization,
+same-device reload decryption, and byte-for-byte recipient attachment decryption.
+It then stopped before the later native probes because stored onboarding state
+removed **Finish later** while the smoke was waiting to click it. The helper now
+bounds that click and requires both hidden onboarding and an accessible workspace
+before proceeding. Full native acceptance still requires a passing rerun.
 
 Checkpoint `081fd00` passed the separate SFU Linux workflow and started coturn
 successfully in [the assembled-stack run](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34406714380).
 That run passed 443 JavaScript and 241 browser tests, then stopped before native
 acceptance because the pinned token issuer's health probe interprets its bind
 address as a port. Compose now leaves `LIVEKIT_JWT_BIND` unset, allowing the
-server and probe to use their compatible defaults. Assembled-stack acceptance
-still requires a passing rerun.
+server and probe to use their compatible defaults. Their assembled-stack startup
+subsequently passed at `a964dca`; later native stages remain pending as above.
 
 Checkpoint `8c87c52` passed the complete
 [SFU Linux workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769133),
@@ -20,7 +54,7 @@ passed its application and browser checks, then stopped before the native probes
 the pinned coturn executable requires a file capability excluded by the service's
 empty capability bounding set. Compose now grants only `NET_BIND_SERVICE` to
 coturn while retaining `cap_drop: ALL`, `no-new-privileges` and its read-only
-filesystem. The corrected calls-enabled stack still requires a passing Linux run.
+filesystem. Corrected calls-enabled startup subsequently passed at `a964dca`.
 
 The combined audio/member-state working tree passed the production build,
 443 JavaScript tests, all 240 browser tests and 634 Python checks (12 platform
