@@ -1,17 +1,57 @@
-import { Fragment, useState, type ReactNode } from 'react';
+import { createElement, Fragment, useMemo, useState, type ReactNode } from 'react';
+import { containsMessageSpoiler, parseMessageMarkdown, type MessageMarkdownNode } from '@/lib/message-markdown';
 import { copyText } from './action-menu';
-function Spoiler({children}:{children:ReactNode}){const[open,setOpen]=useState(false);return <button className={'message-spoiler '+(open?'revealed':'')} aria-label={open?'Hide spoiler':'Reveal spoiler'} onClick={()=>setOpen(!open)}>{open?children:'Spoiler'}</button>;}
-function inline(text:string):ReactNode[]{return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|~~[^~\n]+~~|\|\|[^|]+\|\||\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>]+|@[\w.-]+)/g).map((part,i)=>{
-  if(part.startsWith('`'))return <code key={i}>{part.slice(1,-1)}</code>;
-  if(part.startsWith('**'))return <strong key={i}>{part.slice(2,-2)}</strong>;
-  if(part.startsWith('~~'))return <del key={i}>{part.slice(2,-2)}</del>;
-  if(part.startsWith('||'))return <Spoiler key={i}>{part.slice(2,-2)}</Spoiler>;
-  const link=/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/.exec(part);
-  if(link||/^https?:\/\//.test(part)){const url=link?.[2]||part;try{const parsed=new URL(url);if(!parsed.username&&!parsed.password)return <a key={i} href={url} rel="noopener noreferrer" target="_blank" referrerPolicy="no-referrer">{link?.[1]||part}</a>;}catch{}}
-  return part.startsWith('@')?<span className="mention" key={i}>{part}</span>:<Fragment key={i}>{part}</Fragment>;
-});}
-function codeTokens(text:string){return text.split(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|#[^\n]*|\b(?:const|let|var|function|return|if|else|async|await|import|export|from|class|def|for|while|try|catch|except|True|False|None|true|false|null|new|throw)\b|\b\d+(?:\.\d+)?\b)/g).map((part,i)=>/^['"]/.test(part)?<span className="code-string" key={i}>{part}</span>:/^(\/\/|#)/.test(part)?<span className="code-comment" key={i}>{part}</span>:/^(const|let|var|function|return|if|else|async|await|import|export|from|class|def|for|while|try|catch|except|True|False|None|true|false|null|new|throw)$/.test(part)?<span className="code-keyword" key={i}>{part}</span>:/^\d/.test(part)?<span className="code-number" key={i}>{part}</span>:part);}
-export function RichMessage({text}:{text:string}){return <>{text.split(/(```[\s\S]*?```)/g).map((block,i)=>{
-  if(block.startsWith('```')){const [language,...lines]=block.slice(3,-3).split('\n');const body=lines.length?lines.join('\n'):language;return <div className="message-code" key={i}><div><span>{lines.length?language.slice(0,30):'Code'}</span><button onClick={()=>void copyText(body)}>Copy code</button></div><pre><code>{codeTokens(body)}</code></pre></div>;}
-  return <Fragment key={i}>{block.split('\n').map((line,j)=><Fragment key={j}>{j>0&&<br/>}{line.startsWith('> ')?<span className="message-quote">{inline(line.slice(2))}</span>:inline(line)}</Fragment>)}</Fragment>;
-})}</>;}
+import './rich-message.css';
+
+function Spoiler({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return <span className={'message-spoiler ' + (open ? 'revealed' : '')}>
+    <button type="button" aria-label={open ? 'Hide spoiler' : 'Reveal spoiler'} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide spoiler' : 'Spoiler'}</button>
+    {open && <span className="message-spoiler-content">{children}</span>}
+  </span>;
+}
+
+function codeTokens(text: string) {
+  return text.split(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|#[^\n]*|\b(?:const|let|var|function|return|if|else|async|await|import|export|from|class|def|for|while|try|catch|except|True|False|None|true|false|null|new|throw)\b|\b\d+(?:\.\d+)?\b)/g).map((part, i) =>
+    /^['"]/.test(part) ? <span className="code-string" key={i}>{part}</span> : /^(\/\/|#)/.test(part) ? <span className="code-comment" key={i}>{part}</span> :
+      /^(const|let|var|function|return|if|else|async|await|import|export|from|class|def|for|while|try|catch|except|True|False|None|true|false|null|new|throw)$/.test(part) ? <span className="code-keyword" key={i}>{part}</span> :
+        /^\d/.test(part) ? <span className="code-number" key={i}>{part}</span> : part);
+}
+
+function CodeBlock({ text, language }: { text: string; language: string }) {
+  const [error, setError] = useState(''), [copied, setCopied] = useState(false);
+  return <div className="message-code"><div><span>{language || 'Code'}</span><button type="button" onClick={() => {
+    setError(''); void copyText(text, 'Code copied').then(() => setCopied(true)).catch(() => setError('Code could not be copied. Select the code and copy it manually.'));
+  }}>{copied ? 'Copy code again' : 'Copy code'}</button></div><pre><code>{codeTokens(text)}</code></pre>{error && <p role="alert">{error}</p>}</div>;
+}
+
+function renderNodes(nodes: MessageMarkdownNode[], renderText?: (text: string) => ReactNode, inLink = false): ReactNode[] {
+  return nodes.map((node, index) => {
+    if (node.type === 'text') return <Fragment key={index}>{node.text.split(/(@[\w.-]+)/g).map((part, piece) => part.startsWith('@')
+      ? <span className="mention" key={piece}>{part}</span> : <Fragment key={piece}>{renderText ? renderText(part) : part}</Fragment>)}</Fragment>;
+    if (node.type === 'break') return <br key={index}/>;
+    if (node.type === 'rule') return <hr key={index}/>;
+    if (node.type === 'code') return node.block ? <CodeBlock key={index} text={node.text} language={node.language}/> : <code key={index}>{node.text}</code>;
+    if (node.type === 'spoiler') return <Spoiler key={index}>{renderNodes(node.children, renderText, inLink)}</Spoiler>;
+    if (node.type === 'link') {
+      // A spoiler in a link label keeps its reveal control; its enclosing
+      // destination stays inactive. Nested image links are also flattened.
+      if (inLink || containsMessageSpoiler(node.children)) return <Fragment key={index}>{renderNodes(node.children, renderText, inLink)}</Fragment>;
+      return <a key={index} href={node.href} rel="noopener noreferrer" target="_blank" referrerPolicy="no-referrer">{renderNodes(node.children, renderText, true)}</a>;
+    }
+    if (node.type === 'element') {
+      const children = renderNodes(node.children, renderText, inLink);
+      return node.tag === 'group' ? <Fragment key={index}>{children}</Fragment> : createElement(node.tag, { key: index,
+        ...(node.tag === 'blockquote' ? { className: 'message-quote' } : {}), ...(node.tag === 'ol' && node.start ? { start: node.start } : {}) }, children);
+    }
+    return null;
+  });
+}
+
+export function RichMessage({ text, renderText }: { text: string; renderText?: (text: string) => ReactNode }) {
+  const parsed = useMemo(() => parseMessageMarkdown(text), [text]);
+  // An edit must not inherit an already-open spoiler from older content.
+  return <div className="rich-message"><Fragment key={text}>{parsed.plain
+    ? <details className="message-format-fallback"><summary>{parsed.truncated ? 'Message is too long. Show shortened plain text' : 'Message formatting is too complex. Show plain text'}</summary><pre>{parsed.nodes.map(node => node.type === 'text' ? node.text : '').join('')}</pre></details>
+    : renderNodes(parsed.nodes, renderText)}</Fragment></div>;
+}

@@ -2,6 +2,20 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Local formatting and role-mention checkpoint
+
+The combined changes passed the production build and all 354 JavaScript tests.
+The full browser run passed 169 checks; three activity-notification fixtures
+failed to load because their API stub lacked the newly required session-owner
+export. After correcting that stub, all three passed in a focused rerun. The
+final role suite also passed all five cases, including two added regressions
+for stale picker selection and escaped examples. This covers all 174 browser
+checks, including Markdown rendering/preview consent,
+actual Composer role selection, ordinary/role mention separation, and contact
+session transitions. Role expansion rejects stale or incompletely loaded
+audiences before sending; forwarding suppresses mentions. These browser
+fixtures do not establish live encrypted multi-device role-mention delivery.
+
 ## Observed continuous integration
 
 [Run 34378243058](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34378243058)

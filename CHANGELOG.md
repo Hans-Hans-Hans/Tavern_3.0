@@ -32,6 +32,11 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Protected per-server verified-email and account-age requirements, with native join/post/call enforcement, source inheritance for private discussions, owner recovery and revision-safe settings.
 - Optional native server profile metadata rules for structured links, custom fields, bio and status, with inherited limits, revision-safe settings, compliant room copies and preserved rejected editor drafts.
 - Optional encrypted server join/leave notices through existing verified webhook destinations, with protected settings, durable bounded queues, current recipient checks and delivery status.
+- Explicit direct-message request review, acceptance and decline, with native recipient classification and recovery after partially completed acceptance.
+- Per-server invitation restrictions that intersect with global privacy and actual shared Space membership, including direct native Matrix invitations.
+- Durable generic background contact-request notifications with current consent and access checks.
+- Parsed Markdown headings, lists, quotes and tables, nested formatting, exact code copying and accessible spoilers; link previews exclude hidden spoiler and code URLs.
+- Stable server-role mention selection with bounded current membership expansion into encrypted native mention metadata.
 
 ### Changed
 
@@ -56,6 +61,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Native channel/member administration now checks fresh Matrix and Tavern role authority, including native equal/higher members in manual role assignments.
 - Call authorization subrequests preserve browser cookie rotation; uninspected SFU form bodies and identity-changing publish-only requests are blocked.
 - A replacement sign-in retires the previous browser cookie session, and delayed responses cannot restore its expired cookie. Other devices and encryption keys are preserved.
+- Contact confirmations and updates stay bound to their originating account and session; late responses cannot restore old dialogs or overwrite newer contact state.
+- Managed uploads reject legacy native upload aliases while preserving authenticated media downloads.
 
 ### Security
 

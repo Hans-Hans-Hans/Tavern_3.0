@@ -13,6 +13,7 @@ import { serverCreationState } from './server-defaults';
 import { HttpApiEvent } from 'matrix-js-sdk/lib/http-api/interface';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { readServerEmoji, serverEmojiHtml } from './server-emoji';
+import { expandRoleMentions, checkRoleMentionSize } from './role-mentions';
 import { indexReactions, type Reaction } from './message-projection';
 import { applyPresenceMode } from './presence';
 import { initializeAppearance, resetAppearance } from './appearance';
@@ -170,13 +171,20 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='read'){const room=roomRequired(p.conversation);const event=p.id?room.findEventById(p.id):null;if(event&&!event.status&&lastReceipts.get(room.roomId)!==p.id){lastReceipts.set(room.roomId,p.id);try{await c.sendReadReceipt(event,sdk.ReceiptType.ReadPrivate)}catch(e){lastReceipts.delete(room.roomId);throw e}}return {ok:true}}
  if(action==='send'){
   const room=roomRequired(p.conversation);if(p.parent){const root=room.findEventById(p.parent);if(root&&root.getRoomId()!==room.roomId)throw new Error('Thread belongs to another room.');}
-  const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:room.getJoinedMembers().filter(m=>p.body.includes('@'+m.name)||p.body.includes(m.userId)).map(m=>m.userId)}};
+  const owner=accountArtworkOwner(),actor=c.getUserId(),current=()=>client===c&&accountArtworkOwner()===owner&&c.getUserId()===actor&&c.getRoom(room.roomId)===room&&room.getMyMembership()==='join';
+  const expanded=p.suppressMentions?null:await expandRoleMentions(c,room.roomId,p.body,current);
+  if(!current())throw new Error('Your account or conversation changed. Your draft is kept.');
+  const mentionBody=expanded?.bodyForUserMentions??p.body;
+  const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:[...new Set([...room.getJoinedMembers().filter(m=>mentionBody.includes('@'+m.name)||mentionBody.includes(m.userId)).map(m=>m.userId),...(expanded?.userIds||[])])]}};
   const formatted=serverEmojiHtml(p.body,readServerEmoji(p.serverId));if(formatted){content.format='org.matrix.custom.html';content.formatted_body=formatted;}
   if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
-  if(!p.suppressMentions&&p.body.includes('@everyone'))content['m.mentions'].room=true;
+  if(!p.suppressMentions&&mentionBody.includes('@everyone'))content['m.mentions'].room=true;
+  if(expanded)checkRoleMentionSize(content['m.mentions'],content);
+  const checkSend=()=>{if(!current())throw new Error('Your account or conversation changed. Your draft is kept.');expanded?.assertCurrent();};
   const attachments=(p.attachments||[]).map((id:string)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId)throw new Error('Reattach this file before sending.');return f});
-  if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type,...f.info},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
-  if(p.body.trim()){if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}
+  if(attachments.length){for(let i=0;i<attachments.length;i++){checkSend();const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type,...f.info},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
+  if(p.body.trim()){checkSend();if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}
+  if(!current())throw new Error('Your account changed after sending. Reopen the conversation.');
   for(const id of p.attachments||[])pendingFiles.delete(id);notify();return {ok:true};
  }
  if(['react','save','pin','edit','delete'].includes(action)){
