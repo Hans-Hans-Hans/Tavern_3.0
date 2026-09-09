@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
+    from call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from server_afk import ServerAfkPolicy, AFK
@@ -15,11 +16,13 @@ try:
     from profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
     from server_system_messages import SystemMessagesPolicy, SYSTEM_MESSAGES, valid_settings as valid_system_message_settings
     from server_nickname import check_nickname, NICKNAME
-    from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
+    from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT, timeout_active
+    from member_state import member_state_key, member_state_target, member_state_keys, member_state_event
     from thread_policy import ThreadPolicy, THREAD
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
+    from synapse_modules.call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from synapse_modules.server_afk import ServerAfkPolicy, AFK
@@ -27,14 +30,15 @@ except ImportError:
     from synapse_modules.profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
     from synapse_modules.server_system_messages import SystemMessagesPolicy, SYSTEM_MESSAGES, valid_settings as valid_system_message_settings
     from synapse_modules.server_nickname import check_nickname, NICKNAME
-    from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
+    from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT, timeout_active
+    from synapse_modules.member_state import member_state_key, member_state_target, member_state_keys, member_state_event
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
     from synapse_modules.invitation_policy import InvitationPolicy
     from synapse_modules.temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
-PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
+PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "mute_members", "deafen_members", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
 CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server", "manage_nicknames"}
 
 
@@ -259,6 +263,9 @@ class TavernPolicy:
         self.threads = ThreadPolicy(api, self.channels)
         self.invitations = InvitationPolicy(config, api)
         self.temporary_bans = TemporaryBanPolicy(api, permissions, rank)
+        self.audio_moderation = AudioModerationPolicy(config, api, SimpleNamespace(POLICY=POLICY, LAYOUT=LAYOUT,
+            valid_policy=valid_policy, valid_layout=valid_layout, ResolvedPolicy=ResolvedPolicy,
+            permissions=permissions, rank=rank, native_member_power=native_member_power))
         self.private_threads = PrivateThreadPolicy(self, permissions, rank, native_member_power, valid_policy, valid_layout)
         self.server_afk = ServerAfkPolicy(api)
         self.server_eligibility = ServerEligibilityPolicy(config, api, SimpleNamespace(POLICY=POLICY,
@@ -300,8 +307,11 @@ class TavernPolicy:
         system_messages_enabled = config.get('system_messages_enabled', False)
         if type(system_messages_enabled) is not bool:
             raise ValueError('system_messages_enabled must be a boolean')
+        audio_moderation_enabled = config.get('audio_moderation_enabled', False)
+        if type(audio_moderation_enabled) is not bool:
+            raise ValueError('audio_moderation_enabled must be a boolean')
         return {'privacy_api_url': url.rstrip('/'), 'privacy_key_file': config.get('privacy_key_file', '/data/tavern-privacy.key'),
-            'system_messages_enabled': system_messages_enabled}
+            'system_messages_enabled': system_messages_enabled, 'audio_moderation_enabled': audio_moderation_enabled}
 
     async def _policies(self, event, state):
         own = content(state, POLICY)
@@ -310,9 +320,16 @@ class TavernPolicy:
         parents = [(key, value) for (kind, key), value in state.items() if kind == "m.space.parent" and value.content.get("canonical") and value.content.get("via")]
         found = []
         for parent_id, _ in parents:
-            filters = [(POLICY, ''), (LAYOUT, ''), ('m.space.child', event.room_id), (TIMEOUT, event.sender), (TEMPBAN, event.sender), ('m.room.member', event.sender)]
-            if event.type in ('m.room.member', TEMPBAN) and isinstance(getattr(event, 'state_key', None), str):
-                filters.append((TEMPBAN, event.state_key))
+            filters = [(POLICY, ''), (LAYOUT, ''), ('m.space.child', event.room_id), ('m.room.member', event.sender)]
+            for kind in (TIMEOUT, TEMPBAN):
+                filters.extend((kind, key) for key in member_state_keys(event.sender))
+            target = getattr(event, 'state_key', None)
+            if event.type == TEMPBAN:
+                try: target = member_state_target(target)
+                except ValueError: target = None
+            if event.type in ('m.room.member', TEMPBAN) and isinstance(target, str):
+                try: filters.extend((TEMPBAN, key) for key in member_state_keys(target))
+                except ValueError: pass
             parent = await self.api.get_room_state(parent_id, filters)
             policy = content(parent, POLICY)
             # Reciprocal links prevent a client from claiming membership of someone else's server.
@@ -329,6 +346,9 @@ class TavernPolicy:
             return False, None
         if not await self.profile_metadata.check(event, state_events):
             return False, None
+        audio_result = await self.audio_moderation.check(event, state_events)
+        if audio_result is not None:
+            return audio_result, None  # Native Matrix state auth still applies.
         if not await self.server_afk.check(event, state_events):
             return False, None
         if not check_settings(event, state_events):
@@ -384,7 +404,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, ELIGIBILITY, SYSTEM_MESSAGES, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, AUDIO, THREAD, PRIVATE_SETTINGS, LAYOUT, NOTIFICATIONS, ONBOARDING, BRANDING, NICKNAME, ELIGIBILITY, SYSTEM_MESSAGES, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None

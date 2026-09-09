@@ -91,6 +91,11 @@ the Docker host; HTTPS TCP443 goes to NPM. Stop Synapse before first enabling
 calls, deploy, then restart Synapse as described in the installation guide.
 No LiveKit secret needs to be copied into Dockhand environment fields.
 
+The calls profile builds the pinned Tavern SFU from the same V3 ref. Add
+`SFU_AUDIO_MODERATION_ENABLED=true` for server mute/deafen, then rebuild and
+restart as described in [audio moderation](SFU_AUDIO_MODERATION.md). The flag
+defaults to off. Image-only deployments must build the SFU image beforehand.
+
 The optional webhook bot still requires its own account, configured rooms and
 verified devices. Follow the bot provisioning procedure in
 [Calls and integrations](CALLS_AND_INTEGRATIONS.md), then enable the

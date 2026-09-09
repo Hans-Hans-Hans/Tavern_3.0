@@ -30,6 +30,7 @@ services:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set TAVERN_DOMAIN to your public hostname}
       TAVERN_PUBLIC_URL: ${TAVERN_PUBLIC_URL:-https://${TAVERN_DOMAIN}}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
+      SFU_AUDIO_MODERATION_ENABLED: ${SFU_AUDIO_MODERATION_ENABLED:-false}
       COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
       TURN_DOMAIN: ${TURN_DOMAIN:-}
       PUBLIC_IP: ${PUBLIC_IP:-}
@@ -93,6 +94,7 @@ services:
       SYNAPSE_CONFIG_PATH: /synapse/homeserver.yaml
       PRIVACY_KEY_FILE: /synapse/tavern-privacy.key
       CALL_CONFIG_DIR: /call-config
+      SFU_AUDIO_MODERATION_ENABLED: ${SFU_AUDIO_MODERATION_ENABLED:-false}
       RTC_AUTH_IMAGE: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
       TAVERN_BOOTSTRAP_MARKER: /synapse/tavern-bootstrap-allowed
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
@@ -224,7 +226,12 @@ services:
   livekit:
     <<: *hardening
     profiles: [calls]
-    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:v1.13.6}
+    image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.0}
+    pull_policy: build
+    build:
+      context: https://github.com/Hans-Hans-Hans/Tavern_3.0.git#${TAVERN_GIT_REF:-V3}:docker/sfu
+      dockerfile: Dockerfile
+    user: "10001:10001"
     command: ["--config", "/config/livekit.yaml"]
     volumes: ["${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro"]
     ports: ["7881:7881/tcp", "7882:7882/udp"]

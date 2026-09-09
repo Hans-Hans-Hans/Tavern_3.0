@@ -1,11 +1,25 @@
 # Test-only overlay: the deployed application still uses the single compose.yaml.
 services:
   init:
+    entrypoint: [python, /ci/ci-call-config.py]
+    volumes:
+      - ./scripts/ci-call-config.py:/ci/ci-call-config.py:ro
     environment:
+      GITHUB_ACTIONS: ${GITHUB_ACTIONS:?The disposable GitHub Actions runner is required}
+      TAVERN_CI_SMOKE: ${TAVERN_CI_SMOKE:?The isolated CI guard is required}
+      TAVERN_CI_TLS: ${TAVERN_CI_TLS:?CI TLS fixture directory is required}
+      COMPOSE_PROJECT_NAME: tavern-ci
+      TAVERN_DATA_DIR: ''
       INTEGRATIONS_ENABLED: 'true'
       # Provision the native notice worker while the real profile service stays
       # excluded. The guarded helper owns its private alias in this CI project.
-      COMPOSE_PROFILES: operations,integrations
+      COMPOSE_PROFILES: operations,calls,integrations
+  livekit:
+    image: tavern-sfu-audio:check
+    command: [--config, /config/livekit.ci.yaml]
+    ports: !reset []
+  coturn:
+    ports: !reset []
   tavern-api:
     environment:
       INTEGRATIONS_ENABLED: 'true'
@@ -94,3 +108,7 @@ services:
     depends_on:
       tavern-web:
         condition: service_healthy
+networks:
+  # No CI call service may discover or forward media outside this project.
+  media:
+    internal: true

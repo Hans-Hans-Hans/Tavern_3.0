@@ -119,7 +119,7 @@ class CallModerator:
         return key, secret
 
     async def sfu(self, method, room, values=None):
-        if method not in ('ListParticipants', 'RemoveParticipant'):
+        if method not in ('ListParticipants', 'RemoveParticipant', 'UpdateParticipant'):
             raise ValueError('Unsupported call moderation operation')
         key, secret = self.credentials()
         try:
@@ -140,13 +140,52 @@ class CallModerator:
         except (ClientError, asyncio.TimeoutError, ValueError, UnicodeError):
             raise APIError(502, 'The call service is unavailable. Try again shortly.', 'CALL_SERVICE_UNAVAILABLE') from None
 
+    async def audio_support(self):
+        """A flag or unknown JSON field cannot prove the SFU implements deafen."""
+        self.credentials()
+        try:
+            async with self.service.http.get('http://livekit:7880/tavern/sfu/audio-permissions',
+                    allow_redirects=False, timeout=ClientTimeout(total=2)) as response:
+                raw = bytearray()
+                async for chunk in response.content.iter_chunked(1024):
+                    raw.extend(chunk)
+                    if len(raw) > 1024:
+                        raise ValueError()
+                def unique(pairs):
+                    result = {}
+                    for key, item in pairs:
+                        if key in result:
+                            raise ValueError()
+                        result[key] = item
+                    return result
+                value = json.loads(raw, object_pairs_hook=unique)
+                if response.status != 200 or response.content_type != 'application/json' or not isinstance(value, dict) or set(value) != {'version'} or type(value['version']) is not int or value['version'] != 1:
+                    raise ValueError()
+        except (ClientError, asyncio.TimeoutError, ValueError, UnicodeError):
+            raise APIError(503, 'The running SFU audio capability could not be verified.', 'CALL_AUDIO_UNAVAILABLE') from None
+        return True
+
     async def capabilities(self, request):
         self.service.require_session(request)
         try:
+            from .room_authority import policy_model
+        except ImportError:
+            from room_authority import policy_model
+        try:
+            controls = hasattr(policy_model(self.service), 'AudioModerationPolicy')
+        except APIError:
+            controls = False
+        try:
             self.credentials()
         except APIError as error:
-            return web.json_response({'available': False, 'reason': error.message})
-        return web.json_response({'available': True, 'action': 'remove_from_channel_and_call'})
+            return web.json_response({'available': False, 'audioModerationAvailable': False, 'audioModerationControls': controls, 'reason': error.message})
+        try:
+            from .call_audio import available
+        except ImportError:
+            from call_audio import available
+        audio_available = await available(self.service)
+        self.service.require_session(request)
+        return web.json_response({'available': True, 'audioModerationAvailable': audio_available, 'audioModerationControls': controls, 'action': 'remove_from_channel_and_call'})
 
     def bindings(self, room, alias):
         if getattr(self.service, 'rtc_gateway', None) is None:

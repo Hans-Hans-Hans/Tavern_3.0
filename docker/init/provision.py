@@ -74,6 +74,9 @@ def provision(root, env):
     profiles = {p.strip() for p in env.get('COMPOSE_PROFILES', '').split(',') if p.strip()}
     if calls != ('calls' in profiles):
         raise ConfigurationError('Enable calls with both CALLS_ENABLED=true and COMPOSE_PROFILES=calls (comma-separated with other profiles).')
+    audio_moderation = boolean(env, 'SFU_AUDIO_MODERATION_ENABLED')
+    if audio_moderation and not calls:
+        raise ConfigurationError('SFU_AUDIO_MODERATION_ENABLED requires CALLS_ENABLED=true and the calls profile.')
     operations = boolean(env, 'OPERATIONS_ENABLED')
     if operations != ('operations' in profiles):
         raise ConfigurationError('Enable the operations worker with both OPERATIONS_ENABLED=true and operations in COMPOSE_PROFILES.')
@@ -145,7 +148,7 @@ def provision(root, env):
               'root': {'level': level, 'handlers': ['console']}, 'disable_existing_loggers': False}, indent=2) + '\n')
     if calls:
         provision_calls(root, config, domain, turn_domain, str(public_ip))
-    install_policy(root, config, integrations)
+    install_policy(root, config, integrations, audio_moderation)
     # Permissions only on known configuration files/directories; never walk existing media.
     for path in (synapse, config_path, synapse / 'log.config'):
         own(path, 991)
@@ -167,7 +170,7 @@ def provision(root, env):
     print('Tavern configuration validated. Existing identity, database credentials, and media preserved.')
 
 
-def install_policy(root, config, integrations=False):
+def install_policy(root, config, integrations=False, audio_moderation=False):
     bundled = Path(__file__).parent / 'modules'
     if not bundled.exists():
         bundled = Path(__file__).resolve().parents[2] / 'synapse_modules'
@@ -196,7 +199,7 @@ def install_policy(root, config, integrations=False):
     modules = config.setdefault('modules', [])
     installed = next((item for item in modules if item.get('module') == 'tavern_policy.TavernPolicy'), None)
     privacy_config = {'privacy_api_url': 'http://tavern-api:8090', 'privacy_key_file': '/data/tavern-privacy.key',
-                      'system_messages_enabled': integrations}
+                      'system_messages_enabled': integrations, 'audio_moderation_enabled': audio_moderation}
     if installed is None or any(installed.get('config', {}).get(key) != value for key, value in privacy_config.items()):
         # This one additive migration installs server-side authorization. Preserve
         # an exact before image; do not alter existing accounts, rooms, or keys.
@@ -237,6 +240,11 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
             raise ConfigurationError('LiveKit credential files differ. Restore the matching files without rotating credentials.')
         for path in (call_dir,):
             os.chmod(path, 0o755)
+        # The legacy CLI used umask 077. The SFU and API now run as UID
+        # 10001, so repair only their runtime files to match fresh installs.
+        # Keep private sidecars and all existing credential bytes untouched.
+        for path in (livekit_path, call_dir / 'livekit_key', call_dir / 'livekit_secret'):
+            os.chmod(path, 0o644)
         return
     turn_secret = private_secret(call_dir / 'turn_secret')
     key = private_secret(call_dir / 'livekit_key')

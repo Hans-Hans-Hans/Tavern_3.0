@@ -7,6 +7,11 @@ from collections.abc import Mapping
 import logging
 import time
 
+try:
+    from member_state import member_state_event, member_state_target, member_state_revision_matches
+except ImportError:
+    from synapse_modules.member_state import member_state_event, member_state_target, member_state_revision_matches
+
 CHANNEL = "io.tavern.channel"
 TIMEOUT = "io.tavern.timeout"
 KINDS = frozenset({"text", "voice", "video", "forum", "announcement", "rules", "media", "read-only"})
@@ -22,8 +27,12 @@ def value(state, kind, key=""):
 
 def native_power(state, user):
     power = value(state, "m.room.power_levels")
+    creator = state.get(("m.room.create", ""))
+    creation = creator.content if creator else {}
+    version = creation.get('room_version', getattr(getattr(creator, 'room_version', None), 'identifier', '1'))
+    if version == '12' and (creator.sender == user or user in creation.get('additional_creators', ())):
+        return float('inf')
     if not power:
-        creator = state.get(("m.room.create", ""))
         return 100 if creator and creator.sender == user else 0
     return power.get("users", {}).get(user, power.get("users_default", 0))
 
@@ -36,7 +45,8 @@ def valid_channel(content):
 
 
 def timeout_active(state, user, now):
-    until = value(state, TIMEOUT, user).get("until", 0)
+    event = member_state_event(state, TIMEOUT, user)
+    until = event.content.get("until") if event else 0
     # Malformed stored timeout state fails closed rather than lifting a restriction.
     return type(until) is not int or until > now
 
@@ -76,19 +86,23 @@ class ChannelPolicy:
                 return False
             return all(actor == policy["owner"] or "manage_channels" in self.permissions(policy, actor, event.room_id) for _, policy, _ in policies)
         if kind == TIMEOUT:
-            if not isinstance(key, str) or not key.startswith("@") or key == actor or not isinstance(event.content, Mapping):
+            try:
+                target = member_state_target(key)
+            except ValueError:
+                return False
+            if target == actor or not isinstance(event.content, Mapping) or not member_state_revision_matches(event.content, state, TIMEOUT, target):
                 return False
             until, reason = event.content.get("until"), event.content.get("reason", "")
             if type(until) is not int or not (until == 0 or now < until <= now + 28 * 86400000) or not isinstance(reason, str) or len(reason) > 500:
                 return False
             power = value(state, "m.room.power_levels")
             threshold = max(power.get("kick", 50), power.get("events", {}).get(TIMEOUT, power.get("state_default", 50)))
-            if native_power(state, actor) < threshold or native_power(state, actor) <= native_power(state, key):
+            if native_power(state, actor) < threshold or native_power(state, actor) <= native_power(state, target):
                 return False
-            if until and value(state, "m.room.member", key).get("membership") not in {"join", "invite"}:
+            if until and value(state, "m.room.member", target).get("membership") not in {"join", "invite"}:
                 return False
             for _, policy, _ in policies:
-                if actor != policy["owner"] and ("timeout" not in self.permissions(policy, actor, event.room_id) or self.rank(policy, key) >= self.rank(policy, actor)):
+                if actor != policy["owner"] and ("timeout" not in self.permissions(policy, actor, event.room_id) or self.rank(policy, target) >= self.rank(policy, actor)):
                     return False
             return True
         if kind == "m.room.redaction":

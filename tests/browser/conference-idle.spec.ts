@@ -19,7 +19,11 @@ test('actual widget interaction and Stay in conference reset the idle warning', 
   await fixture(page); await page.getByRole('checkbox').check(); await page.clock.fastForward(270000);
   await expect(page.getByRole('status')).toContainText('Leaving in');
   await page.frameLocator('iframe').getByRole('button', { name: 'Widget control' }).click(); await expect(page.getByRole('status')).toHaveCount(0);
-  await page.clock.fastForward(270000); await page.getByRole('button', { name: 'Stay in conference' }).click(); await expect(page.getByRole('status')).toHaveCount(0);
+  await page.clock.fastForward(270000);
+  // Moving the pointer toward this button is itself activity and can dismiss
+  // the warning before click. Keyboard activation has no preceding mouse move.
+  await page.getByRole('button', { name: 'Stay in conference' }).press('Enter');
+  await expect(page.getByRole('status')).toHaveCount(0);
   await page.clock.fastForward(290000); expect(await page.evaluate(() => (window as any).leaveCount)).toBe(0);
 });
 test('new calls and server policy changes require renewed opt-in and stale account callbacks cannot leave', async ({ page }) => {

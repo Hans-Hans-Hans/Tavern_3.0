@@ -1,5 +1,6 @@
 import { Direction, Filter } from 'matrix-js-sdk';
 import { getMatrixClient } from './matrix';
+import { memberStateTarget } from './member-state';
 import { effectiveRolePermissions, readRolePolicy } from './roles';
 
 export const auditEventTypes = ['m.room.create', 'm.room.name', 'm.room.topic', 'm.room.avatar', 'm.room.member', 'm.room.power_levels', 'm.room.join_rules', 'm.room.history_visibility', 'm.room.encryption', 'm.room.pinned_events', 'm.room.redaction', 'm.space.child', 'm.space.parent', 'io.tavern.roles', 'io.tavern.server.layout', 'io.tavern.server.nickname', 'io.tavern.channel', 'io.tavern.timeout', 'io.tavern.tempban', 'io.tavern.thread', 'io.tavern.server.onboarding', 'io.tavern.emoji'];
@@ -13,6 +14,9 @@ export function projectServerAuditEvent(raw: any, roomId: string): ServerAuditEv
   if (!raw || !auditEventTypes.includes(raw.type) || !text(raw.event_id) || !text(raw.sender)) return null;
   const content = object(raw.content), previous = object(raw.unsigned?.prev_content), hasPrevious = !!raw.unsigned?.prev_content;
   const result: ServerAuditEvent = { id: text(raw.event_id, 1024), roomId, actor: text(raw.sender, 255), target: text(raw.state_key, 255) || roomId, at: typeof raw.origin_server_ts === 'number' && Number.isFinite(raw.origin_server_ts) ? raw.origin_server_ts : 0, kind: 'settings', action: 'Updated room settings', detail: '', type: raw.type };
+  if (['io.tavern.server.nickname', 'io.tavern.timeout', 'io.tavern.tempban'].includes(raw.type) && raw.state_key?.startsWith('_')) {
+    try { result.target = memberStateTarget(raw.state_key); } catch { return null; }
+  }
   if (raw.unsigned?.redacted_because) return { ...result, action: 'Redacted audit event', detail: 'Original event details are no longer available.' };
   switch (raw.type) {
     case 'm.room.member': {

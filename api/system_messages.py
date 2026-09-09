@@ -230,8 +230,7 @@ class SystemMessageManager:
                 if not model.valid_policy(policy): return None
                 if (model.LAYOUT, '') in scope and not model.valid_layout(content(scope, model.LAYOUT)): return None
                 permissions.intersection_update(model.permissions(model.ResolvedPolicy(policy, content(scope, model.LAYOUT)), bot, data['channelId']))
-            until = content(scope, 'io.tavern.timeout', bot).get('until', 0)
-            if model.temporary_ban_active(scope, bot, now) or type(until) is not int or until > now: return None
+            if model.temporary_ban_active(scope, bot, now) or model.timeout_active(scope, bot, now): return None
         if 'send_messages' not in permissions: return None
         powers = content(child, 'm.room.power_levels')
         events = powers.get('events', {})

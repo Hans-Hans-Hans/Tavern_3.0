@@ -16,7 +16,22 @@ test('moderator nickname changes only visible server name and removal restores t
   await expect(page.getByTestId('visible-name')).toHaveText('Member chosen name');
   const writes = await page.evaluate(() => (window as any).writes);
   expect(writes.map((value: any) => value.type)).toEqual(['io.tavern.server.nickname', 'io.tavern.server.nickname']);
+  expect(writes.map((value: any) => value.key)).toEqual(['_target:test', '_target:test']);
   expect(writes[1].content).toEqual({ version: 1, name: null, 'io.tavern.previous_event': '$saved1' });
+});
+
+test('an explicit legacy nickname removal publishes a canonical clear and preserves the old audit event', async ({ page }) => {
+  await expect(page.getByTestId('visible-name')).toHaveText('Member chosen name');
+  await page.evaluate(() => (window as any).concurrentNickname());
+  await page.getByRole('button', { name: 'Reload current nickname' }).click();
+  await expect(page.getByLabel('Server nickname', { exact: true })).toHaveValue('Other moderator nickname');
+  await page.getByRole('button', { name: 'Use member’s chosen name' }).click();
+  await expect(page.getByTestId('visible-name')).toHaveText('Member chosen name');
+  const writes = await page.evaluate(() => (window as any).writes);
+  expect(writes).toHaveLength(1);
+  expect(writes[0].key).toBe('_target:test');
+  expect(writes[0].content).toEqual({ version: 1, name: null, 'io.tavern.previous_event': '$other' });
+  expect(await page.evaluate(() => (window as any).state.filter((event: any) => event.type === 'io.tavern.server.nickname').length)).toBe(2);
 });
 test('concurrent nickname keeps the draft until explicit reload and fresh target promotion denies a write', async ({ page }) => {
   await page.getByLabel('Server nickname', { exact: true }).fill('Preserved draft');

@@ -13,6 +13,8 @@ import { systemMessagesSmoke } from './smoke-system-messages.mjs';
 import { dmRequestsSmoke } from './smoke-dm-requests.mjs';
 import { invitationPrivacySmoke } from './smoke-invitation-privacy.mjs';
 import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
+import { callAudioSmoke } from './smoke-call-audio.mjs';
+import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
@@ -255,6 +257,8 @@ try {
   await dmRequestsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent });
   await invitationPrivacySmoke({ admin, bob, adminSession, bobSession, origin, api, createPage: page, login });
   await roleMentionsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent });
+  await memberModerationSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api });
+  await callAudioSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api });
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
 } catch (error) {
   console.error('Live browser errors:', errors);

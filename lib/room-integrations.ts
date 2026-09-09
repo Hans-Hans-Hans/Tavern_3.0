@@ -1,10 +1,11 @@
 import { isManagedAccount } from './api';
+import { memberStateEvent } from './member-state';
 import { getMatrixClient } from './matrix';
 import { nativeMemberPower, readRolePolicy, effectiveRolePermissions, rolesEvent } from './roles';
 import { temporaryBanEvent } from './channel-policy';
 
 function banned(room: any, user: string) {
-  const value = room.currentState.getStateEvents(temporaryBanEvent, user)?.getContent();
+  const value = memberStateEvent(room, temporaryBanEvent, user)?.getContent();
   return !!value && (value.version !== 1 || !Number.isSafeInteger(value.until) || value.until < 0 || value.until > Date.now());
 }
 

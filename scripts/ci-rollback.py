@@ -236,7 +236,7 @@ def main():
             'TAVERN_INIT_IMAGE': source['init'].attrs['Image'], 'TAVERN_OPERATIONS_IMAGE': source['operations'].attrs['Image'],
             'SYNAPSE_IMAGE': source['synapse'].attrs['Image'], 'POSTGRES_IMAGE': source['postgres'].attrs['Image'],
             'TAVERN_DATA_DIR': '', 'TAVERN_INTEGRATIONS_CONFIG': 'integrations_config', 'TAVERN_INTEGRATIONS_DATA': 'integrations_data',
-            'NPM_PROXY_EXTERNAL': 'false', 'NPM_PROXY_NETWORK': PROXY_NETWORK, 'CALLS_ENABLED': 'false', 'INTEGRATIONS_ENABLED': 'false', 'SMTP_ENABLED': 'false'}
+            'NPM_PROXY_EXTERNAL': 'false', 'NPM_PROXY_NETWORK': PROXY_NETWORK, 'CALLS_ENABLED': 'false', 'SFU_AUDIO_MODERATION_ENABLED': 'false', 'INTEGRATIONS_ENABLED': 'false', 'SMTP_ENABLED': 'false'}
         # Inspect the fully resolved model before creating project resources.
         model = json.loads(subprocess.check_output(compose + ['config', '--format', 'json'], cwd=ROOT, env=environment))
         assert model['name'] == PROJECT

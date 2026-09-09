@@ -16,7 +16,7 @@ class ServerNicknamePolicyTests(unittest.IsolatedAsyncioTestCase):
             self.server[('m.room.member', user)] = fixture.event('m.room.member', sender=user, key=user, body={'membership': 'join', 'displayname': 'Member chosen name'})
 
     async def write(self, *, actor='@mod:local', target='@member:local', body=None, state=None, room='!server:local'):
-        return await self.module.check_event_allowed(fixture.event(NICKNAME, sender=actor, key=target, room=room,
+        return await self.module.check_event_allowed(fixture.event(NICKNAME, sender=actor, key="_" + target[1:] if target.startswith("@") else target, room=room,
             body=body if body is not None else {'version': 1, 'name': 'Server nickname', 'io.tavern.previous_event': None}), self.server if state is None else state)
 
     async def test_set_and_clear_require_exact_previous_event_without_changing_membership(self):

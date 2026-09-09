@@ -15,8 +15,8 @@ TEMPBAN = 'io.tavern.tempban'
 MAX_SECONDS = 28 * 86400
 
 
-def restriction(current, target, identity):
-    event = current.get((TEMPBAN, target))
+def restriction(current, target, identity, model):
+    event = model.member_state_event(current, TEMPBAN, target)
     data = event.content if event else {}
     until = data.get('until', 0)
     valid = data.get('version') == 1 and type(until) is int and until >= 0
@@ -30,9 +30,11 @@ async def temporary_bans(request):
     if request.method == 'GET':
         target = user_id(request.query.get('targetId'))
         authority = await room_authority(service, session, request.query.get('roomId')); authority.require('ban', native='ban')
+        try: authority.model.member_state_key(target)
+        except ValueError: raise APIError(400, 'Choose a valid Matrix account of at most 255 UTF-8 bytes.') from None
         service.require_session(request)
-        return web.json_response({'restriction': restriction(authority.state, target, authority.room_id),
-            'inherited': [restriction(parent, target, identity) for identity, _, parent in authority.policies if identity != authority.room_id and (TEMPBAN, target) in parent],
+        return web.json_response({'restriction': restriction(authority.state, target, authority.room_id, authority.model),
+            'inherited': [restriction(parent, target, identity, authority.model) for identity, _, parent in authority.policies if identity != authority.room_id and authority.model.member_state_event(parent, TEMPBAN, target)],
             'membership': content(authority.state, 'm.room.member', target).get('membership', 'leave'),
             'scope': 'server' if any(identity == authority.room_id for identity, _, _ in authority.policies) else 'room'})
     data = await body_json(request); target = user_id(data.get('targetId'))
@@ -51,7 +53,9 @@ async def temporary_bans(request):
         raise APIError(400, 'Review the current temporary ban before changing it.')
     service.store.rate('temporary-ban:' + session['user_id'], 30, 3600)
     authority = await room_authority(service, session, data.get('roomId')); authority.require('ban', native='ban', target=target)
-    previous = authority.state.get((TEMPBAN, target)); previous_id = previous.event_id if previous else None
+    try: target_key = authority.model.member_state_key(target)
+    except ValueError: raise APIError(400, 'Choose a valid Matrix account of at most 255 UTF-8 bytes.') from None
+    previous = authority.model.member_state_event(authority.state, TEMPBAN, target); previous_id = previous.event_id if previous else None
     if data['previousEventId'] != previous_id:
         raise APIError(409, 'This temporary ban changed. Refresh it before submitting again.')
     membership = content(authority.state, 'm.room.member', target).get('membership', 'leave')
@@ -65,7 +69,7 @@ async def temporary_bans(request):
     # Native state authorization and current Synapse role checks apply to this
     # write. The service account is used only for the read-only authority view.
     try:
-        result = await service.matrix('PUT', prefix + '/state/' + TEMPBAN + '/' + quote(target, safe=''), payload, token=token)
+        result = await service.matrix('PUT', prefix + '/state/' + TEMPBAN + '/' + quote(target_key, safe=''), payload, token=token)
     except (ClientError, asyncio.TimeoutError):
         raise APIError(502, 'The homeserver did not confirm this temporary ban change. Refresh its current state before trying again.') from None
     service.audit(session['user_id'], 'temporary_ban_applied' if until else 'temporary_ban_lifted', target, authority.room_id + ' until:' + str(until))

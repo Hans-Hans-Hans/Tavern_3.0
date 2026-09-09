@@ -1,4 +1,5 @@
 import { getMatrixClient } from './matrix';
+import { memberStateEvent, memberStateKey } from './member-state';
 import { effectiveRolePermissions, memberRoleRank, readRolePolicy, type RolePolicy, type RolePermission } from './roles';
 
 export const channelPolicyEvent = 'io.tavern.channel';
@@ -39,7 +40,7 @@ export async function saveChannelPolicy(roomId: string, value: ChannelPolicy) {
   await client.sendStateEvent(roomId, channelPolicyEvent as any, { ...existing, version: 1, ...normalizeChannelPolicy(value) }, '');
 }
 export function memberTimeout(roomId: string, userId: string): { until: number; reason: string } {
-  const value = getMatrixClient()?.getRoom(roomId)?.currentState.getStateEvents(timeoutEvent, userId)?.getContent();
+  const value = memberStateEvent(getMatrixClient()?.getRoom(roomId), timeoutEvent, userId)?.getContent();
   return { until: Number.isSafeInteger(value?.until) ? value!.until : 0, reason: typeof value?.reason === 'string' ? value.reason.slice(0, 500) : '' };
 }
 export function canModerateMember(roomId: string, userId: string, operation: 'timeout' | 'kick' | 'ban') {
@@ -56,7 +57,9 @@ export async function timeoutMember(roomId: string, userId: string, seconds: num
   if (!Number.isInteger(seconds) || seconds < 0 || seconds > 28 * 86400 || reason.length > 500) throw new Error('Choose a timeout of up to 28 days and a reason of up to 500 characters.');
   const { client } = roomContext(roomId);
   if (!canModerateMember(roomId, userId, 'timeout')) throw new Error('You cannot restrict this member. Check your role and their position.');
-  await client.sendStateEvent(roomId, timeoutEvent as any, { until: seconds ? Date.now() + seconds * 1000 : 0, reason: reason.trim() }, userId);
+  const current = memberStateEvent(client.getRoom(roomId), timeoutEvent, userId);
+  if (current && !current.getId()) throw new Error('The current timeout revision is unavailable. Reload before retrying.');
+  await client.sendStateEvent(roomId, timeoutEvent as any, { until: seconds ? Date.now() + seconds * 1000 : 0, reason: reason.trim(), 'io.tavern.previous_event': current?.getId() ?? null }, memberStateKey(userId));
 }
 export async function moderateMember(roomId: string, userId: string, operation: 'kick' | 'ban' | 'unban', reason = '') {
   const { client } = roomContext(roomId);
@@ -73,7 +76,7 @@ export function postingRestriction(roomId: string): string {
       return event.getContent().canonical && event.getContent().via?.length && parent && readRolePolicy(parentId!) && parent.currentState.getStateEvents('m.space.child', roomId)?.getContent().via?.length;
     }).map(event => client.getRoom(event.getStateKey()!)!);
     for (const scope of [room, ...parents]) {
-      const restriction = scope.currentState.getStateEvents(temporaryBanEvent, me)?.getContent();
+      const restriction = memberStateEvent(scope, temporaryBanEvent, me)?.getContent();
       if (!restriction) continue;
       if (restriction.version !== 1 || !Number.isSafeInteger(restriction.until) || restriction.until < 0) return 'A temporary ban is active. Ask a moderator to check its expiry.';
       if (restriction.until > Date.now()) return 'You are temporarily banned ' + (scope.roomId === roomId ? 'from this conversation' : 'from this channel’s server') + ' until ' + new Date(restriction.until).toLocaleString() + '.';

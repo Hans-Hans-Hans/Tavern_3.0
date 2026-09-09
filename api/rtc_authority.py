@@ -1,15 +1,18 @@
 """Current Matrix authority for SFU admission; never trust browser role metadata."""
 import time
 from types import SimpleNamespace
+from urllib.parse import quote
 
 try:
     from .server import APIError
     from .room_authority import content, power, room_authority
-    from .server_eligibility import require_room_eligibility
+    from .server_eligibility import account_status, require_room_eligibility
+    from .call_audio import audio_snapshot, enabled as audio_enabled
 except ImportError:
     from server import APIError
     from room_authority import content, power, room_authority
-    from server_eligibility import require_room_eligibility
+    from server_eligibility import account_status, require_room_eligibility
+    from call_audio import audio_snapshot, enabled as audio_enabled
 
 CALL_MEMBER = 'org.matrix.msc3401.call.member'
 
@@ -48,5 +51,25 @@ async def call_authority(service, session, identity):
     policy = model.ChannelPolicy(None, model.permissions, model.rank)
     if not await policy.check(probe, current, authority.policies):
         raise APIError(403, 'This channel is archived or calls are currently restricted.', 'CALL_ACCESS_DENIED')
+    authority.audio = await audio_snapshot(service, identity, actor, authority.state, model=authority.model)
+    if not audio_enabled() and any(authority.audio.effective[key] for key in ('muted', 'deafened')):
+        raise APIError(403, 'Saved audio restrictions require the configured SFU audio support.', 'CALL_ACCESS_DENIED')
     await require_room_eligibility(service, session, identity, authority.state)
+    account = account_status(service, actor)
+    # Eligibility may perform several remote reads. Do not publish a media grant
+    # from an audio snapshot captured before those waits.
+    latest_audio = await audio_snapshot(service, identity, actor, model=authority.model)
+    if latest_audio.revision != authority.audio.revision:
+        raise APIError(403, 'Audio restrictions changed while checking this call. Rejoin the call.', 'CALL_ACCESS_DENIED')
+    # Preserve the mandatory native availability ceiling after the final audio
+    # state reads. A suspended native token can still answer whoami correctly.
+    native = await service.matrix('GET', '/_synapse/admin/v2/users/' + quote(actor, safe=''), token=await service.service_token())
+    if (native.get('name') != actor or not model.ServerEligibilityPolicy.native_available(SimpleNamespace(
+            is_deactivated=native.get('deactivated'), is_guest=native.get('is_guest'),
+            locked=native.get('locked'), suspended=native.get('suspended')))):
+        raise APIError(403, 'This account is not available for conference participation.', 'CALL_ACCESS_DENIED')
+    final_account = account_status(service, actor)
+    if final_account != account or not final_account['available']:
+        raise APIError(403, 'Account security changed while checking conference access.', 'CALL_ACCESS_DENIED')
+    authority.audio = latest_audio
     return authority

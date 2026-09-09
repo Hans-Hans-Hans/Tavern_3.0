@@ -53,11 +53,11 @@ class ChannelPolicyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_needs_native_hierarchy_and_cannot_target_self(self):
         until = int(time.time() * 1000) + 3600000
-        self.assertTrue(await self.policy.check(event(TIMEOUT, sender="@mod:test", key="@member:test", content={"until": until}), self.state, []))
+        self.assertTrue(await self.policy.check(event(TIMEOUT, sender="@mod:test", key="_member:test", content={"until": until, "io.tavern.previous_event": None}), self.state, []))
         for target in ("@owner:test", "@peer:test", "@mod:test"):
-            self.assertFalse(await self.policy.check(event(TIMEOUT, sender="@mod:test", key=target, content={"until": until}), self.state, []))
-        self.assertFalse(await self.policy.check(event(TIMEOUT, key="@mod:test", content={"until": until}), self.state, []))
-        self.assertFalse(await self.policy.check(event(TIMEOUT, sender="@mod:test", key="@member:test", content={"until": until + 29 * 86400000}), self.state, []))
+            self.assertFalse(await self.policy.check(event(TIMEOUT, sender="@mod:test", key="_" + target[1:], content={"until": until, "io.tavern.previous_event": None}), self.state, []))
+        self.assertFalse(await self.policy.check(event(TIMEOUT, key="_mod:test", content={"until": until, "io.tavern.previous_event": None}), self.state, []))
+        self.assertFalse(await self.policy.check(event(TIMEOUT, sender="@mod:test", key="_member:test", content={"until": until + 29 * 86400000, "io.tavern.previous_event": None}), self.state, []))
 
     async def test_timeout_expiry_server_time_and_parent_inheritance(self):
         with patch("synapse_modules.channel_policy.time.time", return_value=1000):
@@ -90,7 +90,7 @@ class ChannelPolicyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_granular_timeout_role_required_even_with_native_power(self):
         roles = {"owner": "@owner:test", "roles": [{"id": "everyone", "position": 0, "permissions": []}, {"id": "mod", "position": 50, "permissions": ["kick"]}], "members": {"@mod:test": ["mod"]}}
-        action = event(TIMEOUT, sender="@mod:test", key="@member:test", content={"until": int(time.time() * 1000) + 100000})
+        action = event(TIMEOUT, sender="@mod:test", key="_member:test", content={"until": int(time.time() * 1000) + 100000, "io.tavern.previous_event": None})
         self.assertFalse(await self.policy.check(action, self.state, [("!parent:test", roles, {})]))
         roles["roles"][1]["permissions"].append("timeout")
         self.assertTrue(await self.policy.check(action, self.state, [("!parent:test", roles, {})]))

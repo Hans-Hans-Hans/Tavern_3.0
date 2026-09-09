@@ -49,6 +49,7 @@ jobs:
           docker build -f docker/init/Dockerfile -t "ghcr.io/$owner/tavern-init:$version" .
           docker build -t "ghcr.io/$owner/tavern-integrations:$version" integrations
           docker build -f ops/Dockerfile --build-arg "TAVERN_VERSION=$version" -t "ghcr.io/$owner/tavern-operations:$version" .
+          docker build --label "org.opencontainers.image.version=$version" --label "org.opencontainers.image.revision=$RELEASE_COMMIT" -t "ghcr.io/$owner/tavern-sfu-audio:$version" docker/sfu
       - name: Publish verified images to GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,7 +58,7 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           version="${RELEASE_TAG#v}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for component in tavern tavern-api tavern-init tavern-integrations tavern-operations; do
+          for component in tavern tavern-api tavern-init tavern-integrations tavern-operations tavern-sfu-audio; do
             image="ghcr.io/$owner/$component"
             docker push "$image:$version"
             if [[ "$version" != *-* ]]; then

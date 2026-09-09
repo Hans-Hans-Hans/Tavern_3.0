@@ -1,4 +1,5 @@
 import { getMatrixClient } from './matrix';
+import { memberStateEvent } from './member-state';
 import { canEditConversationState, checkedConversationState } from './channel-administration';
 import { effectiveRolePermissions, nativeMemberPower, readRolePolicy } from './roles';
 
@@ -45,7 +46,7 @@ export function canJoinAfkDestination(roomId: string) {
     }
     const now = Date.now();
     for (const scope of scopes) {
-      const timeout = content(scope, 'io.tavern.timeout', me).until ?? 0, ban = scope.currentState.getStateEvents('io.tavern.tempban' as any, me)?.getContent();
+      const timeoutEvent = memberStateEvent(scope, 'io.tavern.timeout', me), timeout = timeoutEvent ? timeoutEvent.getContent().until : 0, ban = memberStateEvent(scope, 'io.tavern.tempban', me)?.getContent();
       if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > now || ban && (ban.version !== 1 || !Number.isSafeInteger(ban.until) || ban.until < 0 || ban.until > now)) return false;
       const event = scope.currentState.getStateEvents('io.tavern.roles' as any, '');
       if (event) {

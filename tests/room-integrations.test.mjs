@@ -13,7 +13,7 @@ test('webhook controls require joined canonical parents, native power, role gran
   server.events.push(event(role.rolesEvent, '', policy), event('m.space.child', channel.roomId, { via: ['test'] }));
   const powers = { users: { [me]: 50 }, state_default: 50 };
   channel.events.push(event('m.room.encryption', '', { algorithm: 'm.megolm.v1.aes-sha2' }), event('m.room.power_levels', '', powers), event('m.space.parent', server.roomId, { canonical: true, via: ['test'] }));
-  const { canManageRoomWebhooks: allowed, roomWebhookLocations: locations } = loadTs('../lib/room-integrations.ts', { './api': { isManagedAccount: () => true }, './matrix': { getMatrixClient: () => client }, './roles': role, './channel-policy': { temporaryBanEvent: 'io.tavern.tempban' } });
+  const { canManageRoomWebhooks: allowed, roomWebhookLocations: locations } = loadTs('../lib/room-integrations.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './api': { isManagedAccount: () => true }, './matrix': { getMatrixClient: () => client }, './roles': role, './channel-policy': { temporaryBanEvent: 'io.tavern.tempban' } });
   assert.equal(allowed(channel.roomId), true); assert.deepEqual(locations(server.roomId), [{ id: channel.roomId, name: channel.name }]); assert.equal(allowed(server.roomId), false);
   powers.users[me] = 0; assert.equal(allowed(channel.roomId), false); powers.users[me] = 50;
   policy.roles[1].permissions = []; assert.equal(allowed(channel.roomId), false); policy.roles[1].permissions = ['manage_webhooks'];

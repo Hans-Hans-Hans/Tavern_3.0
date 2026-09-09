@@ -190,6 +190,12 @@ loaded directly by RTC authorization. No copying of LiveKit secrets into stack
 environment fields is needed. Existing `prepare-calls.py` credentials are
 preserved and converted to the file interface when both config files exist.
 
+The calls profile builds Tavern's pinned SFU from `docker/sfu`. For independent
+server mute/deafen, enable `SFU_AUDIO_MODERATION_ENABLED=true`, rebuild and restart
+the native policy as described in [audio moderation](SFU_AUDIO_MODERATION.md).
+Image-only managers must build `tavern-sfu-audio:0.4.0` first. Audio moderation
+defaults to off; clearing a mute may require the affected member to rejoin.
+
 The account API checks current room and account permissions before issuing a
 conference token and before every signaling connection or reconnect. Keep the
 issuer and LiveKit HTTP services private and use the shipped gateway routes;

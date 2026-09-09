@@ -64,11 +64,11 @@ class TemporaryBanPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.module.check(event('m.call.hangup'), self.state, []))
 
     async def test_native_role_hierarchy_revision_and_duration_cannot_be_bypassed(self):
-        action = event(TEMPBAN, sender='@mod:test', key='@member:test', content={'version': 1, 'until': int(time.time() * 1000) + 100000, 'io.tavern.previous_event': None})
+        action = event(TEMPBAN, sender='@mod:test', key='_member:test', content={'version': 1, 'until': int(time.time() * 1000) + 100000, 'io.tavern.previous_event': None})
         policies = [('!room:test', self.role, self.state)]
         self.assertTrue(await self.module.check(action, self.state, policies))
         for target in ['@mod:test', '@peer:test', '@owner:test']:
-            other = copy.deepcopy(action); other.state_key = target
+            other = copy.deepcopy(action); other.state_key = "_" + target[1:]
             self.assertFalse(await self.module.check(other, self.state, policies))
         self.role['roles'][1]['permissions'] = ['kick']
         self.assertFalse(await self.module.check(action, self.state, policies))
@@ -139,6 +139,7 @@ class TemporaryBanAPITests(unittest.IsolatedAsyncioTestCase):
         result = await self.change(cookie); self.assertEqual(result.status, 200, await result.text())
         value = await result.json(); self.assertTrue(value['restrictionApplied']); self.assertTrue(value['membershipRemoved'])
         self.assertEqual([row[0] for row in self.mutations], ['PUT', 'POST'])
+        self.assertTrue(self.mutations[0][1].endswith('/state/' + TEMPBAN + '/_alice:test'))
         self.assertTrue(all(self.tokens[row[3]][0] == '@owner:test' for row in self.mutations))
         self.assertNotIn('Public moderation reason', str(list(self.service.store.db.execute('SELECT detail FROM audit'))))
         current = await (await self.request('GET', '/api/moderation/temporary-bans?roomId=!room:test&targetId=@alice:test', cookie=cookie)).json()
@@ -152,6 +153,22 @@ class TemporaryBanAPITests(unittest.IsolatedAsyncioTestCase):
         response = await self.change(cookie); self.assertEqual(response.status, 200, await response.text())
         value = await response.json(); self.assertTrue(value['restrictionApplied']); self.assertFalse(value['membershipRemoved'])
         self.assertIn('may still read', value['message']); self.assertTrue(self.extra['!room:test'][0]['content']['until'] > time.time() * 1000)
+
+    async def test_legacy_ban_migration_requires_observed_revision_and_canonical_clear_wins(self):
+        cookie, _, _ = await self.login('owner')
+        self.extra['!room:test'] = [{'type': TEMPBAN, 'state_key': '@alice:test', 'event_id': '$legacy', 'sender': '@alice:test',
+            'content': {'version': 1, 'until': int(time.time() * 1000) + 100000}}]
+        endpoint = '/api/moderation/temporary-bans?roomId=!room:test&targetId=@alice:test'
+        initial = await (await self.request('GET', endpoint, cookie=cookie)).json()
+        self.assertEqual(initial['restriction']['eventId'], '$legacy'); self.assertTrue(initial['restriction']['active'])
+        self.assertEqual((await self.change(cookie, action='lift')).status, 409)
+        response = await self.change(cookie, action='lift', previousEventId='$legacy')
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(len(self.extra['!room:test']), 2)
+        current = await (await self.request('GET', endpoint, cookie=cookie)).json()
+        self.assertFalse(current['restriction']['active']); self.assertEqual(current['restriction']['eventId'], '$ban1')
+        self.assertEqual((await self.change(cookie, previousEventId='$legacy')).status, 409)
+        self.assertEqual(len(self.mutations), 1)
 
     async def test_checks_all_parents_role_hierarchy_native_power_and_current_revision(self):
         cookie, _, _ = await self.login('owner'); policy = self.managed(); other = self.managed('!other:test')

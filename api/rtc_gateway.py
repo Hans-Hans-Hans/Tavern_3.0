@@ -21,11 +21,15 @@ try:
     from .call_moderation import CallModerator, room_alias
     from .room_authority import room_id
     from .rtc_authority import call_authority
+    from .call_audio import enabled as audio_enabled
+    from .call_audio_permissions import SOURCES, grant_permissions, stored_permissions, project, projected_claims, attenuated, twirp_permissions, observed_permissions
 except ImportError:
     from server import APIError, body_json
     from call_moderation import CallModerator, room_alias
     from room_authority import room_id
     from rtc_authority import call_authority
+    from call_audio import enabled as audio_enabled
+    from call_audio_permissions import SOURCES, grant_permissions, stored_permissions, project, projected_claims, attenuated, twirp_permissions, observed_permissions
 
 SIGNAL_PATHS = frozenset(('/livekit/sfu/rtc', '/livekit/sfu/rtc/validate', '/livekit/sfu/rtc/v1', '/livekit/sfu/rtc/v1/validate'))
 CHECK_INTERVAL = 15
@@ -94,6 +98,13 @@ def modern_identity(user, device, member):
     return base64.b64encode(hashlib.sha256(value.encode()).digest()).decode().rstrip('=')
 
 
+def sign_claims(claims, secret):
+    def encode(value):
+        return base64.urlsafe_b64encode(json.dumps(value, separators=(',', ':')).encode()).decode().rstrip('=')
+    message = encode({'alg': 'HS256', 'typ': 'JWT'}) + '.' + encode(claims)
+    return message + '.' + base64.urlsafe_b64encode(hmac.new(secret.encode(), message.encode(), hashlib.sha256).digest()).decode().rstrip('=')
+
+
 def token_scope(data, session, protocol):
     if protocol == 'legacy':
         allowed = {'room', 'device_id', 'openid_token', 'delay_id', 'delay_timeout', 'delay_cs_api_url'}
@@ -150,6 +161,12 @@ class RtcGateway:
                 PRIMARY KEY(room_alias,identity));
             CREATE INDEX IF NOT EXISTS rtc_admission_check ON rtc_admissions(admitted,next_check);
         ''')
+        columns = {row[1] for row in service.store.db.execute('PRAGMA table_info(rtc_admissions)')}
+        for name, declaration in (('audio_baseline', "TEXT NOT NULL DEFAULT ''"), ('audio_revision', "TEXT NOT NULL DEFAULT ''"),
+                                  ('audio_checked', 'REAL NOT NULL DEFAULT 0'), ('audio_pending', 'INTEGER NOT NULL DEFAULT 0'),
+                                  ('audio_rejoin', 'INTEGER NOT NULL DEFAULT 0'), ('audio_last_muted', 'INTEGER NOT NULL DEFAULT -1')):
+            if name not in columns:
+                service.store.db.execute('ALTER TABLE rtc_admissions ADD COLUMN ' + name + ' ' + declaration)
 
     def lock(self, alias, identity):
         return self.locks.setdefault((alias, identity), asyncio.Lock())
@@ -207,10 +224,28 @@ class RtcGateway:
         alias = room_alias(identity)
         if result.get('url') != service.config.public_url.replace('https://', 'wss://', 1) + '/livekit/sfu' or claims['sub'] != sfu_identity or claims['video']['room'] != alias:
             raise denied('The call service returned an unexpected conference scope.', 503)
+        try:
+            baseline = grant_permissions(claims['video'])
+        except ValueError:
+            raise denied('The call service returned unsupported media permissions.', 503) from None
         async with self.lock(alias, sfu_identity):
             service.require_session(request)
-            await self.authority(session, identity)
+            # Probe before the final native state read so this network await
+            # cannot retain an earlier restriction snapshot.
+            support = False
+            if audio_enabled():
+                try:
+                    support = await self.moderator.audio_support()
+                except APIError:
+                    pass
+            authority = await self.authority(session, identity)
             service.require_session(request)
+            audio = authority.audio
+            constrained = any(audio.effective[key] for key in ('muted', 'deafened'))
+            if constrained and not support:
+                raise denied('The running SFU audio restrictions could not be verified.', 503)
+            permission = project(baseline, audio.effective['muted'], audio.effective['deafened'])
+            token = sign_claims(projected_claims(claims, permission), secret) if constrained else result['jwt']
             now, db = time.time(), service.store.db
             existing = db.execute('SELECT * FROM rtc_admissions WHERE room_alias=? AND identity=?', (alias, sfu_identity)).fetchone()
             if existing and (existing['room_id'], existing['user_id'], existing['device_id'], existing['member_id']) != (identity, session['user_id'], session['device_id'], member):
@@ -219,11 +254,14 @@ class RtcGateway:
                 raise denied('The conference admission limit was reached. Try again after a call ends.', 503)
             if not existing and db.execute('SELECT count(*) FROM rtc_admissions WHERE session_id=?', (session['id'],)).fetchone()[0] >= MAX_SESSION_ADMISSIONS:
                 raise denied('This browser has too many pending conference connections. Wait briefly and try again.', 429)
-            db.execute('''INSERT INTO rtc_admissions(room_alias,identity,room_id,user_id,device_id,member_id,session_id,created,expires)
-                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(room_alias,identity) DO UPDATE SET
-                session_id=excluded.session_id,expires=excluded.expires,revision=rtc_admissions.revision+1''',
-                (alias, sfu_identity, identity, session['user_id'], session['device_id'], member, session['id'], now, session['expires']))
-        return web.json_response({'url': result['url'], 'jwt': result['jwt']}, headers={'Cache-Control': 'no-store'})
+            db.execute('''INSERT INTO rtc_admissions(room_alias,identity,room_id,user_id,device_id,member_id,session_id,created,expires,audio_baseline,audio_pending,audio_last_muted)
+                VALUES(?,?,?,?,?,?,?,?,?,?,1,?) ON CONFLICT(room_alias,identity) DO UPDATE SET
+                session_id=excluded.session_id,expires=excluded.expires,revision=rtc_admissions.revision+1,
+                audio_baseline=excluded.audio_baseline,audio_pending=1,audio_checked=0,audio_revision='',audio_rejoin=0,
+                audio_last_muted=excluded.audio_last_muted,next_check=0''',
+                (alias, sfu_identity, identity, session['user_id'], session['device_id'], member, session['id'], now, session['expires'], json.dumps(baseline, separators=(',', ':')),
+                 int(audio.effective['muted'])))
+        return web.json_response({'url': result['url'], 'jwt': token}, headers={'Cache-Control': 'no-store'})
 
     async def authorize(self, request):
         service = self.service
@@ -260,8 +298,30 @@ class RtcGateway:
             row = service.store.db.execute('SELECT * FROM rtc_admissions WHERE room_alias=? AND identity=?', (alias, identity)).fetchone()
             if not row or row['expires'] <= time.time() or (row['session_id'], row['user_id'], row['device_id']) != (session['id'], session['user_id'], session['device_id']):
                 raise denied()
-            await self.authority(session, row['room_id'])
+            support = False
+            if audio_enabled():
+                try:
+                    support = await self.moderator.audio_support()
+                except APIError:
+                    pass
+            authority = await self.authority(session, row['room_id'])
             service.require_session(request)
+            try:
+                flags = authority.audio.effective
+                if (flags['muted'] or flags['deafened']) and not support:
+                    raise denied('The running SFU audio restrictions could not be verified.', 503)
+                candidate = grant_permissions(claims['video'])
+                # Old deployments have no safe baseline to restore; only an
+                # unrestricted pre-upgrade connection can use that old row.
+                if not row['audio_baseline']:
+                    if flags['muted'] or flags['deafened']:
+                        raise denied()
+                else:
+                    baseline = stored_permissions(json.loads(row['audio_baseline']))
+                    if not attenuated(candidate, project(baseline, flags['muted'], flags['deafened'])):
+                        raise denied('This call token predates current audio permissions. Rejoin the call.')
+            except (ValueError, TypeError):
+                raise denied() from None
             if not uri.path.endswith('/validate'):
                 service.store.db.execute('UPDATE rtc_admissions SET admitted=?,next_check=? WHERE room_alias=? AND identity=?', (time.time(), time.time() + CHECK_INTERVAL, alias, identity))
         return web.Response(status=204, headers={'Cache-Control': 'no-store'})
@@ -279,19 +339,110 @@ class RtcGateway:
             return None
 
     async def current(self, row):
+        return await self.current_authority(row) is not None
+
+    async def current_authority(self, row):
         context = self.session_context(row)
         if context is None:
-            return False
+            return None
         try:
-            await self.authority(context['session'], row['room_id'])
+            authority = await self.authority(context['session'], row['room_id'])
             self.service.require_session(context)
-            return True
+            return authority
         except (APIError, ClientError, asyncio.TimeoutError):
             # Missing native authority is insufficient to keep a connection.
+            return None
+
+    async def enforce_audio(self, row, authority, participant):
+        """Full permission update plus a fresh observed native/SFU confirmation."""
+        db, alias, identity = self.service.store.db, row['room_alias'], row['identity']
+        flags, snapshot = authority.audio.effective, authority.audio
+        if not row['audio_baseline']:
+            if flags['muted'] or flags['deafened']:
+                return False  # Safe restoration needs a fresh managed token.
+            return True
+        try:
+            baseline = stored_permissions(json.loads(row['audio_baseline']))
+            desired = project(baseline, flags['muted'], flags['deafened'])
+        except (ValueError, TypeError):
             return False
+        if not audio_enabled():
+            # Restrictions cannot be ignored because the deployment flag changed.
+            return not (flags['muted'] or flags['deafened'])
+        try:
+            await self.moderator.audio_support()
+        except APIError:
+            return not (flags['muted'] or flags['deafened'])
+        # Recheck after the capability lookup, including native availability.
+        fresh = await self.current_authority(row)
+        if fresh is None:
+            return False
+        if fresh.audio.revision != snapshot.revision:
+            raise denied('Audio restrictions changed during enforcement.', 503)
+        try:
+            observed = observed_permissions(participant.get('permission'), require_extension=False)
+        except ValueError:
+            # Unknown fields/versioned semantics cannot be dropped by a full
+            # permission replacement. Disconnect this bound identity instead.
+            return False
+        # Full Twirp replacement is required by the pinned protocol. Preserve
+        # current fields unrelated to these two controls rather than changing
+        # them back to an earlier issuer grant during an audio update.
+        for name in set(desired) - {'canPublish', 'canPublishSources', 'tavernCanSubscribeAudio'}:
+            desired[name] = observed[name]
+        clearing_mute = not flags['muted'] and (row['audio_last_muted'] == 1 or row['audio_last_muted'] == -1 and bool(flags['sources']))
+        rejoin_needed = bool(row['audio_rejoin'] or clearing_mute and desired['canPublish'] and not observed['canPublish'])
+        if desired['canPublish'] and not observed['canPublish']:
+            # Pinned SetPermission does not increment version for identical
+            # external writes. There is no proof that a current global publish
+            # denial is still ours. Keep it closed until a fresh managed join.
+            desired['canPublish'] = False
+        # Same-value external source-mask writes do not increment the pinned
+        # participant version either. Never broaden an observed publication
+        # mask in place; clearing a mute can require a fresh managed join.
+        video_sources = {'camera', 'screen_share'}
+        observed_sources = set(observed['canPublishSources'] or SOURCES)
+        ceiling = set(baseline['canPublishSources'] or SOURCES)
+        if flags['muted']:
+            sources = ceiling & observed_sources & video_sources
+            desired['canPublishSources'] = sorted(sources)
+            if not sources:
+                desired['canPublish'] = False
+        else:
+            desired['canPublishSources'] = observed['canPublishSources']
+            if clearing_mute and (ceiling - observed_sources) & (set(SOURCES) - video_sources):
+                rejoin_needed = True
+        if flags['muted'] and row['audio_last_muted'] != 1:
+            # Retain only that a mute may have been applied through an ambiguous
+            # response. This bit permits a rejoin warning, never a grant increase.
+            db.execute('UPDATE rtc_admissions SET audio_last_muted=1 WHERE room_alias=? AND identity=? AND revision=?',
+                       (alias, identity, row['revision']))
+        if observed != desired:
+            await self.moderator.sfu('UpdateParticipant', alias, {'identity': identity, 'permission': twirp_permissions(desired)})
+        inventory = (await self.moderator.sfu('ListParticipants', alias)).get('participants')
+        if not isinstance(inventory, list) or len(inventory) > 1000 or any(not isinstance(item, dict) or not isinstance(item.get('identity'), str) for item in inventory):
+            raise denied('Audio enforcement remains unconfirmed.', 503)
+        matches = [item for item in inventory if item['identity'] == identity]
+        if len(matches) != 1:
+            raise denied('Audio enforcement remains unconfirmed.', 503)
+        try:
+            if observed_permissions(matches[0].get('permission')) != desired:
+                raise ValueError()
+        except ValueError:
+            raise denied('Audio enforcement remains unconfirmed.', 503) from None
+        latest = await self.current_authority(row)
+        if latest is None:
+            return False
+        if latest.audio.revision != snapshot.revision:
+            raise denied('Audio restrictions changed during enforcement.', 503)
+        db.execute('UPDATE rtc_admissions SET audio_revision=?,audio_checked=?,audio_pending=?,audio_rejoin=?,audio_last_muted=? WHERE room_alias=? AND identity=? AND revision=?',
+                   (snapshot.revision, time.time(), int(rejoin_needed), int(rejoin_needed), int(flags['muted']), alias, identity, row['revision']))
+        return True
 
     def pending(self, row):
         now = time.time()
+        self.service.store.db.execute('UPDATE rtc_admissions SET audio_pending=1 WHERE room_alias=? AND identity=? AND revision=?',
+                                      (row['room_alias'], row['identity'], row['revision']))
         if now - row['last_pending_audit'] >= PENDING_AUDIT_INTERVAL:
             self.service.audit('system', 'call.access_check_pending', row['user_id'], row['room_id'])
             self.service.store.db.execute('UPDATE rtc_admissions SET last_pending_audit=? WHERE room_alias=? AND identity=?', (now, row['room_alias'], row['identity']))
@@ -323,10 +474,16 @@ class RtcGateway:
                         participants = (await self.moderator.sfu('ListParticipants', alias)).get('participants')
                         if not isinstance(participants, list) or len(participants) > 1000 or any(not isinstance(p, dict) or not isinstance(p.get('identity'), str) for p in participants):
                             raise denied('The call inventory could not be verified.', 503)
-                        present = any(p['identity'] == identity for p in participants)
+                        matches = [p for p in participants if p['identity'] == identity]
+                        if len(matches) > 1:
+                            raise denied('The call identity inventory is ambiguous.', 503)
+                        present = bool(matches)
                         # Check current native/custom authority after inventory,
                         # never retain a result from before that await.
-                        allowed = await self.current(row) if present else self.session_context(row) is not None
+                        authority = await self.current_authority(row) if present else None
+                        allowed = authority is not None if present else self.session_context(row) is not None
+                        if allowed and present:
+                            allowed = await self.enforce_audio(row, authority, matches[0])
                     if present and not allowed:
                         await self.moderator.sfu('RemoveParticipant', alias, {'identity': identity})
                         remaining = (await self.moderator.sfu('ListParticipants', alias)).get('participants')

@@ -1,4 +1,5 @@
 import { getMatrixClient } from './matrix';
+import { memberStateEvent } from './member-state';
 import { effectiveRolePermissions, memberRoleRank, nativeMemberPower, parseRolePolicy, resolveRoomCategory, type RolePermission } from './roles';
 
 export const privateThreadType = 'io.tavern.private_thread';
@@ -23,9 +24,9 @@ export function privateThreadsForSource(sourceRoomId: string) {
 function eligible(rooms: any[], user: string) {
   return rooms.every(room => {
     if (content(room, 'm.room.member', user).membership !== 'join') return false;
-    const ban = room.currentState.getStateEvents('io.tavern.tempban', user), timeout = room.currentState.getStateEvents('io.tavern.timeout', user), now = Date.now();
+    const ban = memberStateEvent(room, 'io.tavern.tempban', user), timeout = memberStateEvent(room, 'io.tavern.timeout', user), now = Date.now();
     if (ban) { const value = ban.getContent(); if (value.version !== 1 || !Number.isSafeInteger(value.until) || value.until < 0 || value.until > now) return false; }
-    return !timeout || Number.isSafeInteger(timeout.getContent().until ?? 0) && (timeout.getContent().until ?? 0) <= now;
+    return !timeout || Number.isSafeInteger(timeout.getContent().until) && timeout.getContent().until <= now;
   });
 }
 function sourceContext(sourceRoomId: string, lookup: (id: string) => any, actor: string) {

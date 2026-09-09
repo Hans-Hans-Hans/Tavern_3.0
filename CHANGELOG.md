@@ -2,10 +2,12 @@
 
 ## 0.4.0 — Unreleased
 
-This version is under development on `codex/tavern-completion`; a test checkpoint is available on `V3`. These entries describe implemented changes; acceptance is tracked in [VALIDATION](docs/VALIDATION.md). No 0.4 images or release have been published.
+This version is under development and testing on `V3`. These entries describe implemented changes; acceptance is tracked in [VALIDATION](docs/VALIDATION.md). No 0.4 images or release have been published.
 
 ### Added
 
+- Independent conference server mute/deafen with protected native scope/role authority, durable device reconciliation, member status and explicit pending/rejoin outcomes. The calls profile builds a pinned SFU with audio-kind enforcement and real RTP checks; moderator controls are opt-in.
+- Stable-room-compatible state keys for moderator timeouts, temporary bans and server nicknames, with legacy-state reading, canonical clear precedence and revision-checked migration.
 - Single Compose stack with persistent initialization, account service, and optional calls, integrations, and operations profiles.
 - One-time private administrator setup, verified email, password recovery, email/TOTP MFA, recovery codes, persistent sessions, device revocation, and administrator account controls.
 - Durable account-deactivation tracking, confirmed native cleanup, recovery of interrupted requests, explicit staff completion and immediate session revocation.

@@ -18,7 +18,7 @@ function setup() {
   for (const room of f.client.getRooms()) room.getJoinedMemberCount = () => room.getJoinedMembers().length;
   f.policy.roles[1].mentionable = true; f.policy.roles[1].name = 'Helpers'; f.policy.members[f.member] = ['mod'];
   const roles = loadTs('../lib/roles.ts', { './matrix': { getMatrixClient: () => f.client } });
-  const privateThreads = loadTs('../lib/private-threads.ts', { './matrix': { getMatrixClient: () => f.client }, './roles': roles });
+  const privateThreads = loadTs('../lib/private-threads.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': { getMatrixClient: () => f.client }, './roles': roles });
   const markdown = loadTs('../lib/message-markdown.ts', { 'markdown-it': { default: MarkdownIt }, './role-mention-token': token });
   const helper = loadTs('../lib/role-mentions.ts', { './message-markdown': markdown, './roles': roles, './private-threads': privateThreads, './role-mention-token': token });
   const runtime = new Function('f', 'helper', 'let client=f.client;const accountArtworkOwner=()=>f.ownerGeneration,pendingFiles=f.pendingFiles,notify=()=>{},safeString=value=>typeof value==="string"?value:"",readServerEmoji=()=>[],serverEmojiHtml=()=>null,roomRequired=id=>client.getRoom(id);const {expandRoleMentions,checkRoleMentionSize}=helper;' + compiled + ';return{send,replaceClient(value){client=value}};')(f, helper);

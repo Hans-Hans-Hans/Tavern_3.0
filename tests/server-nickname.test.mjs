@@ -4,7 +4,7 @@ import { loadTs } from './load-ts.mjs';
 let client;
 const matrix = { getMatrixClient: () => client };
 const roles = loadTs('../lib/roles.ts', { './matrix': matrix });
-const nicknames = loadTs('../lib/server-nickname.ts', { './matrix': matrix, './roles': roles });
+const nicknames = loadTs('../lib/server-nickname.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': matrix, './roles': roles });
 const community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './server-nickname': nicknames, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}), './profile-metadata-policy': { visibleProfileMetadata: profile => profile, checkProfileMetadataPublication: async (roomId, profile, client) => ({ client, actor: client.getUserId(), membership: await client.getStateEvent(roomId, 'm.room.member', client.getUserId()), profile }) }, './server-branding': {}, './self-profile': loadTs('../lib/self-profile.ts', { 'matrix-js-sdk/lib/http-api/method': { Method: { Get: 'GET' } } }) });
 const type = nicknames.serverNicknameEvent;
 function fixture() {
@@ -25,7 +25,7 @@ function fixture() {
 test('setting and clearing server nickname preserve the member profile and global identity', async () => {
   const f = fixture(), membership = structuredClone(f.server.find(e => e.type === 'm.room.member' && e.state_key === '@target:test'));
   const saved = await nicknames.saveServerNickname('!server:test', '@target:test', '  Managed nickname  ', null);
-  assert.equal(saved.name, 'Managed nickname'); assert.equal(f.writes[0].type, type); assert.equal(f.writes[0].key, '@target:test'); assert.equal(f.writes[0].content['io.tavern.previous_event'], null);
+  assert.equal(saved.name, 'Managed nickname'); assert.equal(f.writes[0].type, type); assert.equal(f.writes[0].key, '_target:test'); assert.equal(f.writes[0].content['io.tavern.previous_event'], null);
   const profile = community.readMemberProfile('!channel:test', '@target:test', '!server:test'); assert.equal(profile.name, 'Managed nickname'); assert.equal(profile.bio, 'Private profile text'); assert.equal(profile.avatar, 'mxc://media/avatar');
   assert.equal(community.readMemberProfile('!dm:test', '@target:test').name, 'Global chosen name'); assert.equal(nicknames.serverNicknameForRoom('!dm:test', '@target:test', '!server:test'), null);
   await nicknames.saveServerNickname('!server:test', '@target:test', null, saved.eventId);
@@ -36,6 +36,16 @@ test('stale nickname revision rejects save without silently overwriting another 
   const f = fixture(); f.server.push(f.event(type, '@target:test', { version: 1, name: 'Other moderator' }, '@owner:test', '$other'));
   await assert.rejects(nicknames.saveServerNickname('!server:test', '@target:test', 'Preserve my draft', null), /changed elsewhere/); assert.equal(f.writes.length, 0);
   assert.equal((await nicknames.loadServerNickname('!server:test', '@target:test')).eventId, '$other');
+});
+
+test('legacy nickname remains readable until revision-checked canonical removal and never resurfaces afterward', async () => {
+  const f = fixture(); f.server.push(f.event(type, '@target:test', { version: 1, name: 'Legacy nickname' }, '@target:test', '$legacy'));
+  assert.equal(nicknames.readServerNickname('!server:test', '@target:test').name, 'Legacy nickname');
+  const saved = await nicknames.saveServerNickname('!server:test', '@target:test', null, '$legacy');
+  assert.equal(f.writes[0].key, '_target:test'); assert.equal(f.writes[0].content['io.tavern.previous_event'], '$legacy');
+  assert.deepEqual(nicknames.readServerNickname('!server:test', '@target:test'), { name: null, eventId: saved.eventId, actor: '@mod:test' });
+  await assert.rejects(nicknames.saveServerNickname('!server:test', '@target:test', 'Stale legacy draft', '$legacy'), /changed elsewhere/);
+  assert.equal(f.writes.length, 1); assert.equal(f.server.filter(e => e.type === type).length, 2);
 });
 test('fresh native promotion, role revocation and account switch reject before any state write', async () => {
   for (const change of ['power', 'role', 'account']) {

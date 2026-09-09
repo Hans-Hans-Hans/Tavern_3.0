@@ -1,5 +1,5 @@
 # Requires BuildKit with Dockerfile ADD --checksum support (v1.6 or newer).
-# This opt-in prototype is not referenced by Tavern Compose or release workflows.
+# Tavern's optional calls profile builds this pinned SFU and its media tests.
 FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine3.24@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS source
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 WORKDIR /workspace
@@ -37,8 +37,8 @@ RUN test "$TARGETOS" = linux \
 
 # The digest is deliberately fixed. Refresh it through review rather than
 # silently upgrading packages during a supposedly reproducible build.
-FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS prototype
-LABEL org.opencontainers.image.title="Tavern SFU audio-permission prototype" \
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS runtime
+LABEL org.opencontainers.image.title="Tavern SFU with audio permissions" \
       org.opencontainers.image.licenses="Apache-2.0" \
       io.tavern.livekit.revision="3cfbd1242618a61178f7a05b126d6c0c4cac3731" \
       io.tavern.protocol.revision="17c16cf496fd20697ff862daf9768f9830ebe6fd"
@@ -46,4 +46,5 @@ COPY --from=build /out/livekit-server /livekit-server
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=source /licenses/ /usr/share/licenses/tavern-sfu/
 COPY --from=source /build/provenance.json /build/patches.sha256 /build/patched-files.sha256 /usr/share/tavern-sfu/
+USER 10001:10001
 ENTRYPOINT ["/livekit-server"]

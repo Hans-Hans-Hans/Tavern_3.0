@@ -32,6 +32,16 @@ with tempfile.TemporaryDirectory() as directory:
         model = policy_model(app['service'])
         assert model.ELIGIBILITY == 'io.tavern.server.eligibility'
         assert model.SYSTEM_MESSAGES == 'io.tavern.server.system_messages'
+        assert model.AUDIO == 'io.tavern.call.audio'
+        assert not model.AudioModerationPolicy({}, None, model).enabled
+        assert model.audio_state_key('@member:local') == '_member:local'
+        assert model.audio_target('_member:local') == '@member:local'
+        assert model.member_state_key('@member:local') == '_member:local'
+        assert model.member_state_target('_member:local') == '@member:local'
+        assert model.member_state_keys('@member:local') == ('_member:local', '@member:local')
+        assert model.member_state_event({}, 'io.tavern.timeout', '@member:local') is None
+        assert model.audio_flags({}, '@member:local') == {'muted': False, 'deafened': False}
+        assert model.effective_audio((), '@member:local') == {'muted': False, 'deafened': False, 'sources': []}
         assert model.ServerEligibilityPolicy.__module__ != 'server_eligibility'
         assert model.SystemMessagesPolicy.__module__ != 'system_messages'
         assert any(route.resource.canonical == '/api/internal/system-events' for route in app.router.routes())

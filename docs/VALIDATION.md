@@ -4,6 +4,45 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+The combined audio/member-state working tree passed the production build,
+443 JavaScript tests, all 240 browser tests and 634 Python checks (12 platform
+skips). Native member-state migration covers timeout, temporary ban and server
+nickname writers/readers, inherited restrictions, legacy-state precedence and
+revision checks. These are local results before the subsequent legacy SFU file
+permission repair and native-stack execution.
+
+Checkpoint `5e28eba`, workflow
+[34403383712](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34403383712),
+stopped in an idle-warning browser test before the native stack started. Moving
+the pointer toward **Stay in conference** is itself activity and can dismiss the
+warning before the click completes. The test now uses real keyboard activation;
+all five affected idle checks pass. No production idle behavior was changed.
+
+Checkpoint `98518af`, workflow
+[34401460989](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34401460989),
+passed both native history-recovery paths, encrypted system-notice delivery,
+recipient-pin refusal, queue/store restart without duplicate sends, and both
+SDK history exports. It then stopped at a cancellation-count comparison: the
+grouped API omits zero-count statuses, and the test compared against `undefined`.
+Checkpoint `5e28eba` uses a zero baseline. Subsequent native stages await that run.
+
+The separate [SFU Linux workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34401461309)
+passed at `98518af`: pinned Docker source/patch/hash verification, protocol auth,
+eight focused RTC tests, three actual Pion/RTP tests and final binary execution
+as UID10001 with a read-only filesystem, no capabilities and no network. A later
+test-only correction prevents upstream default STUN attempts; all three RTP
+tests passed locally with the explicit loopback configuration. See
+[SFU build provenance](../docker/sfu/README.md).
+
+The audio-control working tree passed the production build and 19 focused browser
+checks covering the real conference panel, scope and permission controls, account
+and call replacement, narrow layout, delayed responses and pending/rejoin status.
+The API/native slice passed 91 focused Python checks, with independent regression
+review of source-permission preservation, unknown descendant inventory and
+authority changes during a request. These sets overlap existing tests and are
+not a new full-suite total. The [calls-enabled native CI harness](CI_CALL_AUDIO.md)
+requires its next actual Docker/Synapse run; external browser media is separate.
+
 Checkpoint `7f27be3`, workflow
 [34399512564](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34399512564),
 again passed both real recovery paths and now saved the mounted system-notice

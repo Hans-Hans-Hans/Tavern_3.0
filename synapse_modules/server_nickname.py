@@ -3,14 +3,25 @@ from collections.abc import Mapping
 import re
 import time
 
+try:
+    from member_state import member_state_target, member_state_revision_matches
+    from channel_policy import timeout_active
+except ImportError:
+    from synapse_modules.member_state import member_state_target, member_state_revision_matches
+    from synapse_modules.channel_policy import timeout_active
+
 NICKNAME = 'io.tavern.server.nickname'
 
 
 def check_nickname(event, state, policies, permissions, rank, native_power):
     if event.type != NICKNAME:
         return True
-    actor, target, value = event.sender, getattr(event, 'state_key', None), event.content
-    if not isinstance(target, str) or len(target) > 255 or not re.fullmatch(r'@[^\s:]+:[^\s]+', target) or target == actor:
+    actor, value = event.sender, event.content
+    try:
+        target = member_state_target(getattr(event, 'state_key', None))
+    except ValueError:
+        return False
+    if target == actor:
         return False
     if not isinstance(value, Mapping) or set(value) != {'version', 'name', 'io.tavern.previous_event'} or type(value.get('version')) is not int or value['version'] != 1:
         return False
@@ -28,8 +39,7 @@ def check_nickname(event, state, policies, permissions, rank, native_power):
         member = state.get(('m.room.member', user))
         if not member or member.content.get('membership') != 'join':
             return False
-    previous = state.get((NICKNAME, target))
-    if value['io.tavern.previous_event'] != (getattr(previous, 'event_id', None) if previous else None):
+    if not member_state_revision_matches(value, state, NICKNAME, target):
         return False
     powers = state.get(('m.room.power_levels', ''))
     power = powers.content if powers else {}
@@ -37,10 +47,7 @@ def check_nickname(event, state, policies, permissions, rank, native_power):
     actor_power, target_power = native_power(state, actor), native_power(state, target)
     if type(threshold) is not int or actor_power is None or target_power is None or actor_power < threshold or actor_power <= target_power:
         return False
-    timeout = state.get(('io.tavern.timeout', actor))
-    if timeout:
-        until = timeout.content.get('until', 0)
-        if type(until) is not int or until > int(time.time() * 1000):
-            return False
+    if timeout_active(state, actor, int(time.time() * 1000)):
+        return False
     policy = policies[0][1]
     return 'manage_nicknames' in permissions(policy, actor) and rank(policy, target) < rank(policy, actor)

@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
-const { projectServerAuditEvent: project, filterServerAudit } = loadTs('../lib/server-audit.ts', { 'matrix-js-sdk': {}, './matrix': {}, './roles': {} });
+const { projectServerAuditEvent: project, filterServerAudit } = loadTs('../lib/server-audit.ts', { './member-state': loadTs('../lib/member-state.ts', {}), 'matrix-js-sdk': {}, './matrix': {}, './roles': {} });
+
+test('moderation audit decodes canonical member keys without changing native membership targets', () => {
+  for (const type of ['io.tavern.timeout', 'io.tavern.tempban', 'io.tavern.server.nickname']) {
+    const value = { ...event(type, {}), state_key: '_member:local' };
+    assert.equal(project(value, '!server:local').target, '@member:local');
+    assert.equal(project({ ...value, state_key: '@member:local' }, '!server:local').target, '@member:local');
+  }
+});
 const event = (type, content, extra = {}) => ({ event_id: '$event', sender: '@mod:local', origin_server_ts: 1700000000000, state_key: '@member:local', type, content, ...extra });
 test('audit differentiates bans, profile changes, redactions and preserves actual actors and targets', () => { const banned = project(event('m.room.member', { membership: 'ban', reason: 'Spam' }), '!room:local'); assert.equal(banned.kind, 'moderation'); assert.equal(banned.actor, '@mod:local'); assert.equal(banned.target, '@member:local'); assert.equal(banned.detail, 'Spam'); assert.equal(project(event('m.room.member', { membership: 'join' }, { unsigned: { prev_content: { membership: 'join' } } }), '!room:local').action, 'Updated member profile'); assert.equal(project(event('m.room.redaction', { redacts: '$target', reason: 'Removed duplicate' }), '!room:local').target, '$target'); assert.equal(project(event('m.room.encrypted', { ciphertext: 'secret' }), '!room:local'), null); });
 test('audit never reconstructs redacted detail or invents role changes without previous state', () => { const raw = event('io.tavern.roles', { roles: [{ id: 'a', name: 'Admin' }], members: {} }); assert.equal(project(raw, '!server:local').detail, '1 roles; 0 explicit member assignments'); assert.match(project({ ...raw, unsigned: { prev_content: { roles: [] } } }, '!server:local').detail, /Added: Admin/); const redacted = project({ ...raw, unsigned: { redacted_because: {} } }, '!server:local'); assert.equal(redacted.action, 'Redacted audit event'); assert.equal(redacted.detail.includes('Admin'), false); });

@@ -1,4 +1,5 @@
 import { getMatrixClient } from './matrix';
+import { memberStateEvent, memberStateKey } from './member-state';
 import { effectiveRolePermissions, memberRoleRank, nativeMemberPower, parseRolePolicy, rolesEvent } from './roles';
 
 export const serverNicknameEvent = 'io.tavern.server.nickname';
@@ -10,7 +11,7 @@ function nickname(event: any): ServerNickname {
   return { name: value.version === 1 && validName(value.name) ? value.name : null, eventId: event?.getId() || null, actor: event?.getSender() || null };
 }
 export function readServerNickname(serverId: string, userId: string): ServerNickname {
-  return nickname(getMatrixClient()?.getRoom(serverId)?.currentState.getStateEvents(serverNicknameEvent, userId));
+  return nickname(memberStateEvent(getMatrixClient()?.getRoom(serverId), serverNicknameEvent, userId));
 }
 export function serverNicknameForRoom(roomId: string, userId: string, serverId?: string): string | null {
   const client = getMatrixClient(), room = client?.getRoom(roomId), scope = serverId || (room?.isSpaceRoom?.() ? roomId : ''), server = scope ? client?.getRoom(scope) : null;
@@ -27,9 +28,9 @@ function permitted(room: any, actor: string, target: string): boolean {
   if ([actor, target].some(user => content(room, 'm.room.member', user).membership !== 'join')) return false;
   const powers = content(room, 'm.room.power_levels'), minimum = powers.events?.[serverNicknameEvent] ?? powers.state_default ?? 50;
   if (!Number.isSafeInteger(minimum) || nativeMemberPower(room, actor) < minimum || nativeMemberPower(room, actor) <= nativeMemberPower(room, target)) return false;
-  const ban = room.currentState.getStateEvents('io.tavern.tempban', actor), timeout = room.currentState.getStateEvents('io.tavern.timeout', actor), now = Date.now();
+  const ban = memberStateEvent(room, 'io.tavern.tempban', actor), timeout = memberStateEvent(room, 'io.tavern.timeout', actor), now = Date.now();
   if (ban) { const value = ban.getContent(); if (value.version !== 1 || !Number.isSafeInteger(value.until) || value.until < 0 || value.until > now) return false; }
-  if (timeout) { const until = timeout.getContent().until ?? 0; if (!Number.isSafeInteger(until) || until > now) return false; }
+  if (timeout) { const until = timeout.getContent().until; if (!Number.isSafeInteger(until) || until > now) return false; }
   return effectiveRolePermissions(policy, actor).has('manage_nicknames') && memberRoleRank(policy, target) < memberRoleRank(policy, actor);
 }
 export function canManageServerNickname(serverId: string, userId: string): boolean {
@@ -49,7 +50,7 @@ async function checkedNickname(serverId: string, userId: string) {
   }
   const fresh = { currentState: { getStateEvents: (type: string, key = '') => state.get(type + '\0' + key) } };
   if (client !== getMatrixClient() || client.getUserId() !== actor || !canManageServerNickname(serverId, userId) || !permitted(fresh, actor, userId)) throw new Error('Your account, membership, or authority changed. Reopen this member’s nickname settings.');
-  const event = fresh.currentState.getStateEvents(serverNicknameEvent, userId);
+  const event = memberStateEvent(fresh, serverNicknameEvent, userId);
   if (event && (typeof event.getId() !== 'string' || !event.getId())) throw new Error('The current nickname revision is unavailable. Reload and retry.');
   return { client, actor, current: nickname(event) };
 }
@@ -60,7 +61,7 @@ export async function saveServerNickname(serverId: string, userId: string, name:
   const { client, actor, current } = await checkedNickname(serverId, userId);
   if (current.eventId !== previousEventId) throw new Error('This nickname changed elsewhere. Your draft is preserved. Reload the current nickname before saving.');
   try {
-    const result = await client.sendStateEvent(serverId, serverNicknameEvent as any, { version: 1, name: next, 'io.tavern.previous_event': current.eventId }, userId);
+    const result = await client.sendStateEvent(serverId, serverNicknameEvent as any, { version: 1, name: next, 'io.tavern.previous_event': current.eventId }, memberStateKey(userId));
     return { name: next, eventId: result.event_id, actor };
   } catch (error) {
     if ((error as any).errcode === 'M_FORBIDDEN') throw new Error('The server rejected this change. Permissions, membership, or the nickname may have changed. Your draft is preserved; reload before retrying.');

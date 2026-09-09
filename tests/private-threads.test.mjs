@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 import { privateFixture } from './fixtures/private-thread.mjs';
 
-function setup() { const f = privateFixture(); let client = f.client; const matrix = { getMatrixClient: () => client }; const roles = loadTs('../lib/roles.ts', { './matrix': matrix }); return { ...f, api: loadTs('../lib/private-threads.ts', { './matrix': matrix, './roles': roles }), switchClient: value => { client = value; }, fixture: f }; }
+function setup() { const f = privateFixture(); let client = f.client; const matrix = { getMatrixClient: () => client }; const roles = loadTs('../lib/roles.ts', { './matrix': matrix }); return { ...f, api: loadTs('../lib/private-threads.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': matrix, './roles': roles }), switchClient: value => { client = value; }, fixture: f }; }
 
 test('private creation keeps immutable source only in private room and never copies or indexes source content', async () => {
   const f = setup(); assert.equal(f.api.canCreatePrivateThread(f.sourceId), true);

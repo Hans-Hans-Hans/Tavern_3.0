@@ -59,6 +59,7 @@ class ProvisionTests(unittest.TestCase):
             self.assertEqual(self.config()['registration_shared_secret'], identity)
             self.assertEqual((self.root / 'synapse/tavern-privacy.key').read_bytes(), key)
             self.assertTrue((self.root / 'synapse/tavern_modules/server_system_messages.py').is_file())
+            self.assertTrue((self.root / 'synapse/tavern_modules/call_audio_policy.py').is_file())
 
     def test_existing_database_without_identity_is_rejected(self):
         (self.root / 'postgres').mkdir()
@@ -66,6 +67,27 @@ class ProvisionTests(unittest.TestCase):
         with self.assertRaisesRegex(provision.ConfigurationError, 'PostgreSQL data exists'):
             self.run_init()
         self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
+
+    def test_audio_moderation_requires_calls_and_updates_native_flag_without_rotating_keys(self):
+        with self.assertRaisesRegex(provision.ConfigurationError, 'requires CALLS_ENABLED'):
+            self.run_init(SFU_AUDIO_MODERATION_ENABLED='true')
+        self.assertFalse((self.root / 'synapse/homeserver.yaml').exists())
+        self.run_init()
+        def policy():
+            return next(item['config'] for item in self.config()['modules'] if item['module'] == 'tavern_policy.TavernPolicy')
+        self.assertIs(policy()['audio_moderation_enabled'], False)
+        identity = self.config()['registration_shared_secret']
+        key = (self.root / 'synapse/tavern-privacy.key').read_bytes()
+        for enabled in (True, True, False):
+            self.run_init(CALLS_ENABLED='true', COMPOSE_PROFILES='calls', TURN_DOMAIN='turn.example.test',
+                          PUBLIC_IP='8.8.8.8', SFU_AUDIO_MODERATION_ENABLED=str(enabled).lower())
+            self.assertIs(policy()['audio_moderation_enabled'], enabled)
+            self.assertEqual(self.config()['registration_shared_secret'], identity)
+            self.assertEqual((self.root / 'synapse/tavern-privacy.key').read_bytes(), key)
+        before = (self.root / 'synapse/homeserver.yaml').read_bytes()
+        with self.assertRaises(provision.ConfigurationError):
+            self.run_init(SFU_AUDIO_MODERATION_ENABLED='yes')
+        self.assertEqual((self.root / 'synapse/homeserver.yaml').read_bytes(), before)
 
     def test_invalid_input_does_not_create_config(self):
         for changes in ({'TAVERN_DOMAIN': 'https://chat.example.test'}, {'TAVERN_DOMAIN': 'bad;host'},

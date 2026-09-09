@@ -1,9 +1,14 @@
-# Pinned SFU audio-permission prototype build
+# Pinned SFU with audio permissions
 
-This directory contains a reviewed, opt-in build recipe and source patches.
-Tavern Compose and release workflows continue to use stock LiveKit. These assets
-do not implement Matrix moderation state or user controls, and no image or
-release has been published.
+This directory contains the build recipe and source patches used by Tavern's
+optional `calls` Compose profile. The image defaults to `tavern-sfu-audio:0.4.0`;
+Git-backed Compose builds the matching `docker/sfu` directory from V3. Image-only
+managers must build it first. No release image has been published. The release
+workflow includes this image after verification.
+
+Enable moderator controls separately with `SFU_AUDIO_MODERATION_ENABLED=true`.
+See [server mute and deafen](../../docs/SFU_AUDIO_MODERATION.md) for native Matrix
+authority, gateway reconciliation, setup and enforcement limits.
 
 ## Pins and local artifacts
 
@@ -12,7 +17,7 @@ release has been published.
 - Go: `1.26.6`; `CGO_ENABLED=0`; `GOTOOLCHAIN=local`
 - protoc: GitHub protobuf `v35.1` (generated header `v7.35.1`)
 - protoc-gen-go: `v1.36.12`
-- Container builder pinned in the recipe, not executed locally:
+- Container builder pinned in the recipe and executed in Linux CI:
   `golang:1.26.6-alpine3.24@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df`
 
 `protocol-audio.patch` and `livekit-audio.patch` are reviewable patches against
@@ -82,8 +87,8 @@ Already constructed migrated/simulcast tracks pass the same final check.
 
 This checks transport metadata without decoding E2EE content. It cannot classify
 semantic content intentionally encoded into video/data, nor claim to inspect
-encrypted audio payloads. Future Tavern server mute can use a video-only source
-allowlist only with these SFU checks present.
+encrypted audio payloads. Tavern server mute uses a video-only source allowlist
+only with these SFU checks present.
 
 ## Reproduce and validate
 
@@ -93,12 +98,12 @@ From the Tavern repository root, with BuildKit supporting Dockerfile v1.6:
 docker buildx build --platform linux/amd64 --target verified \
   --progress plain docker/sfu
 docker buildx build --platform linux/amd64 --load \
-  -t tavern-sfu-audio:prototype --progress plain docker/sfu
+  -t tavern-sfu-audio:0.4.0 --progress plain docker/sfu
 ```
 
 The final image depends on the verified stage, so it cannot bypass the focused
-protocol, SFU and real loopback traffic tests. These commands only build a local
-prototype; they do not start it or change the deployment. The narrowly scoped
+protocol, SFU and real loopback traffic tests. These commands build a local
+image; they do not start it or change the deployment. The narrowly scoped
 build context excludes the application and secrets. BuildKit checks both remote
 archive SHA-256 values before extraction; the build checks patch and final
 source hashes and uses the pinned Go module manifests with `-mod=readonly`.
@@ -111,11 +116,15 @@ and validates every hunk before writing files. Its tests include malformed
 counts, traversal, partial-write prevention and a Linux symlink regression.
 The final source checksums independently verify the resulting patch output.
 
-The Docker recipe has not run in this Windows workspace because Docker is not
-available. Its equivalent source patches, native Windows tests and full Linux
-cross-build were checked locally. The pinned runtime base intentionally does not
-run `apk upgrade`; refresh its digest through review before a deployment release.
-Only Linux amd64 was cross-built locally; arm64 acceptance remains pending.
+The Docker recipe passed Linux amd64 CI, including source checks, protocol auth,
+eight focused RTC tests, three real RTP tests, and the final binary's `--version`
+under UID10001, a read-only filesystem, no capabilities and no network. See
+[the successful run](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34401461309).
+The subsequent test-only loopback configuration correction passed all three RTP
+tests locally; CI for that correction is recorded separately. Docker is not
+available in the Windows workspace. The pinned runtime base does not run
+`apk upgrade`; digest upgrades require source review and these checks again.
+Arm64 and multi-node migration acceptance remain pending.
 
 
 Use the exact Go/protoc tools, not upstream mage's generator bootstrap. After
@@ -151,6 +160,8 @@ Observed on Windows with Go 1.26.6:
   Independent review reran all three successfully in 17.330 seconds.
   The final capability endpoint addition reran all three in 17.337 seconds,
   including actual GET/body/header, POST rejection and wrong-path checks.
+  The explicit loopback-address fix reran all three in 17.286 seconds; verbose
+  output contains no STUN/server-reflexive attempts.
   Actual Pion Opus/VP8 clients, native authenticated RoomService JSON RPC and
   received RTP byte counters prove audio stops while video continues; explicit
   resubscription, new audio, omitted updates and refreshed-token reconnect stay
@@ -167,25 +178,29 @@ Observed on Windows with Go 1.26.6:
   (`baseline-version-test.log`). It was not changed or weakened.
 
 The three network tests bind server HTTP and media to loopback only, on port17980
-and UDP17982. Test clients use loopback ICE and no STUN. They use generated
+and UDP17982. Test clients use loopback ICE and no STUN. The server fixture
+clears the inherited `NodeIPAutoGenerated` flag when setting its explicit
+loopback address; otherwise upstream adds public STUN defaults even with an
+empty `STUNServers` list. They use generated
 in-memory server/room state and test credentials, with no Redis, Docker, real
 Matrix accounts or production configuration. They stop clients and the server
 on completion. Do not run the upstream multi-node suite here: its helper calls
 Redis FLUSHALL and is outside this isolated test scope.
 
-## Remaining before product integration
+## Integration and maintenance scope
 
-This does not implement durable Matrix moderation state, moderator hierarchy,
-cross-room inheritance, gateway projection, stale initial-JWT rejection,
-multi-node migration acceptance, browser controls or deployment/publishing.
-The existing Tavern gateway must validate the extension in freshly signed and
-refreshed grants and reconcile all authoritative device mappings. A reconnect
-using an old unrestricted initial token still needs that external admission
-authority; the tested SFU refresh preserves the restriction it actually knows.
-Actual Linux/container execution, deployment image publication/provenance, a
-complete binary dependency license/SBOM review and maintenance ownership also
-remain before replacing stock LiveKit. The current production
-documentation correctly continues to call server mute/deafen unimplemented.
+The native policy, account API and browser controls are maintained in Tavern;
+this patch supplies the media enforcement they depend on. Tavern's gateway
+validates current restrictions on admission and signaling reconnect, including
+old initial tokens, and reconciles durable device mappings. The SFU alone only
+knows the restrictions supplied by its trusted issuer and room-admin service.
+
+This is a maintained source fork: an upstream LiveKit or protocol upgrade must
+refresh pins, patches, generated schema, source hashes and capability/grant
+interoperability together, and rerun protocol/RTC/RTP and Tavern integration
+checks. Do not replace it with stock LiveKit while relying on audio restrictions.
+Multi-node migration, ARM64, external TURN/device acceptance, image publication
+and a release dependency SBOM/license inventory remain separate acceptance work.
 
 ## Primary source and license provenance
 
@@ -201,6 +216,6 @@ Both upstream projects use Apache-2.0. Original licenses and notices are copied
 verbatim into `licenses/`, including the existing SFU ion-sfu/MIT attribution.
 The patches retain original copyright headers and mark Tavern modifications;
 new Tavern test/helper files carry Apache-2.0 SPDX identifiers. `NOTICE` describes
-the changes, and the prototype image includes these notices plus the build
+the changes, and the image includes these notices plus the build
 manifest and source checksums. Other Go dependencies retain their upstream module
 versions/checksums; this is not a claim that a release SBOM has been completed.

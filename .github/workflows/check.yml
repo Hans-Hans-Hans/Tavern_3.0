@@ -99,7 +99,14 @@ jobs:
           TAVERN_API_IMAGE: tavern-api:check
           TAVERN_INIT_IMAGE: tavern-init:check
           TAVERN_DATA_DIR: ''
-          COMPOSE_PROFILES: operations
+          COMPOSE_PROFILES: operations,calls
+          CALLS_ENABLED: 'true'
+          SFU_AUDIO_MODERATION_ENABLED: 'true'
+          TURN_DOMAIN: turn.example.test
+          # Validation seed only. ci-call-config.py preserves the generated
+          # config and selects a separate loopback/no-STUN SFU configuration.
+          PUBLIC_IP: '1.1.1.1'
+          LIVEKIT_IMAGE: tavern-sfu-audio:check
           OPERATIONS_ENABLED: 'true'
           TAVERN_OPERATIONS_IMAGE: tavern-operations:check
           COMPOSE_FILE: compose.yaml:scripts/ci-live-compose.yaml
@@ -114,11 +121,12 @@ jobs:
           # Exercise the policy loader with the API's real UID and Synapse group.
           # The root test process creates only disposable /tmp fixtures; its
           # reader child drops to 10001:10001 with supplementary group 991.
-          docker run --rm --user 0:0 --network none --read-only --tmpfs /tmp:size=64m,mode=1777 --entrypoint python -v "$PWD:/workspace:ro" -w /workspace tavern-api:check -B -m unittest tests.test_policy_permissions
+          docker run --rm --user 0:0 --network none --read-only --tmpfs /tmp:size=64m,mode=1777 --entrypoint python -v "$PWD:/workspace:ro" -w /workspace tavern-api:check -B -m unittest tests.test_policy_permissions tests.test_call_config_permissions
           curl --fail --retry 10 --retry-all-errors --retry-delay 1 --connect-timeout 3 --max-time 5 http://127.0.0.1:18085/health
           curl --fail http://127.0.0.1:18081/health
           curl --fail http://127.0.0.1:18081/api/system/version
           curl --fail http://127.0.0.1:18081/_matrix/client/versions
+          docker compose -p tavern-ci exec -T tavern-api python -c 'import json,urllib.request; value=json.load(urllib.request.urlopen("http://livekit:7880/tavern/sfu/audio-permissions", timeout=5)); assert type(value.get("version")) is int and value=={"version":1}'
           docker compose -p tavern-ci exec -T -e TAVERN_CI_SMOKE=true operations python /app/smoke.py
           curl --fail --retry 10 --retry-all-errors --retry-delay 1 --connect-timeout 3 --max-time 5 http://127.0.0.1:18081/api/auth/config
           # The rollback proof owns a separate project. Collect both results so
@@ -146,4 +154,10 @@ jobs:
           NPM_PROXY_NETWORK: tavern_ci_proxy
           COMPOSE_FILE: compose.yaml:scripts/ci-live-compose.yaml
           TAVERN_CI_TLS: /tmp/tavern-ci-tls
+          TAVERN_CI_SMOKE: 'true'
+          COMPOSE_PROFILES: operations,calls
+          CALLS_ENABLED: 'true'
+          SFU_AUDIO_MODERATION_ENABLED: 'true'
+          TURN_DOMAIN: turn.example.test
+          PUBLIC_IP: '1.1.1.1'
         run: docker compose -p tavern-ci logs --tail=100

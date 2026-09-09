@@ -27,16 +27,19 @@ class RtcAuthorityTests(unittest.IsolatedAsyncioTestCase):
         self.parent_state = {('m.room.member', self.user): event({'membership': 'join'})}
         self.layout = {'version': 1, 'categories': [], 'channels': []}
         self.eligibility = AsyncMock()
+        self.service = SimpleNamespace(matrix=AsyncMock(return_value={'name': self.user, 'deactivated': False, 'is_guest': False, 'locked': False, 'suspended': False}),
+                                       service_token=AsyncMock(return_value='native-service'),
+                                       store=SimpleNamespace(account=lambda user: {}), deactivations=SimpleNamespace(unavailable=lambda user: False))
 
     async def check(self):
         policy = model.ResolvedPolicy(self.policy, self.layout)
         authority = RoomAuthority(self.room, self.user, self.current, [(self.parent, policy, self.parent_state)], model)
-        with patch('api.rtc_authority.room_authority', AsyncMock(return_value=authority)), patch('api.rtc_authority.require_room_eligibility', self.eligibility):
-            return await call_authority(None, {'user_id': self.user}, self.room)
+        with patch('api.rtc_authority.room_authority', AsyncMock(return_value=authority)), patch('api.rtc_authority.require_room_eligibility', self.eligibility), patch('api.call_audio.state', AsyncMock(side_effect=lambda *_: self.current)):
+            return await call_authority(self.service, {'user_id': self.user}, self.room)
 
     async def test_native_and_custom_permission_both_allow_member(self):
         self.assertEqual((await self.check()).actor, self.user)
-        self.eligibility.assert_awaited_once_with(None, {'user_id': self.user}, self.room, self.current)
+        self.eligibility.assert_awaited_once_with(self.service, {'user_id': self.user}, self.room, self.current)
 
     async def test_server_eligibility_is_an_additional_required_admission_check(self):
         self.eligibility.side_effect = APIError(403, 'Verify your email address.', 'SERVER_ELIGIBILITY_REQUIRED')

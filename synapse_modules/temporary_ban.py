@@ -4,22 +4,24 @@ The state deadline uses server time on every event, so expiry does not require
 retaining a moderator token or a scheduled privileged unban operation.
 """
 from collections.abc import Mapping
-import re
 import time
 
 try:
     from channel_policy import value, native_power
+    from member_state import member_state_event, member_state_target, member_state_revision_matches
 except ImportError:
     from synapse_modules.channel_policy import value, native_power
+    from synapse_modules.member_state import member_state_event, member_state_target, member_state_revision_matches
 
 TEMPBAN = 'io.tavern.tempban'
 MAX_DURATION_MS = 28 * 86400000
 
 
 def active(state, user, now):
-    if (TEMPBAN, user) not in state:
+    event = member_state_event(state, TEMPBAN, user)
+    if not event:
         return False
-    restriction = value(state, TEMPBAN, user)
+    restriction = event.content
     until = restriction.get('until')
     # Corrupted or redacted existing restriction state cannot silently lift it.
     return restriction.get('version') != 1 or type(until) is not int or until < 0 or until > now
@@ -49,21 +51,23 @@ class TemporaryBanPolicy:
             if any(active(current, key, now) for current in states):
                 return False
         if kind == TEMPBAN:
-            if not isinstance(key, str) or not re.fullmatch(r'@[^\s/\\?#]{1,254}:[^\s/\\?#]{1,254}', key) or key == actor or not isinstance(event.content, Mapping):
+            try:
+                target = member_state_target(key)
+            except ValueError:
+                return False
+            if target == actor or not isinstance(event.content, Mapping):
                 return False
             until, reason = event.content.get('until'), event.content.get('reason', '')
             if event.content.get('version') != 1 or type(until) is not int or not (until == 0 or now < until <= now + MAX_DURATION_MS) or not isinstance(reason, str) or len(reason) > 500:
                 return False
-            if 'io.tavern.previous_event' in event.content:
-                current = state.get((TEMPBAN, key))
-                if event.content['io.tavern.previous_event'] != (current.event_id if current else None):
-                    return False
+            if not member_state_revision_matches(event.content, state, TEMPBAN, target):
+                return False
             powers = value(state, 'm.room.power_levels')
             threshold = max(powers.get('ban', 50), powers.get('events', {}).get(TEMPBAN, powers.get('state_default', 50)))
-            if native_power(state, actor) < threshold or native_power(state, actor) <= native_power(state, key):
+            if native_power(state, actor) < threshold or native_power(state, actor) <= native_power(state, target):
                 return False
             for _, policy, parent in policies:
-                if value(parent, 'm.room.member', actor).get('membership') != 'join' or 'ban' not in self.permissions(policy, actor, event.room_id) or self.rank(policy, key) >= self.rank(policy, actor):
+                if value(parent, 'm.room.member', actor).get('membership') != 'join' or 'ban' not in self.permissions(policy, actor, event.room_id) or self.rank(policy, target) >= self.rank(policy, actor):
                     return False
         if kind == 'm.room.redaction':
             target = getattr(event, 'redacts', None) or event.content.get('redacts')
