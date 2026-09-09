@@ -155,12 +155,30 @@ def main():
             assert request(path, headers=headers)[0] == 404
         for version in ('v3', 'r0', 'unstable', 'api/v1'):
             assert request('/_matrix/client/' + version + '/pushers/set', 'POST', headers, '{}')[0] == 403
+        # Synapse 1.160 also registers the legacy media/v1 upload alias. Test
+        # actual Nginx URI normalization, not a Python approximation of it.
+        media_paths = (
+            '/_matrix/media/v1/upload', '/_matrix/media/r0/upload', '/_matrix/media/v3/upload',
+            '/_matrix/media/v1/create', '/_matrix/client/v1/media/create', '/_matrix/client/v3/media/upload',
+            '/_matrix/media/v1/upload/chat.example.test/chosen-id',
+            '/_matrix/media/%76%31/upload', '/_matrix/%6dedia/v1/%75pload',
+            '/_matrix/media/v1%2fupload', '/_matrix//media/v1/upload',
+            '/_matrix/media/v3/../v1/upload', '/_matrix/media/v1/%2e/upload',
+            '/_matrix/media/v1/upload?filename=quota-fixture.bin',
+        )
+        for path in media_paths:
+            for method in ('POST', 'PUT'):
+                assert request(path, method, {**headers, 'Authorization': 'Bearer fixture'}, 'opaque-bytes')[0] == 403, 'Native media aliases must not bypass upload quotas: ' + path
         for path in ('/api/internal/system-events', '/api/internal/system-deliveries/authorize', '/api/internal/server-eligibility'):
             for method in ('GET', 'POST'):
                 assert request(path, method, headers)[0] == 404, 'Internal callbacks must not be publicly routed.'
         counts = json.loads(request('/api/__fixture/counters')[1])
         assert counts == {'sfu': 6, 'raw': 0}, 'Denied and unknown requests must never reach private raw services.'
-        print('PASS: built Nginx enforces call admission for HTTP/WebSocket paths, routes auth and push requests explicitly, strips cookies from SFU/push traffic, and blocks alternate native pusher and raw service paths.')
+        # Existing authenticated native media reads must still reach Synapse;
+        # the isolated upstream uses 418 to identify deliberate forwarding.
+        assert request('/_matrix/media/v3/download/chat.example.test/known-id', headers={'Authorization': 'Bearer fixture'})[0] == 418
+        assert json.loads(request('/api/__fixture/counters')[1]) == {'sfu': 6, 'raw': 1}
+        print('PASS: built Nginx enforces call admission for HTTP/WebSocket paths, routes auth and push requests explicitly, strips cookies from SFU/push traffic, blocks native upload/pusher aliases and raw service paths, and preserves media reads.')
     finally:
         for container in reversed(containers):
             container.reload()

@@ -115,7 +115,7 @@ server {
         proxy_pass $matrix_upstream$request_uri;
     }
     location /_matrix/client/ { proxy_pass $matrix_upstream$request_uri; }
-    location ~ "^/_matrix/(?:media/(?:r0|v3)|client/[^/]+/media)/(?:upload|create)(?:/|$)" {
+    location ~ "^/_matrix/(?:media/(?:r0|v1|v3)|client/[^/]+/media)/(?:upload|create)(?:/|$)" {
         if ($managed_auth = true) { return 403; }
         proxy_pass $matrix_upstream$request_uri;
     }
