@@ -1,0 +1,18 @@
+# Used only by ci-rollback.py on a disposable GitHub Actions Docker daemon.
+services:
+  tavern-web:
+    ports: !reset []
+    restart: "no"
+    healthcheck:
+      interval: 1s
+  tavern-api:
+    restart: "no"
+    healthcheck:
+      interval: 1s
+      start_period: 5s
+networks:
+  proxy:
+    name: tavern_ci_rollback_proxy
+    internal: true
+  egress:
+    internal: true

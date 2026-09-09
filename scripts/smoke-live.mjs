@@ -24,14 +24,14 @@ async function page() {
   value.on('response', response => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.request().method() + ' ' + new URL(response.url()).pathname); });
   pages.push(value); return value;
 }
-async function api(page, path, body, matrix = false) {
-  return page.evaluate(async ({ path, body, matrix }) => {
+async function api(page, path, body, matrix = false, binary = false) {
+  return page.evaluate(async ({ path, body, matrix, binary }) => {
     const session = await (await fetch('/api/auth/session', { cache: 'no-store' })).json();
     const headers = { 'Content-Type': 'application/json', 'X-Tavern-Device': session.deviceId };
     if (matrix) headers.Authorization = 'Bearer cookie-session:' + session.deviceId;
     const response = await fetch((matrix ? '/api/matrix' : '') + path, { method: body === undefined ? 'GET' : 'POST', headers, cache: 'no-store', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, data: await response.json() };
-  }, { path, body, matrix });
+    return { status: response.status, data: binary ? Array.from(new Uint8Array(await response.arrayBuffer())) : await response.json() };
+  }, { path, body, matrix, binary });
 }
 async function ready(page) {
   // The first-run dialog aria-hides the page behind it, so use its visual shell
@@ -162,9 +162,15 @@ try {
   const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files (up to 10 MB each)', exact: true }).click()]);
   const upload = await responseDuring(alice, response => response.request().method() === 'POST' && /\/_matrix\/(media|client)\/.*\/upload(?:\?|$)/.test(response.url()), () => chooser.setFiles({ name: fileName, mimeType: 'application/octet-stream', buffer: fileBytes }));
   assert.equal(upload.status(), 200);
-  const wireBytes = upload.request().postDataBuffer();
-  assert.ok(wireBytes?.length, 'The browser must upload encrypted file bytes.');
-  assert.notDeepEqual(wireBytes, fileBytes); assert.ok(!wireBytes.includes(Buffer.from('Tavern private file proof ')));
+  // Chromium does not expose every Blob upload through postDataBuffer(). Read
+  // the actual stored media bytes through the authenticated Matrix endpoint.
+  const media = new URL((await upload.json()).content_uri);
+  assert.equal(media.protocol, 'mxc:');
+  const storedMedia = await api(alice, '/_matrix/client/v1/media/download/' + encodeURIComponent(media.host) + '/' + encodeURIComponent(media.pathname.slice(1)), undefined, true, true);
+  assert.equal(storedMedia.status, 200);
+  const storedBytes = Buffer.from(storedMedia.data);
+  assert.ok(storedBytes.length, 'Synapse must store encrypted file bytes.');
+  assert.notDeepEqual(storedBytes, fileBytes); assert.ok(!storedBytes.includes(Buffer.from('Tavern private file proof ')));
   await expect(alice.locator('.pending-files')).toContainText(fileName);
   const encryptedFile = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click());
   await encryptedEvent(alice, roomId, encryptedFile, fileName);
@@ -176,7 +182,7 @@ try {
   assert.ok(stream, 'The receiving user must be able to download the decrypted file.');
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   assert.deepEqual(Buffer.concat(chunks), fileBytes);
-  console.log('PASS: the uploaded file is ciphertext in transit and decrypts byte-for-byte for the receiving user.');
+  console.log('PASS: Synapse stores the uploaded file as ciphertext and it decrypts byte-for-byte for the receiving user.');
 } catch (error) {
   console.error('Live browser errors:', errors);
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));
