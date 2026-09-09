@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 import tempfile
@@ -70,7 +71,15 @@ class InvitationModuleTests(unittest.IsolatedAsyncioTestCase):
         async def account(user, kind): return self.privacy if kind == POLICY else self.ignored
         async def rooms(user): return self.rooms.get(user, [])
         async def state(room, event_filter=None): return self.state.get(room, {})
-        self.api = SimpleNamespace(is_mine=lambda user: user.endswith(':test'), account_data_manager=SimpleNamespace(get_global=account), _store=SimpleNamespace(get_rooms_for_user=rooms), get_room_state=state, http_client=SimpleNamespace(get_json=AsyncMock(return_value={'allowed': True})))
+        self.api = SimpleNamespace(is_mine=lambda user: user.endswith(':test'), account_data_manager=SimpleNamespace(get_global=account), _store=SimpleNamespace(get_rooms_for_user=rooms), get_room_state=state, http_client=SimpleNamespace(reactor=object(), get_json=AsyncMock(return_value={'allowed': True})))
+        class FakeDeferred:
+            """Exercise cancellation in portable tests; runtime uses Twisted."""
+            def __init__(inner, awaitable): inner.awaitable = awaitable
+            def addTimeout(inner, seconds, reactor):
+                self.assertIs(reactor, self.api.http_client.reactor)
+                return asyncio.wait_for(inner.awaitable, seconds)
+        native_timer = patch.dict('sys.modules', {'twisted.internet.defer': SimpleNamespace(ensureDeferred=FakeDeferred)})
+        native_timer.start(); self.addCleanup(native_timer.stop)
         self.policy = InvitationPolicy({'privacy_api_url': 'http://api:8090', 'privacy_key_file': str(path)}, self.api)
         self.event = SimpleNamespace(type='m.room.member', sender='@bob:test', state_key='@alice:test', content={'membership': 'invite'})
 

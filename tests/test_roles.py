@@ -1,8 +1,10 @@
+import asyncio
 import copy
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('tavern_policy', Path(__file__).resolve().parents[1] / 'synapse_modules/tavern_policy.py')
 policy_module = importlib.util.module_from_spec(spec)
@@ -112,7 +114,15 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         async def room_state(room, event_filter=None): return self.server
         async def lookup(target, allow_none=False): return self.room[('m.space.parent', '!server:local')] if target == '$parent' else event('m.room.message', sender='@member:local')
         async def account_data(user, kind): return {}
-        api = SimpleNamespace(register_third_party_rules_callbacks=lambda **kwargs: None, get_room_state=room_state, _store=SimpleNamespace(get_event=lookup), is_mine=lambda user: True, account_data_manager=SimpleNamespace(get_global=account_data))
+        api = SimpleNamespace(register_third_party_rules_callbacks=lambda **kwargs: None, get_room_state=room_state, _store=SimpleNamespace(get_event=lookup), is_mine=lambda user: True, account_data_manager=SimpleNamespace(get_global=account_data), http_client=SimpleNamespace(reactor=object()))
+        class FakeDeferred:
+            """Run actual native checks with the portable cancellation deadline."""
+            def __init__(inner, awaitable): inner.awaitable = awaitable
+            def addTimeout(inner, seconds, reactor):
+                self.assertIs(reactor, api.http_client.reactor)
+                return asyncio.wait_for(inner.awaitable, seconds)
+        native_timer = patch.dict('sys.modules', {'twisted.internet.defer': SimpleNamespace(ensureDeferred=FakeDeferred)})
+        native_timer.start(); self.addCleanup(native_timer.stop)
         self.module = policy_module.TavernPolicy({}, api)
 
     async def test_existing_unmanaged_rooms_unchanged(self):

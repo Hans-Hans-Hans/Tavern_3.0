@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import sqlite3
 import unittest
@@ -51,7 +52,15 @@ class PrivateDiscussionTests(unittest.IsolatedAsyncioTestCase):
         async def lookup(identity, allow_none=False): return self.events.get(identity)
         async def privacy(user, kind): return self.accounts.get((user, kind), {})
         self.accounts, self.callbacks = {}, {}
-        self.api = SimpleNamespace(get_room_state=state, register_third_party_rules_callbacks=lambda **callbacks: self.callbacks.update(callbacks), is_mine=lambda user: user.endswith(':test'), _store=SimpleNamespace(get_event=lookup, db_pool=SimpleNamespace(runInteraction=interaction)), account_data_manager=SimpleNamespace(get_global=privacy))
+        self.api = SimpleNamespace(get_room_state=state, register_third_party_rules_callbacks=lambda **callbacks: self.callbacks.update(callbacks), is_mine=lambda user: user.endswith(':test'), _store=SimpleNamespace(get_event=lookup, db_pool=SimpleNamespace(runInteraction=interaction)), account_data_manager=SimpleNamespace(get_global=privacy), http_client=SimpleNamespace(reactor=object()))
+        class FakeDeferred:
+            """Run actual native checks with the portable cancellation deadline."""
+            def __init__(inner, awaitable): inner.awaitable = awaitable
+            def addTimeout(inner, seconds, reactor):
+                self.assertIs(reactor, self.api.http_client.reactor)
+                return asyncio.wait_for(inner.awaitable, seconds)
+        native_timer = patch.dict('sys.modules', {'twisted.internet.defer': SimpleNamespace(ensureDeferred=FakeDeferred)})
+        native_timer.start(); self.addCleanup(native_timer.stop)
         self.module = TavernPolicy({}, self.api)
 
     async def asyncTearDown(self):

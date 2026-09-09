@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import time
 from types import SimpleNamespace
@@ -26,7 +27,15 @@ class TemporaryBanPolicyTests(unittest.IsolatedAsyncioTestCase):
         async def account_data(user, kind): return {}
         self.api = SimpleNamespace(_store=SimpleNamespace(get_event=lookup), get_room_state=state,
             register_third_party_rules_callbacks=lambda **kwargs: None, is_mine=lambda user: True,
-            account_data_manager=SimpleNamespace(get_global=account_data))
+            account_data_manager=SimpleNamespace(get_global=account_data), http_client=SimpleNamespace(reactor=object()))
+        class FakeDeferred:
+            """Run actual native checks with the portable cancellation deadline."""
+            def __init__(inner, awaitable): inner.awaitable = awaitable
+            def addTimeout(inner, seconds, reactor):
+                self.assertIs(reactor, self.api.http_client.reactor)
+                return asyncio.wait_for(inner.awaitable, seconds)
+        native_timer = patch.dict('sys.modules', {'twisted.internet.defer': SimpleNamespace(ensureDeferred=FakeDeferred)})
+        native_timer.start(); self.addCleanup(native_timer.stop)
         self.module = TemporaryBanPolicy(self.api, permissions, rank)
         self.state = {('m.room.power_levels', ''): event('m.room.power_levels', content={'users': {'@owner:test': 100, '@mod:test': 50, '@peer:test': 50}, 'users_default': 0}),
             ('m.room.member', '@mod:test'): event('m.room.member', content={'membership': 'join'})}

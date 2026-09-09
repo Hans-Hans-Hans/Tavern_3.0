@@ -1217,7 +1217,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "system_messages", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "push_notifications", "server_eligibility"):
+    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "system_messages", "invitation_privacy", "server_invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "push_notifications", "server_eligibility"):
         import_module(prefix + module).register_routes(app)
     return app
 

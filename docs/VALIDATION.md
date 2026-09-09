@@ -133,6 +133,28 @@ Development run [34360606392](https://github.com/Hans-Hans-Hans/Tavern_3.0/actio
 
 ## Subsequent local verification
 
+The next DM request, per-server invitation privacy and contact-push checkpoint
+passed the production build, 307 JavaScript tests and all 154 browser tests.
+Full Python discovery initially exposed four older native fixtures without the
+reactor required by strict invitation deadlines. Supplying an explicit portable
+cancellable Deferred adapter preserved the native assertions; all 538 Python
+tests then passed, with eight Windows/platform skips. Invitation regressions
+cover changed native documents, membership drift, malformed empty documents,
+stalled native reads, streamed bodies and lock acquisition timeouts. DM checks
+exercise actual SDK room/account-data models, inbox navigation, partial joins,
+fresh mapping merges and queued account A-to-B-to-A changes. Three additional
+guard tests validate the new isolated native DM smoke's scope; its real
+join/classification/reload/decryption/decline probe is mounted before deactivation
+and still requires CI execution.
+
+Contact push's 57 focused Python checks include an actual local TLS provider,
+encrypted payload decryption after worker restart, final shared-membership
+revocation, strict preferences, transaction rollback and ticket revocation.
+The gateway also closes Synapse's legacy `media/v1/upload` quota bypass. Its
+three portable tests pass; 28 POST/PUT raw and normalized URI checks are added
+to the built-Nginx CI fixture. Local configuration checks do not establish
+actual Nginx normalization or external browser push delivery.
+
 The subsequent encrypted system-notice integration passed the production build,
 291 JavaScript tests, 141 browser tests and 485 Python tests (eight platform
 skips). Additional review reproduced and fixed public/system transaction-ID

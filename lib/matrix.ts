@@ -21,7 +21,7 @@ import { initializeSearch, resetSearch, searchMessages } from './search-index';
 import { initializeNotifications, resetNotifications } from './notifications';
 import { initializeCalls, resetCalls } from './calls';
 import { cryptoCallbacks, initializeSecurity, resetSecurity, securityOperationInProgress } from './security';
-import { notifyAccountRequirement, requestApi, isManagedAccount, accountSignedOut, type AccountSession } from './api';
+import { accountArtworkOwner, notifyAccountRequirement, requestApi, isManagedAccount, accountSignedOut, type AccountSession } from './api';
 let client:MatrixClient|null=null;
 let sessionPromise:Promise<boolean>|null=null;
 let releaseLock:(()=>void)|null=null;
@@ -91,7 +91,29 @@ export async function disconnectMatrix(){if(securityOperationInProgress())throw 
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
 const account=(key:string)=>client?.getAccountData(key as any)?.getContent()||{};
-function mutateAccount(key:string,mutate:(old:any)=>any){const task=(accountQueues.get(key)||Promise.resolve()).catch(()=>{}).then(()=>writeAccount(key,mutate(account(key))));accountQueues.set(key,task);return task;}
+function mutateAccount(key:string,mutate:(old:any)=>any,owner:MatrixClient=requireClient(),generation=accountArtworkOwner()){
+ const actor=owner.getUserId();
+ const current=()=>{if(client!==owner||owner.getUserId()!==actor||accountArtworkOwner()!==generation)throw new Error('Your account changed. Retry this action from your current account.');};
+ const task=(accountQueues.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{
+  current();const value=mutate(owner.getAccountData(key as any)?.getContent()||{});current();
+  await (owner as any).setAccountData(key,value);current();
+ });
+ accountQueues.set(key,task);return task;
+}
+/** Share the account-data queue, but keep consent bound to the initiating session.
+ * getAccountDataFromServer uses the sync cache after startup, so read this merge
+ * from the native endpoint instead. Matrix account data has no cross-device CAS. */
+export function mutateMatrixAccountData(owner:MatrixClient,key:string,mutate:(old:any)=>any,validate:()=>void){
+ const actor=owner.getUserId();
+ const current=()=>{if(client!==owner||owner.getUserId()!==actor)throw new Error('Your account changed. Reopen the request.');validate();};
+ const task=(accountQueues.get(key)||Promise.resolve()).catch(()=>{}).then(async()=>{
+  current();let value:any;
+  try{value=await owner.http.authedRequest('GET' as any,'/user/'+encodeURIComponent(actor!)+'/account_data/'+encodeURIComponent(key));}
+  catch(error){if((error as any)?.errcode!=='M_NOT_FOUND')throw error;value={};}
+  current();await (owner as any).setAccountData(key,mutate(value||{}));current();notify();
+ });
+ accountQueues.set(key,task);return task;
+}
 const savedEvents=()=>Array.isArray(account(savedKey).events)?account(savedKey).events.filter((x:any)=>typeof x?.id==='string'&&typeof x?.roomId==='string').slice(0,500):[];
 function allEvents(room:Room){return [...new Map([...room.getLiveTimeline().getEvents(),...room.getThreads().flatMap(t=>t.events)].map(e=>[e.getId(),e])).values()];}
 const joined=()=>client?.getRooms().filter(r=>r.getMyMembership()==='join'&&!r.isSpaceRoom())||[];
@@ -164,7 +186,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
    const old=allEvents(room).find(e=>e.getType()==='m.reaction'&&!e.isRedacted()&&e.getSender()===me&&e.getContent()['m.relates_to']?.event_id===p.id&&e.getContent()['m.relates_to']?.key===p.emoji);
    if(old)await c.redactEvent(room.roomId,old.getId()!);else await c.sendEvent(room.roomId,'m.reaction' as any,{'m.relates_to':{rel_type:'m.annotation',event_id:p.id,key:p.emoji}});
   }
-  if(action==='save'){await mutateAccount(savedKey,old=>{const saved=Array.isArray(old.events)?old.events:[];if(saved.length>=500&&!saved.some((x:any)=>x.id===p.id))throw new Error('Your saved list is full. Remove a bookmark first.');return {events:saved.some((x:any)=>x.id===p.id)?saved.filter((x:any)=>x.id!==p.id):[...saved,{id:p.id,roomId:room.roomId}]}});}
+  if(action==='save'){await mutateAccount(savedKey,old=>{const saved=Array.isArray(old.events)?old.events:[];if(saved.length>=500&&!saved.some((x:any)=>x.id===p.id))throw new Error('Your saved list is full. Remove a bookmark first.');return {events:saved.some((x:any)=>x.id===p.id)?saved.filter((x:any)=>x.id!==p.id):[...saved,{id:p.id,roomId:room.roomId}]}},c);}
   if(action==='pin'){const old=room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned||[];await c.sendStateEvent(room.roomId,'m.room.pinned_events' as any,{pinned:old.includes(p.id)?old.filter((id:string)=>id!==p.id):[...old,p.id]},'')}
   if(action==='delete'||action==='edit'){if(action==='edit'&&e.getSender()!==me)throw new Error('You can only edit your own messages.');if(action==='delete'&&e.getSender()!==me&&!room.currentState.hasSufficientPowerLevelFor('redact',room.getMember(me)?.powerLevel||0))throw new Error('You cannot remove this message.');if(action==='delete')await c.redactEvent(room.roomId,p.id);else await c.sendEvent(room.roomId,'m.room.message' as any,{msgtype:'m.text',body:'* '+p.body,'m.new_content':{msgtype:'m.text',body:p.body},'m.relates_to':{rel_type:'m.replace',event_id:p.id}});}
   notify();return {ok:true};
@@ -192,13 +214,13 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   notify();return {ok:true};
  }
  if(action==='create'){
-  const direct=p.kind==='dm',invite=safeStrings(p.members).filter(id=>id!==me);
+  const direct=p.kind==='dm',invite=safeStrings(p.members).filter(id=>id!==me),generation=accountArtworkOwner();
   const parent=!direct&&p.serverId?roomRequired(p.serverId):null;
   if(parent&&(!parent.isSpaceRoom()||!parent.currentState.maySendStateEvent('m.space.child',me)))throw new Error('You cannot add channels to this server.');
   const via=[me.slice(me.indexOf(':')+1)];
   if(direct&&!p.group&&invite.length<=1){const dm=Object.entries(account('m.direct')).find(([peer])=>peer===(invite[0]||me));const existing=(dm?.[1] as string[]|undefined)?.find(id=>c.getRoom(id)?.getMyMembership()==='join');if(existing)return {id:existing};}
   const r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0,...((await readInstanceConfig()).serverRolePolicy?{'io.tavern.thread':0}:{})}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
-  if(direct){await mutateAccount('m.direct',map=>{const next={...map};for(const peer of invite.length?invite:[me])next[peer]=[...safeStrings(next[peer]),r.room_id];return next;});}
+  if(direct){await mutateAccount('m.direct',map=>{const next={...map};for(const peer of invite.length?invite:[me])next[peer]=[...safeStrings(next[peer]),r.room_id];return next;},c,generation);}
   if(parent){try{await c.sendStateEvent(parent.roomId,'m.space.child' as any,{via},r.room_id)}catch{await c.joinRoom(r.room_id);notify();throw new Error('Channel created, but adding it to the server failed. It is available in All conversations.');}}
   // /sync supplies authoritative state; joinRoom makes the new room locally available.
   await c.joinRoom(r.room_id);notify();return {id:r.room_id};

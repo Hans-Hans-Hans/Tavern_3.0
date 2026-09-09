@@ -1,5 +1,6 @@
 """Recipient-owned invitation policy and a scoped internal contact-consent check."""
 import hashlib
+import asyncio
 import hmac
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ except ImportError:
 
 POLICY = 'io.tavern.privacy'
 MODES = ('everyone', 'contacts', 'shared_server', 'nobody')
+SETTINGS_TIMEOUT = 15
 
 
 def contact_signature(key, timestamp, sender, recipient):
@@ -27,19 +29,42 @@ def contact_signature(key, timestamp, sender, recipient):
 async def settings(request):
     service = request.app['service']
     session = service.require_session(request)
+    try:
+        # Includes lock acquisition, streamed body reads and the native write.
+        async with asyncio.timeout(SETTINGS_TIMEOUT):
+            async with service.user_locks.setdefault(session['user_id'], asyncio.Lock()):
+                return await settings_locked(request)
+    except asyncio.TimeoutError:
+        raise APIError(504, 'Saving or loading invitation preferences timed out. Reload the current settings before retrying.') from None
+
+
+async def settings_locked(request):
+    service = request.app['service']
+    session = service.require_session(request)
     path = '/_matrix/client/v3/user/' + quote(session['user_id'], safe='') + '/account_data/' + POLICY
     token = service.store.open(session['token'])
     status, current = await service.matrix('GET', path, token=token, expected=False)
-    if status not in (200, 404):
+    service.require_session(request)
+    if status not in (200, 404) or status == 200 and not isinstance(current, Mapping):
         raise APIError(502, 'Your conversation invitation settings could not be read. Try again.')
     current = current if status == 200 and isinstance(current, Mapping) else {}
     if request.method == 'PUT':
         data = await body_json(request)
+        service.require_session(request)
         if data.get('invitations') not in MODES:
             raise APIError(400, 'Choose who can invite you to conversations.')
         service.store.rate('invitation-privacy:' + session['user_id'], 10, 60)
+        # Native account data has no CAS. The user lock serializes Tavern API
+        # changes, while this read detects other-device changes during the body
+        # wait. A native writer can still race the final GET-to-PUT interval.
+        fresh_status, fresh = await service.matrix('GET', path, token=token, expected=False)
+        service.require_session(request)
+        fresh = {} if fresh_status == 404 else fresh
+        if fresh_status not in (200, 404) or fresh != current:
+            raise APIError(409, 'Your conversation preferences changed. Reload before saving.')
         current = {**current, 'version': 1, 'invitations': data['invitations']}
         await service.matrix('PUT', path, current, token)
+        service.require_session(request)
         service.audit(session['user_id'], 'invitation_privacy_changed', session['user_id'], data['invitations'])
     mode = current.get('invitations', 'everyone')
     return web.json_response({'invitations': mode if mode in MODES else 'nobody'})
