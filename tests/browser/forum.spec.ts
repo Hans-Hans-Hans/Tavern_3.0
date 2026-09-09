@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 async function fixture(page: Page) {
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};export const matrixApi=(...args)=>window.fixtureApi(...args);' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};export const matrixApi=(...args)=>window.fixtureApi(...args);export const mutateMatrixAccountData=()=>{throw new Error("Unexpected account-data write in forum fixture");};' }));
   await page.route('**/forum-test*', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/forum.tsx')).mountFixture();</script></body></html>` }));
 }
 test('forum bounds rendered discussions, pages older posts and separates archived closed and locked filters', async ({ page }) => {
