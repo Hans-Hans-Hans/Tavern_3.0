@@ -18,7 +18,7 @@ server {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_hide_header Server;
     set $integration_upstream http://integrations:8080;
-    location ~ ^/hooks/[a-zA-Z0-9_-]{1,64}$ {
+    location ~ "^/hooks/[a-zA-Z0-9_-]{1,64}$" {
         client_max_body_size 16k;
         limit_except POST { deny all; }
         proxy_pass $integration_upstream$request_uri;
