@@ -20,6 +20,7 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.upstream_calls = []
+        self.upstream_response = None
         self.users = {"@alice:test": {"password": "Correct password!", "admin": False}, "@owner:test": {"password": "Correct password!", "admin": True}}
         self.tokens = {}
         self.device_count = 0
@@ -33,6 +34,10 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
             path, method = request.path, request.method
             payload = (await request.json() if request.content_type == "application/json" else await request.read()) if request.can_read_body else None
             self.upstream_calls.append((method, path, payload, request.headers.get("Authorization")))
+            if self.upstream_response:
+                response = await self.upstream_response(request, payload)
+                if response is not None:
+                    return response
             if path == "/_matrix/client/v3/login":
                 user = payload["identifier"]["user"]
                 user = user if user.startswith("@") else "@" + user + ":test"
@@ -74,6 +79,33 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
                 return web.json_response({"admin": self.users[user]["admin"]})
             if path == "/_synapse/admin/v2/users":
                 return web.json_response({"users": [{"name": key} for key in self.users], "total": len(self.users)})
+            if path.startswith('/_synapse/admin/v2/users/'):
+                target, _, action = path.removeprefix('/_synapse/admin/v2/users/').partition('/')
+                if not self.users[user]['admin']:
+                    return web.json_response({'errcode': 'M_FORBIDDEN'}, status=403)
+                if target not in self.users:
+                    return web.json_response({}, status=404)
+                if action == 'devices':
+                    return web.json_response({'devices': [{'device_id': value[1]} for value in self.tokens.values() if value[0] == target]})
+                if action == 'delete_devices':
+                    self.tokens = {key: value for key, value in self.tokens.items() if value[0] != target or value[1] not in payload['devices']}
+                    return web.json_response({})
+                if not action and method == 'PUT':
+                    self.users[target].update(payload)
+                if not action and method in ('GET', 'PUT'):
+                    return web.json_response({'name': target, 'deactivated': False, **self.users[target]})
+            if path.startswith('/_synapse/admin/v1/suspend/'):
+                target = path.removeprefix('/_synapse/admin/v1/suspend/')
+                if not self.users[user]['admin'] or target not in self.users:
+                    return web.json_response({'errcode': 'M_FORBIDDEN'}, status=403)
+                self.users[target]['suspended'] = payload['suspend']
+                return web.json_response({})
+            if path.startswith('/_synapse/admin/v1/deactivate/'):
+                target = path.removeprefix('/_synapse/admin/v1/deactivate/')
+                if not self.users[user]['admin'] or target not in self.users:
+                    return web.json_response({'errcode': 'M_FORBIDDEN'}, status=403)
+                self.users[target]['deactivated'] = True
+                return web.json_response({'id_server_unbind_result': 'no-support'})
             if path.startswith("/_synapse/admin/v1/users/") and path.endswith("/login"):
                 target = path.removeprefix("/_synapse/admin/v1/users/").removesuffix("/login")
                 self.device_count += 1
@@ -154,6 +186,7 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
                     if payload.get("logout_devices"):
                         self.tokens = {key: val for key, val in self.tokens.items() if val[0] != user or key == token}
                 elif path.endswith("deactivate"):
+                    self.users[user]['deactivated'] = True
                     self.tokens = {key: val for key, val in self.tokens.items() if val[0] != user}
                 elif path.endswith("delete_devices"):
                     self.tokens = {key: val for key, val in self.tokens.items() if val[0] != user or val[1] not in payload["devices"]}
@@ -359,6 +392,7 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         self.service.send_email.assert_not_called()
 
     async def test_account_deletion_needs_password_and_exact_confirmation(self):
+        await self.login('owner')  # Provision the configured account service.
         cookie, _, _ = await self.login()
         bad = await self.request("POST", "/api/account/deactivate", {"password": "Correct password!", "confirmation": "DELETE", "erase": True}, cookie)
         self.assertEqual(bad.status, 400)

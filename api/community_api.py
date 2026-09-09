@@ -226,13 +226,24 @@ async def preview_invitation(request):
     return web.json_response({"roomId": value["room_id"], "roomName": value["room_name"], "expiresAt": int(value["expires"] * 1000), "requiresEmail": bool(value["email"] or value["domain"]), 'splashMxc': splash})
 
 
-async def redeem(service, session, secret):
+async def redeem(request, secret):
+    service = request.app['service']
+    session = service.require_session(request)
+    def authorize():
+        # Registration has just issued request['session']; ordinary redemption
+        # uses its existing session. Both must remain live through remote waits.
+        service.require_session(request)
+        if service.deactivations.unavailable(session['user_id']):
+            raise APIError(403, 'This account is unavailable.', 'ACCOUNT_RESTRICTED')
+    authorize()
     value = active_invitation(service, secret)
     account = service.store.account(session["user_id"])
     invitation_email(value, account.get("email"), account.get("verified"))
     await issuer_authority(service, value["room_id"], value["creator"])
+    authorize()
     default_roles = json.loads(value['default_roles'])
     await checked_roles(service, value['room_id'], value['creator'], default_roles)
+    authorize()
     db = service.store.db
     # Single SQLite transaction reserves capacity before any remote side effect.
     db.execute("BEGIN IMMEDIATE")
@@ -254,7 +265,9 @@ async def redeem(service, session, secret):
     if not existing or existing["state"] == "reserved":
         temporary = await service.matrix("POST", "/_synapse/admin/v1/users/" + quote(value["creator"], safe="") + "/login", {"valid_until_ms": int(time.time() * 1000) + 60000}, await service.service_token())
         try:
+            authorize()
             await service.matrix("POST", "/_matrix/client/v3/rooms/" + quote(value["room_id"], safe="") + "/invite", {"user_id": session["user_id"]}, temporary["access_token"])
+            authorize()
             db.execute("UPDATE invitation_redemptions SET state='invited' WHERE invitation_id=? AND user_id=?", (value["id"], session["user_id"]))
         finally:
             try:
@@ -262,12 +275,16 @@ async def redeem(service, session, secret):
             except Exception:
                 # The impersonation token has a hard 60-second upstream expiry.
                 service.audit("system", "temporary_invite_token_logout_failed", value["room_id"])
+    authorize()
     await service.matrix("POST", "/_matrix/client/v3/join/" + quote(value["room_id"], safe=""), {}, service.store.open(session["token"]))
+    authorize()
     if default_roles:
         try:
-            await apply_roles(service, value, session, default_roles)
+            await apply_roles(service, value, session, default_roles, authorize=authorize)
         except APIError as error:
+            authorize()
             raise APIError(409, 'You joined the server, but its default roles could not be assigned. Retry this invitation or ask the server owner. ' + error.message, 'INVITATION_ROLES_PENDING') from None
+    authorize()
     db.execute("UPDATE invitation_redemptions SET state='joined' WHERE invitation_id=? AND user_id=?", (value["id"], session["user_id"]))
     service.audit(session["user_id"], "invitation_redeemed", value["room_id"], value["id"])
     return value["room_id"]
@@ -275,9 +292,10 @@ async def redeem(service, session, secret):
 
 async def redeem_invitation(request):
     service = request.app["service"]
-    session, data = service.require_session(request), await body_json(request)
+    data = await body_json(request)
+    session = service.require_session(request)
     service.store.rate("invite-redeem:" + session["user_id"], 20, 300)
-    room_id = await redeem(service, session, data.get("token"))
+    room_id = await redeem(request, data.get("token"))
     return web.json_response({"roomId": room_id})
 
 
@@ -459,7 +477,7 @@ async def registration_complete(request):
             result['invitationError'] = 'Complete account security setup, then accept this invitation.'
         else:
             try:
-                result["invitationRoomId"] = await redeem(service, request["session"], value["inviteToken"])
+                result["invitationRoomId"] = await redeem(request, value["inviteToken"])
             except APIError as error:
                 result["invitationError"] = error.message
         response.body = json.dumps(result).encode()

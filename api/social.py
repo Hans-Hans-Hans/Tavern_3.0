@@ -119,6 +119,8 @@ async def send_request(request):
     if target.split(':', 1)[1] != user.split(':', 1)[1]:
         raise APIError(400, 'Contact requests are available to accounts on this Tavern instance.')
     db = service.store.db
+    if service.deactivations.unavailable(target):
+        raise APIError(400, 'That account is unavailable.')
     if db.execute('SELECT 1 FROM social_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)', (user, target, target, user)).fetchone():
         raise APIError(403, 'This contact request cannot be sent.')
     preference = db.execute('SELECT requests FROM social_preferences WHERE user_id=?', (target,)).fetchone()
@@ -135,6 +137,9 @@ async def send_request(request):
         raise APIError(409, 'Privacy settings changed. Retry the request.')
     if db.execute('SELECT 1 FROM social_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)', (user, target, target, user)).fetchone():
         raise APIError(403, 'This contact request cannot be sent.')
+    service.require_session(request)
+    if service.deactivations.unavailable(target):
+        raise APIError(400, 'That account is unavailable.')
     now = time.time()
     active = db.execute("SELECT id FROM social_requests WHERE ((sender=? AND target=?) OR (sender=? AND target=?)) AND status IN ('pending','accepted')", (user, target, target, user)).fetchone()
     if active:
@@ -156,6 +161,7 @@ async def respond(request):
     service, session, user = session_context(request)
     service.store.rate('contacts:' + user, 60, 60)
     value = await body_json(request)
+    service.require_session(request)
     operation = value.get('operation')
     row = service.store.db.execute('SELECT * FROM social_requests WHERE id=?', (request.match_info['identity'],)).fetchone()
     if not row or user not in (row['sender'], row['target']):
@@ -182,6 +188,7 @@ async def privacy(request):
     APIError, body_json = helpers()
     service, session, user = session_context(request)
     value = await body_json(request)
+    service.require_session(request)
     preference = value.get('requests')
     if preference not in ('everyone', 'shared_server', 'nobody'):
         raise APIError(400, 'Choose who can send you contact requests.')
@@ -216,6 +223,7 @@ async def update_block(request):
     else:
         ignored.pop(peer, None)
     await service.matrix('PUT', path, {'ignored_users': ignored}, token=token)
+    service.require_session(request)
     db = service.store.db
     if blocked:
         db.execute('INSERT OR IGNORE INTO social_blocks VALUES(?,?,?)', (user, peer, time.time()))

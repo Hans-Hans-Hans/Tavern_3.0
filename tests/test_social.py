@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from api.account_deactivation import Deactivations
 
 spec = importlib.util.spec_from_file_location('social', Path(__file__).resolve().parents[1] / 'api/social.py')
 social = importlib.util.module_from_spec(spec)
@@ -68,6 +69,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             try: return await handler(request)
             except Error as e: return web.json_response({'error': e.message}, status=e.status)
         app = web.Application(middlewares=[errors]); app['service'] = service
+        service.deactivations = Deactivations(service, app)
         social.register_routes(app)
         self.client = TestClient(TestServer(app)); await self.client.start_server()
 

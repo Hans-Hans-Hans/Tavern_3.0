@@ -22,7 +22,7 @@ export function mountFixture() {
   room.put('io.tavern.server.branding', { banner: 'mxc://local/banner', welcome: 'Keep these welcome rules', accent: '#123456' });
   w.room = room;
   w.fixtureClient = query.has('invite') ? null : {
-    getUserId: () => actor, getRoom: () => room, getHomeserverUrl: () => location.origin + '/api/matrix', getAccessToken: () => 'cookie-session:D1',
+    getUserId: () => actor, getRoom: () => room, getRooms: () => [room], getHomeserverUrl: () => location.origin + '/api/matrix', getAccessToken: () => 'cookie-session:D1',
     mxcUrlToHttp: (mxc: string) => location.origin + '/_matrix/client/v1/media/thumbnail/' + mxc.slice(6),
     uploadContent: async (blob: Blob) => { w.uploads.push({ type: blob.type, size: blob.size }); return { content_uri: 'mxc://local/cropped-splash' }; },
     roomState: async () => { if (w.beforeRead) await w.beforeRead(); return values.map(({ type, state_key, content, sender, event_id }) => ({ type, state_key, content: structuredClone(content), sender, event_id })); },

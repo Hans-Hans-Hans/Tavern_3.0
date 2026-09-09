@@ -55,15 +55,17 @@ async def checked_roles(service, room_id, issuer, requested, target=None):
     return result
 
 
-async def apply_roles(service, invitation, session, requested):
+async def apply_roles(service, invitation, session, requested, authorize=None):
     # Serialize companion suspension/revocation with the final grant. Native
     # Matrix authorization still applies to the short-lived issuer token.
     async with service.user_locks.setdefault(invitation['creator'], asyncio.Lock()):
-        await _apply_roles(service, invitation, session, requested)
+        if authorize: authorize()
+        await _apply_roles(service, invitation, session, requested, authorize)
 
 
-async def _apply_roles(service, invitation, session, requested):
+async def _apply_roles(service, invitation, session, requested, authorize=None):
     policy = await checked_roles(service, invitation['room_id'], invitation['creator'], requested, session['user_id'])
+    if authorize: authorize()
     if policy is None: return
     model = policy_model(service); proposed = copy.deepcopy(policy)
     assigned = proposed['members'].get(session['user_id'], [])
@@ -73,8 +75,10 @@ async def _apply_roles(service, invitation, session, requested):
         raise APIError(403, 'The default roles cannot be assigned under the current hierarchy.')
     temporary = await service.matrix('POST', '/_synapse/admin/v1/users/' + quote(invitation['creator'], safe='') + '/login', {'valid_until_ms': time.time_ns() // 1_000_000 + 60000}, await service.service_token())
     try:
+        if authorize: authorize()
         # Re-read immediately before writing, merging only this recipient's roles.
         latest = await checked_roles(service, invitation['room_id'], invitation['creator'], requested, session['user_id'])
+        if authorize: authorize()
         proposed = copy.deepcopy(latest); proposed['members'][session['user_id']] = list(dict.fromkeys([*latest['members'].get(session['user_id'], []), *requested]))
         if not model.valid_policy(proposed) or not model.may_edit_policy(latest, proposed, invitation['creator']):
             raise APIError(403, 'Server roles changed. Ask the server owner to review this invitation.')

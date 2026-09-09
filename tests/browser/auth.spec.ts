@@ -4,6 +4,15 @@ async function managed(page: any, bootstrapRequired = false) {
   await page.route('**/api/auth/session', (route:any) => route.fulfill({status:401,json:{error:'Sign in first'}}));
 }
 
+test('the sign-in screen preserves the deactivation outcome without storing it', async ({ page }) => {
+  await managed(page); await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  const notice = 'Your account deactivation is awaiting confirmation. Reference: operation-123.';
+  await page.evaluate(async text => { const api = await import('/lib/api.ts' as string); api.accountSignedOut(text); }, notice);
+  await expect(page.getByRole('status')).toHaveText(notice);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain('operation-123');
+});
+
 test('required MFA enrollment blocks the application until recovery codes are acknowledged',async({page})=>{
   let enabled=false,matrixRequests=0,submitted:any;
   await page.route('**/api/auth/config',r=>r.fulfill({json:{bootstrapRequired:false,smtpConfigured:true,instance:{name:'Policy test'}}}));

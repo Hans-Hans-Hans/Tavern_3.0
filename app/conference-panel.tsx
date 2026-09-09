@@ -12,6 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { toast } from 'sonner';
 import { ActionMenu, copyText } from './action-menu';
 import { navigateParticipant, onParticipantNavigation } from '@/lib/participant-navigation';
+import { ConferenceIdle } from './conference-idle';
 import './calls.css';
 
 export function ConferenceButton({ roomId, disabled }: { roomId: string; disabled: boolean }) {
@@ -51,7 +52,7 @@ function useParticipants(roomId: string | null) {
 /** Mounted once beside CallPanel, independently of the selected channel. */
 export function ConferencePanel() {
   const session = useSyncExternalStore(subscribeConference, conferenceSnapshot);
-  const frame = useRef<HTMLIFrameElement>(null), closeRef = useRef<(() => Promise<void>) | null>(null), epoch = useRef(0);
+  const frame = useRef<HTMLIFrameElement>(null), closeRef = useRef<{ generation: number; roomId: string; close: () => Promise<boolean> } | null>(null), epoch = useRef(0);
   const controlsRef = useRef<ConferenceControls | null>(null), [devices, setDevices] = useState<ConferenceDevices>({}), [deviceBusy, setDeviceBusy] = useState(false);
   const [moderation, setModeration] = useState(false), [removing, setRemoving] = useState<{ userId: string; name: string } | null>(null), [moderationBusy, setModerationBusy] = useState(false);
   const participants = useParticipants(session.roomId);
@@ -68,12 +69,15 @@ export function ConferencePanel() {
     const client = getMatrixClient(), iframe = frame.current, controller = new AbortController();
     let disposed = false, stop: (() => Promise<void>) | null = null, closing = false;
     const close = async () => {
-      if (closing || conferenceSnapshot().generation !== generation) return;
+      const active = conferenceSnapshot();
+      if (closing || active.generation !== generation || active.roomId !== roomId || active.phase === 'idle') return false;
       closing = true; controller.abort(); conferenceClosing();
       try { const cleanup = stop; stop = null; await cleanup?.(); }
       finally { clearConference(generation); }
+      const after = conferenceSnapshot();
+      return after.generation === generation && after.roomId === null && after.phase === 'idle';
     };
-    closeRef.current = close;
+    const scopedClose = { generation, roomId, close }; closeRef.current = scopedClose;
     if (!client) { clearConference(generation); return; }
     void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing) setDevices(previous => ({ ...previous, ...value })); })).then(cleanup => {
       if (disposed || closing) void cleanup(); else { stop = cleanup; controlsRef.current = cleanup; }
@@ -81,7 +85,7 @@ export function ConferencePanel() {
     const off = onMatrixUpdate(() => { if (getMatrixClient() !== client || client.getRoom(roomId)?.getMyMembership() !== 'join') void close(); });
     return () => {
       disposed = true; controller.abort(); off();
-      if (closeRef.current === close) closeRef.current = null;
+      if (closeRef.current === scopedClose) closeRef.current = null;
       if (controlsRef.current === stop) controlsRef.current = null;
       const cleanup = stop; stop = null; void cleanup?.();
       queueMicrotask(() => { if (epoch.current === currentEpoch) clearConference(generation); });
@@ -112,8 +116,9 @@ export function ConferencePanel() {
       <button className="icon-button" disabled={deviceBusy || devices.audio_enabled === undefined || session.phase === 'closing'} aria-label={devices.audio_enabled ? 'Mute conference microphone' : 'Unmute conference microphone'} aria-pressed={devices.audio_enabled === false} onClick={() => void changeDevices({ audio_enabled: !devices.audio_enabled })}>{devices.audio_enabled ? <Mic/> : <MicOff/>}</button>
       <button className="icon-button" disabled={deviceBusy || devices.video_enabled === undefined || session.phase === 'closing'} aria-label={devices.video_enabled ? 'Disable conference camera' : 'Enable conference camera'} aria-pressed={devices.video_enabled} onClick={() => void changeDevices({ video_enabled: !devices.video_enabled })}>{devices.video_enabled ? <Video/> : <VideoOff/>}</button>
       <button className="icon-button" aria-label={session.minimized ? 'Expand conference' : 'Minimize conference'} title={session.minimized ? 'Expand conference' : 'Keep talking while browsing'} onClick={() => minimizeConference(!session.minimized)}>{session.minimized ? <Maximize2/> : <Minimize2/>}</button>
-      <button disabled={session.phase === 'closing'} className="icon-button call-end" aria-label="Leave conference" onClick={() => void closeRef.current?.()}><PhoneOff/></button>
+      <button disabled={session.phase === 'closing'} className="icon-button call-end" aria-label="Leave conference" onClick={() => void closeRef.current?.close()}><PhoneOff/></button>
     </div></header>
+    <ConferenceIdle roomId={session.roomId} generation={session.generation} joined={session.phase === 'joined'} frame={frame} onLeave={closeRef.current?.generation === session.generation && closeRef.current.roomId === session.roomId ? closeRef.current.close : null}/>
     <div className="conference-content" aria-hidden={session.minimized}>
       {session.error && <div className="connect-error" role="alert"><p>{session.error}</p><button className="secondary-button" onClick={() => { try { openConference(session.roomId!); } catch (error) { toast.error((error as Error).message); } }}>Retry connection</button></div>}
       <div className="conference-participants" aria-label="Conference participants">{participants.map(member => <ActionMenu key={member.userId} actions={[

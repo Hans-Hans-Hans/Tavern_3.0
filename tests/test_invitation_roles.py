@@ -199,6 +199,18 @@ class InvitationRoleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.policy['members']['@bob:test'], ['helper', 'reader'])
         self.assertEqual(self.role_writes[0][0]['io.tavern.previous_event'], '$roles-2')
 
+    async def test_recipient_session_revoked_during_role_token_request_prevents_grant(self):
+        _, invitation = await self.create_invitation(defaultRoleIds=['reader'])
+        bob = await self.add_user('bob')
+        async def revoke_recipient():
+            self.service.store.db.execute("DELETE FROM sessions WHERE user_id='@bob:test'")
+        self.before_role_login = revoke_recipient
+        result = await self.accept(invitation, bob)
+        self.assertEqual(result.status, 401, await result.text())
+        self.assertFalse(self.role_attempts)
+        self.assertNotIn('@bob:test', self.policy['members'])
+        self.assertFalse(any(token.startswith('impersonation-') for token in self.tokens))
+
     async def test_deployed_revision_guard_rejects_race_and_recipient_resumes_at_capacity(self):
         _, invitation = await self.create_invitation(defaultRoleIds=['reader'])
         bob = await self.add_user('bob')

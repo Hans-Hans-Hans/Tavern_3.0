@@ -7,6 +7,36 @@ async function fixture(page: Page) {
   await page.goto('/admin-users-test');
 }
 
+test('pending account deletion shows its reference and permits only explicit completion', async ({ page }) => {
+  await page.route('**/api/admin/users?*', route => route.fulfill({ json: { users: [member], next_token: null, total: 1 } }));
+  await page.route('**/api/admin/users/%40member%3Alocal?*', route => route.fulfill({ json: { ...detail({ ...member, security: { ...member.security, accessBlocked: 'deactivation_pending' } }), deactivation: { id: 'operation-123', phase: 'pending', issue: 'native_account_active' } } }));
+  await fixture(page); await page.getByRole('button', { name: 'Manage @member:local' }).click();
+  await expect(page.getByRole('status')).toContainText('Reference: operation-123');
+  await page.getByRole('tab', { name: 'Security', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Enable account' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Deactivate account' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Reset two-step verification' })).toBeDisabled();
+});
+
+test('unconfirmed staff deactivation displays pending instead of a completed toast', async ({ page }) => {
+  const journal = { id: 'operation-123', phase: 'pending', issue: 'native_account_active' };
+  await page.route('**/api/admin/users?*', route => route.fulfill({ json: { users: [member], next_token: null, total: 1 } }));
+  await page.route('**/api/admin/users/%40member%3Alocal?*', route => route.fulfill({ json: { ...detail(member), deactivation: journal } }));
+  await page.route('**/api/account/security', route => route.fulfill({ json: { totpEnabled: false, emailMfaEnabled: false } }));
+  await page.route('**/api/admin/users/%40member%3Alocal/actions', route => route.fulfill({ status: 202, json: { ok: false, deactivation: journal, message: 'Account deactivation is awaiting confirmation. Tavern access remains locked. Reference: operation-123.' } }));
+  await fixture(page); await page.getByRole('button', { name: 'Manage @member:local' }).click();
+  await page.getByRole('tab', { name: 'Security', exact: true }).click();
+  await page.getByRole('button', { name: 'Deactivate account' }).click();
+  const dialog = page.getByRole('dialog').last();
+  await dialog.getByLabel('Type @member:local to confirm', { exact: true }).fill('@member:local');
+  await dialog.getByLabel('Your administrator password').fill('operator-password');
+  await dialog.getByRole('button', { name: 'Deactivate account', exact: true }).click();
+  await expect(page.locator('[data-sonner-toast]')).toContainText('Account deactivation is awaiting confirmation');
+  await expect(page.getByText('Deactivate account completed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Deactivate account', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Reference: operation-123');
+});
+
 test('filtered user pagination continues after an empty page and uses opaque returned offsets', async ({ page }) => {
   const requests: URL[] = [];
   await page.route('**/api/admin/users?*', route => {

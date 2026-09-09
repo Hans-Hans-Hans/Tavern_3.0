@@ -4,6 +4,8 @@ import { readInstanceConfig } from './instance';
 import { isPrivateDiscussion } from './conversation-routing';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
+import { readJoinedRoom } from './room-read-scope';
+import { loadOlderThreadHistory, readThreadEvents, threadHistoryHasOlder } from './thread-history';
 import { disposeCachedImageOwner } from './image-cache';
 import { hydrateSelfProfile, nativeSelfProfile, clearSelfProfile } from './self-profile';
 import { webhookMetadata } from './webhook-metadata';
@@ -44,8 +46,8 @@ export function onMatrixUpdate(fn:()=>void){watchers.add(fn);return()=>{watchers
 export function matrixStatus(){return {connected:!!client,state:syncState,homeserver:client?.getHomeserverUrl(),userId:client?.getUserId(),deviceId:client?.getDeviceId(),crypto:!!client?.getCrypto()}}
 export function getMatrixClient(){return client}
 export function matrixSessionInProgress(){return !!sessionPromise||!!client||securityOperationInProgress();}
-export function threadHasOlder(roomId:string,rootId:string){const timeline=client?.getRoom(roomId)?.getThread(rootId)?.timelineSet.getLiveTimeline();return !!timeline?.getPaginationToken(sdk.Direction.Backward);}
-export async function loadThreadHistory(roomId:string,rootId:string){const c=requireClient(),room=roomRequired(roomId);if(!room.getThread(rootId))await getRoomMessages(room,rootId);const timeline=room.getThread(rootId)?.timelineSet.getLiveTimeline();if(!timeline)throw new Error('This thread history is unavailable. Reopen the thread and try again.');await c.paginateEventTimeline(timeline,{backwards:true,limit:50});notify();}
+export function threadHasOlder(roomId:string,rootId:string){const c=client,room=c?.getRoom(roomId);return !!c&&!!room&&threadHistoryHasOlder(c,room,rootId);}
+export async function loadThreadHistory(roomId:string,rootId:string){const c=requireClient(),room=roomRequired(roomId);await readJoinedRoom(c,room,()=>client===c,()=>loadOlderThreadHistory(c,room,rootId,eventCache.get(rootId),()=>client===c),()=>notify());}
 function baseUrl(value:string){const u=new URL(value);if(u.protocol!=='https:')throw new Error('Use an HTTPS homeserver address.');if(u.username||u.password||u.search||u.hash)throw new Error('Enter only the HTTPS homeserver address.');return u.href.replace(/\/$/,'')}
 async function attachSession(s:any){
  sdk??=await import('matrix-js-sdk');
@@ -97,20 +99,24 @@ function roomRequired(id:string){const r=requireClient().getRoom(id);if(!r||r.ge
 function directIds(){return new Set(Object.values(account('m.direct')).flatMap(safeStrings))}
 function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Reaction[]>;pinned:Set<string>;saved:Set<string>}){
  const c=event.getContent()||{},me=client?.getUserId(),id=event.getId()!,sender=event.getSender()!;
- const raw=event.getOriginalContent()||{};eventCache.set(id,event);if(eventCache.size>5000)eventCache.delete(eventCache.keys().next().value!);
+ const relation=event.getRelation();eventCache.set(id,event);if(eventCache.size>5000)eventCache.delete(eventCache.keys().next().value!);
  const reactions=(context?.reactions||indexReactions(allEvents(room),me)).get(id)||[];
  const pinned=context?.pinned||new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned));
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
+ return {id,webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:relation?.rel_type==='m.thread'?relation.event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
+ const owner=requireClient();return readJoinedRoom(owner,room,()=>client===owner,async()=>{
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
- if(parent){let t=room.getThread(parent);if(!t){const root=room.findEventById(parent);if(root)t=room.createThread(parent,root,[],true);}if(t){if(t.events.length<2)await requireClient().getLatestTimeline(t.timelineSet);events=t.events;}else{const r=await requireClient().relations(room.roomId,parent,'m.thread','m.room.message',{limit:100});events=r.events;}}
- await Promise.all(events.filter(e=>e.isEncrypted()).map(e=>requireClient().decryptEventIfNeeded(e).catch(()=>{})));
- const context={reactions:indexReactions(allEvents(room),client?.getUserId()),pinned:new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned)),saved:new Set<string>(savedEvents().map((e:any)=>e.id))};
+ if(parent)events=await readThreadEvents(owner,room,parent,eventCache.get(parent),()=>client===owner);
+ await Promise.all(events.filter(e=>e.isEncrypted()).map(e=>owner.decryptEventIfNeeded(e).catch(()=>{})));
+ return events;
+ },events=>{
+ const context={reactions:indexReactions(allEvents(room),owner.getUserId()),pinned:new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned)),saved:new Set<string>(savedEvents().map((e:any)=>e.id))};
  return events.filter(e=>(e.getType()==='m.room.message'||e.isDecryptionFailure())&&!e.isRedacted()&&e.getContent()['m.relates_to']?.rel_type!=='m.replace').map(e=>normalize(room,e,context)).filter(m=>parent?m.parent_id===parent:includeThreads||!m.parent_id);
+ });
 }
 export async function matrixApi(action:string,p?:any,params:Record<string,string>={}):Promise<any>{
  if(action==='bootstrap'){
@@ -125,17 +131,19 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  const c=requireClient(),me=c.getUserId()!;
  if(action==='search'){const result=await searchMessages(params.q||'',{cursor:params.cursor});return {...result,messages:result.hits.map(m=>({id:m.id,body:m.body,author_id:m.authorId,author_name:m.authorName,conversation_id:m.roomId,conversation_name:m.roomName,created_at:m.timestamp,parent_id:null,replies:0,reactions:[],attachments:[]}))};}
  if(['messages','search','saved','threads','mentions','files'].includes(action)){
+  if(params.parent&&!params.conversation)throw new Error('Choose a conversation before opening a thread.');
   const rooms=params.conversation?[roomRequired(params.conversation)]:joined();
-  if(params.before)await c.scrollback(rooms[0],100);
+  if(params.before){if(params.parent)await loadOlderThreadHistory(c,rooms[0],params.parent,eventCache.get(params.parent),()=>client===c);else await c.scrollback(rooms[0],100);}
   let all=(await Promise.all(rooms.map(r=>getRoomMessages(r,params.parent,action!=='messages'&&action!=='threads')))).flat();
   if(action==='saved'){all=[];const saved=savedEvents();for(let i=0;i<saved.length;i+=8){const batch=await Promise.all(saved.slice(i,i+8).map((m:any)=>resolveMatrixMessage(m.roomId,m.id).catch(()=>null)));all.push(...batch.filter(Boolean));}}
+  if(client!==c)throw new Error('Your account changed. Reopen the conversation.');
   if(action==='search'){const q=params.q.toLocaleLowerCase();all=all.filter(m=>m.body.toLocaleLowerCase().includes(q));}
   if(action==='saved')all=all.filter(m=>m.saved);
   if(action==='threads')all=all.filter(m=>m.replies>0);
   if(action==='files')all=all.filter(m=>m.attachments.length>0);
   if(action==='mentions')all=all.filter(m=>{const e=c.getRoom(m.conversation_id)?.findEventById(m.id);const mentions=e?.getContent()['m.mentions'];return mentions?.user_ids?.includes(me)||mentions?.room||m.body.includes(me)});
   all.sort((a,b)=>action==='messages'?a.created_at-b.created_at:b.created_at-a.created_at);
-  return {messages:all,hasMore:action==='messages'&&!!rooms[0]?.getLiveTimeline().getPaginationToken(sdk.Direction.Backward)};
+  return {messages:all,hasMore:action==='messages'&&(params.parent?threadHistoryHasOlder(c,rooms[0],params.parent):!!rooms[0]?.getLiveTimeline().getPaginationToken(sdk.Direction.Backward))};
  }
  if(action==='read'){const room=roomRequired(p.conversation);const event=p.id?room.findEventById(p.id):null;if(event&&!event.status&&lastReceipts.get(room.roomId)!==p.id){lastReceipts.set(room.roomId,p.id);try{await c.sendReadReceipt(event,sdk.ReceiptType.ReadPrivate)}catch(e){lastReceipts.delete(room.roomId);throw e}}return {ok:true}}
  if(action==='send'){

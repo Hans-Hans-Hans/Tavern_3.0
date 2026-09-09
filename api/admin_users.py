@@ -90,7 +90,7 @@ async def detail(request):
     initialized = bool(service.store.get('upload_usage_initialized'))
     quota = service.store.account(target).get('upload_quota_bytes') or limits(service)['userQuotaBytes']
     audit = db.execute('SELECT id,created,actor,action,target,detail FROM audit WHERE actor=? OR target=? ORDER BY id DESC LIMIT 20', (target, target)).fetchall()
-    return web.json_response({'user': native_user(user), 'security': public_security(service, target), 'serviceAccount': target == service.store.get('service_account', {}).get('userId'),
+    return web.json_response({'deactivation': service.deactivations.view(target), 'user': native_user(user), 'security': public_security(service, target), 'serviceAccount': target == service.store.get('service_account', {}).get('userId'),
                               'sessions': {'items': sessions, 'total': count, 'next': sessions_from + 50 if sessions_from + 50 < count else None},
                               'rooms': {'items': rooms[rooms_from:rooms_from + 50], 'total': len(rooms), 'next': rooms_from + 50 if rooms_from + 50 < len(rooms) else None},
                               'storage': {'usedBytes': (usage[0] if usage else 0) if initialized else None, 'quotaBytes': quota, 'quotaOverrideBytes': service.store.account(target).get('upload_quota_bytes'), 'usageInitialized': initialized,
@@ -144,6 +144,8 @@ async def actions(request):
             user = await service.matrix('GET', '/_synapse/admin/v2/users/' + quote(target, safe=''), token=token)
             db = service.store.db
             db.execute('INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)', (target, time.time()))
+            if operation != 'deactivate':
+                service.deactivations.deny_pending(target)
             result = {'ok': True}
             if operation == 'resend_verification':
                 try:
@@ -171,6 +173,7 @@ async def actions(request):
                     await service.matrix('PUT', '/_synapse/admin/v2/users/' + quote(target, safe=''), {'locked': False}, token)
                 await service.matrix('PUT', '/_synapse/admin/v1/suspend/' + quote(target, safe=''), {'suspend': False}, token)
                 db.execute("UPDATE accounts SET access_blocked='' WHERE user_id=?", (target,))
+                db.execute("UPDATE account_deactivations SET phase='reactivated',updated=? WHERE user_id=? AND phase='complete'", (time.time(), target))
             else:
                 # Persist fail-closed restrictions before any upstream await.
                 if operation in ('reset_mfa', 'require_password_change'):
@@ -184,7 +187,14 @@ async def actions(request):
                 elif operation == 'suspend':
                     await service.matrix('PUT', '/_synapse/admin/v1/suspend/' + quote(target, safe=''), {'suspend': True}, token)
                 elif operation == 'deactivate':
-                    await service.matrix('POST', '/_synapse/admin/v1/deactivate/' + quote(target, safe=''), {'erase': False}, token)
+                    await service.matrix('POST', '/_synapse/admin/v1/deactivate/' + quote(target, safe=''), {'erase': bool(service.deactivations.pending(target)['erase']) if service.deactivations.pending(target) else False}, token)
+                    pending = service.deactivations.pending(target)
+                    if pending:
+                        await service.deactivations.reconcile(pending['id'], token=token)
+                        result['deactivation'] = service.deactivations.view(target)
+                        if result['deactivation']['phase'] != 'complete':
+                            service.audit(session['user_id'], 'security_admin_deactivate_pending', target, pending['id'])
+                            return web.json_response({**result, 'ok': False, 'message': 'Account deactivation is awaiting confirmation or local cleanup. Tavern access remains locked. Reference: ' + pending['id'] + '.'}, status=202)
             service.audit(session['user_id'], 'security_admin_' + operation, target)
             service.background(service.security_notice(target, 'Administrator account action', 'An administrator performed this action on your Tavern account: ' + operation.replace('_', ' ') + '. Contact your administrator if you did not expect this. Encrypted history is never decrypted by account administration.'))
             return web.json_response(result)
@@ -206,6 +216,7 @@ async def update(request):
             raise APIError(400, 'Type the full Matrix user ID to confirm access changes.')
         async with service.user_locks.setdefault(target, asyncio.Lock()):
             session = await active_admin(request)
+            service.deactivations.deny_pending(target)
             # GET prevents the native PUT create-user behavior from turning a
             # profile edit into an undocumented account-provisioning path.
             await service.matrix('GET', '/_synapse/admin/v2/users/' + quote(target, safe=''), token=service.store.open(session['token']))

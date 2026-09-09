@@ -371,6 +371,8 @@ class Service:
         device = request.headers.get("X-Tavern-Device")
         if device is not None and not hmac.compare_digest(device, session["device_id"]):
             raise APIError(401, "This browser is now using a different device session. Reload Tavern before continuing.", "M_UNKNOWN_TOKEN")
+        if request.path != '/api/auth/logout':
+            self.deactivations.deny_pending(session['user_id'])
         account = self.store.account(session['user_id'])
         if account.get('access_blocked') and request.path != '/api/auth/logout':
             raise APIError(403, 'This account is restricted. Contact your administrator.', 'ACCOUNT_RESTRICTED')
@@ -404,22 +406,56 @@ class Service:
                 "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "passwordChangeRequired": bool(account.get('password_change_required')), 'mfaEnrollmentRequired': self.needs_mfa_enrollment(session, is_admin)}
 
     async def issue_session(self, request, login, remember=False):
-        status, _ = await self.matrix("GET", "/_matrix/client/v3/account/whoami", token=login["access_token"], expected=False)
-        if status != 200:
-            raise APIError(401, "This sign-in expired. Sign in again.", "M_UNKNOWN_TOKEN")
-        now, identity, cookie = time.time(), secrets.token_urlsafe(24), secrets.token_urlsafe(32)
-        self.store.db.execute("INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)", (login["user_id"], now))
-        session = {"id": identity, "cookie_hash": self.store.digest(cookie), "cookie": self.store.seal(cookie), "previous_hash": None,
-                   "previous_until": 0, "rotated": now, "user_id": login["user_id"], "device_id": login["device_id"], "token": self.store.seal(login["access_token"]),
-                   "created": now, "last_seen": now, "expires": now + (self.security_policy()['persistentDays'] * 86400 if remember else self.security_policy()['sessionHours'] * 3600), "persistent": int(remember),
-                   "name": request.headers.get("User-Agent", "Browser")[:240], "ip": self.ip(request)}
-        self.store.db.execute("INSERT INTO sessions(" + ",".join(session) + ") VALUES(" + ",".join("?" for _ in session) + ")", tuple(session.values()))
+        user = login['user_id']
+        def lifetime():
+            journal = self.store.db.execute('SELECT id,phase,updated FROM account_deactivations WHERE user_id=? ORDER BY created DESC,id DESC LIMIT 1', (user,)).fetchone()
+            return self.store.account(user).get('credential_epoch', 0), tuple(journal) if journal else None
+        revision = lifetime()
+        def authorize():
+            self.deactivations.deny_pending(user)
+            if self.deactivations.unavailable(user) or lifetime() != revision:
+                raise APIError(401, 'Account security changed while signing in. Start sign-in again.', 'M_UNKNOWN_TOKEN')
+            if self.store.account(user).get('access_blocked'):
+                raise APIError(403, 'This account is restricted. Contact your administrator.', 'ACCOUNT_RESTRICTED')
+        try:
+            authorize()
+            status, _ = await self.matrix("GET", "/_matrix/client/v3/account/whoami", token=login["access_token"], expected=False)
+            if status != 200:
+                raise APIError(401, "This sign-in expired. Sign in again.", "M_UNKNOWN_TOKEN")
+            authorize()
+            now, identity, cookie = time.time(), secrets.token_urlsafe(24), secrets.token_urlsafe(32)
+            session = {"id": identity, "cookie_hash": self.store.digest(cookie), "cookie": self.store.seal(cookie), "previous_hash": None,
+                       "previous_until": 0, "rotated": now, "user_id": user, "device_id": login["device_id"], "token": self.store.seal(login["access_token"]),
+                       "created": now, "last_seen": now, "expires": now + (self.security_policy()['persistentDays'] * 86400 if remember else self.security_policy()['sessionHours'] * 3600), "persistent": int(remember),
+                       "name": request.headers.get("User-Agent", "Browser")[:240], "ip": self.ip(request)}
+            result = await self.session_info(session)
+            if result["admin"]:
+                await self.ensure_service_account()
+            # Registration and login can wait on independent native requests.
+            # Publish no local session/cookie until their whole account lifetime
+            # still matches, including a completed-then-reactivated deletion.
+            authorize()
+            self.store.db.execute('BEGIN IMMEDIATE')
+            try:
+                self.store.db.execute("INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)", (user, now))
+                self.store.db.execute('UPDATE accounts SET known_admin=? WHERE user_id=?', (int(result['admin']), user))
+                self.store.db.execute("INSERT INTO sessions(" + ",".join(session) + ") VALUES(" + ",".join("?" for _ in session) + ")", tuple(session.values()))
+                self.audit(user, "login", session["device_id"])
+                self.store.db.execute('COMMIT')
+            except BaseException:
+                self.store.db.execute('ROLLBACK')
+                raise
+        except BaseException:
+            async def discard_device():
+                try:
+                    async with asyncio.timeout(5):
+                        await self.matrix('POST', '/_matrix/client/v3/logout', {}, login['access_token'], expected=False)
+                except Exception:
+                    LOG.warning('An unfinished sign-in device could not be revoked')
+            self.background(discard_device())
+            raise
         request["cookie"], request["session"] = (cookie, session), session
-        self.audit(login["user_id"], "login", session["device_id"])
-        result = await self.session_info(session)
-        if result["admin"]:
-            await self.ensure_service_account()
-        self.background(self.security_notice(login["user_id"], "New device signed in", "A new Tavern browser session signed in. Review Devices & Sessions if this was not you."))
+        self.background(self.security_notice(user, "New device signed in", "A new Tavern browser session signed in. Review Devices & Sessions if this was not you."))
         return web.json_response(result)
 
     async def login_upstream(self, username: str, password: str, name="Tavern browser"):
@@ -546,6 +582,9 @@ class Service:
             return await self.complete_login(request, login, data.get("remember") is True)
 
     async def complete_login(self, request, login, remember):
+        if self.deactivations.pending(login['user_id']):
+            await self.matrix('POST', '/_matrix/client/v3/logout', {}, login['access_token'], expected=False)
+            self.deactivations.deny_pending(login['user_id'])
         account = self.store.account(login["user_id"])
         if account.get('access_blocked'):
             await self.matrix('POST', '/_matrix/client/v3/logout', {}, login['access_token'], expected=False)
@@ -796,25 +835,8 @@ class Service:
         return web.json_response({"ok": True})
 
     async def deactivate(self, request):
-        data = await body_json(request)
-        session = self.require_session(request)
-        if data.get("confirmation") != session["user_id"]:
-            raise APIError(400, "Type your full Matrix user ID to confirm account deletion.")
-        session = await self.require_sensitive(request, data)
-        status, admin = await self.matrix('GET', '/_synapse/admin/v1/users/' + quote(session['user_id'], safe='') + '/admin', token=self.store.open(session['token']), expected=False)
-        if status not in (200, 403):
-            raise APIError(503, 'Administrator status could not be checked. Account deactivation remains locked.')
-        if admin.get('admin') is True:
-            raise APIError(400, 'An administrator account must be deactivated by another active administrator.')
-        await self.uia(session, "/_matrix/client/v3/account/deactivate", {"erase": data.get("erase") is True}, data["password"])
-        await self.security_notice(session["user_id"], "Account deactivated", "Your Tavern account has been deactivated. Copies already held by other people are not removed.")
-        self.store.db.execute("DELETE FROM sessions WHERE user_id=?", (session["user_id"],))
-        self.store.db.execute("DELETE FROM recovery_codes WHERE user_id=?", (session["user_id"],))
-        self.store.db.execute("DELETE FROM challenges WHERE user_id=?", (session["user_id"],))
-        self.store.db.execute("DELETE FROM accounts WHERE user_id=?", (session["user_id"],))
-        self.audit(session["user_id"], "account_deactivated", session["user_id"])
-        request["clearCookie"] = True
-        return web.json_response({"ok": True})
+        module = import_module((__package__ + "." if __package__ else "") + "account_deactivation")
+        return await module.deactivate(request)
 
     async def sessions(self, request):
         current = self.require_session(request)
@@ -1154,7 +1176,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans"):
+    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation"):
         import_module(prefix + module).register_routes(app)
     return app
 

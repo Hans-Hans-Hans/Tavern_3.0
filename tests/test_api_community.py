@@ -165,6 +165,20 @@ class CommunityAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 404)
         self.assertNotIn("@newuser:test", self.users)
 
+    async def test_verified_registration_redeems_with_its_newly_issued_session(self):
+        _, invitation = await self.create_invitation(email='new@example.com')
+        self.service.store.set('policy', {'registrationMode': 'invite'})
+        started = await self.request('POST', '/api/auth/register/start', {'username': 'newuser', 'password': 'A strong new password!', 'confirmation': 'A strong new password!', 'email': 'new@example.com', 'inviteToken': invitation['token']})
+        self.assertEqual(started.status, 200, await started.text())
+        identity = (await started.json())['challengeId']
+        code = re.search(r'\b\d{6}\b', self.service.send_email.call_args.args[2])[0]
+        response = await self.request('POST', '/api/auth/register/complete', {'challengeId': identity, 'code': code})
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())['invitationRoomId'], '!room:test')
+        self.assertEqual(self.rooms['!room:test']['members']['@newuser:test'], 'join')
+        self.assertEqual(tuple(self.service.store.db.execute('SELECT user_id,state FROM invitation_redemptions').fetchone()), ('@newuser:test', 'joined'))
+        self.assertFalse(any(token.startswith('impersonation-') for token in self.tokens))
+
 
 if __name__ == "__main__":
     unittest.main()

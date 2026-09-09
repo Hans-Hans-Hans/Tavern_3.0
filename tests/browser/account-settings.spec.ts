@@ -36,3 +36,23 @@ test('account owner can retry an administrator-sent email code and refresh verif
   await expect(page.getByRole('button', { name: 'Enter administrator-sent email code' })).toHaveCount(0);
   expect(submissions).toEqual([{ code: '123456' }, { code: '123456' }]);
 });
+
+for (const phase of ['complete', 'pending', 'native_confirmed']) {
+  test(`account deactivation preserves the ${phase} outcome when signing out`, async ({ page }) => {
+    await fixture(page, { totpEnabled: false, emailMfaEnabled: false });
+    const message = phase === 'complete' ? 'Your account has been deactivated. Historical messages and uploaded files have not been deleted.' : phase === 'pending' ? 'Your account deactivation is awaiting confirmation. Reference: operation-123.' : 'Your homeserver account is deactivated. Tavern is finishing local personal-data cleanup.';
+    let submitted: any;
+    await page.route('**/api/account/deactivate', route => { submitted = route.request().postDataJSON(); return route.fulfill({ status: phase === 'complete' ? 200 : 202, json: { ok: phase === 'complete', deactivation: { id: 'operation-123', phase }, message } }); });
+    await page.goto('/account-component-test');
+    await page.evaluate(() => { (window as any).signedOut = ''; window.addEventListener('tavern:signout', event => { (window as any).signedOut = (event as CustomEvent).detail; }); });
+    await page.getByRole('button', { name: 'Delete my account' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Current password').fill('correct-account-password');
+    await dialog.getByLabel('Type @alice:local to confirm').fill('@alice:local');
+    await dialog.getByRole('checkbox', { name: 'Request removal of profile information' }).check();
+    await dialog.getByRole('button', { name: 'Permanently deactivate account' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).signedOut)).toBe(message);
+    expect(submitted).toMatchObject({ password: 'correct-account-password', confirmation: '@alice:local', erase: true });
+    expect(submitted).not.toHaveProperty('historyPolicy');
+  });
+}

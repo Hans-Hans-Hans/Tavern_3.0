@@ -46,6 +46,6 @@ export type AccountSession = { userId: string; deviceId: string; baseUrl: string
 let managed = false;
 export function setManagedAccount(value: boolean) { managed = value; }
 export function isManagedAccount() { return managed; }
-export function accountSignedOut() { setAccountDevice(''); window.dispatchEvent(new Event('tavern:signout')); }
+export function accountSignedOut(notice?: string) { setAccountDevice(''); window.dispatchEvent(new CustomEvent('tavern:signout', { detail: typeof notice === 'string' ? notice.slice(0, 600) : '' })); }
 
 export function notifyAccountRequirement(data:any){if(['MFA_ENROLLMENT_REQUIRED','PASSWORD_CHANGE_REQUIRED'].includes(data?.errcode||data?.code))window.dispatchEvent(new Event('tavern:account-requirement'));}

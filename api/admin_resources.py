@@ -185,6 +185,7 @@ class UploadQuota:
                     raise APIError(408, "The upload timed out. Try again.") from None
                 if not received:
                     raise APIError(400, "This file is empty.")
+                service.require_session(request)
                 identity = self.reserve(session["user_id"], received)
                 stream.seek(0)
                 headers = {"Authorization": "Bearer " + service.store.open(session["token"]), "Content-Type": request.headers.get("Content-Type", "application/octet-stream"), "Content-Length": str(received)}
@@ -205,6 +206,7 @@ class UploadQuota:
                     if not isinstance(data, dict):
                         data = {}
                     if 200 <= response.status < 300 and isinstance(data.get("content_uri"), str):
+                        service.require_session(request)
                         service.store.db.execute("UPDATE upload_reservations SET state='stored',media_uri=? WHERE id=?", (data["content_uri"], identity))
                         service.audit(session["user_id"], "media_uploaded", data["content_uri"], str(received) + " bytes")
                         return web.json_response(data, status=response.status)

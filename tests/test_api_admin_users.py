@@ -134,6 +134,7 @@ class AdminUserTests(unittest.IsolatedAsyncioTestCase):
         response = await self.action(owner, 'reset_mfa', method='recovery', code=codes[0]); self.assertEqual(response.status, 200)
 
     async def test_native_non_admin_status_forbidden_does_not_disable_own_deactivation(self):
+        await self.login('owner')
         cookie, _, _ = await self.login(); native = self.service.matrix
         async def matrix(method, path, body=None, token=None, expected=True):
             if path.endswith('/admin'): return 403, {'errcode': 'M_FORBIDDEN'}

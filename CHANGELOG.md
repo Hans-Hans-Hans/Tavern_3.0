@@ -8,6 +8,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 
 - Single Compose stack with persistent initialization, account service, and optional calls, integrations, and operations profiles.
 - One-time private administrator setup, verified email, password recovery, email/TOTP MFA, recovery codes, persistent sessions, device revocation, and administrator account controls.
+- Durable account-deactivation tracking, confirmed native cleanup, recovery of interrupted requests, explicit staff completion and immediate session revocation.
 - Account/server profiles, optimized image editing, contacts and invitation privacy, independent server roles, category/channel permission inheritance, custom emojis, and onboarding.
 - Virtualized conversations and threads, encrypted device search, forwarding with destination encryption, consent-based text link previews, and an encrypted local outbox for retries, scheduled sends, and reminders.
 - Administrative email, user, room, report, audit, quota, integration, maintenance, announcement, backup, and update workflows.
@@ -19,6 +20,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Webhook name/avatar/enabled/creator management and delegated channel access, with disabled queue cancellation and immutable destination bindings.
 - Server nickname moderation with protected native/custom hierarchy and preserved member-selected profiles.
 - Direct-call fullscreen/Picture-in-Picture, measured speaking and browser connection statistics with no extra capture.
+- Independent direct-call camera/screen quality choices with native capture/send measurements, scoped ownership and restoration of previous limits.
+- Protected AFK destination/timeout settings and opt-in per-call interaction-idle warnings, cleanup and a user-clicked destination link.
 - Tavern video playback/seek/volume/speed controls, local video posters and metadata, and downloads that reuse an already decrypted preview.
 - Designated announcement-channel navigation and optimized invitation artwork shared through scoped invitation metadata.
 - Private discussions in separate encrypted rooms, with explicit invitations, source permission checks, shared slow mode, archive controls and private-room navigation.
@@ -40,6 +43,8 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Account changes dispose cached image URLs and reject stale uploads/downloads; streamed profile artwork stops at its byte limit.
 - Native profile hydration preserves names and avatars after reload when presence has not populated the browser's user cache.
 - Message links validate cached/native event identity and room membership through fetching and decryption, including account changes.
+- Historical threads now follow the SDK encrypted relation timeline, share initial/page requests and reject late results after account or room access changes.
+- Welcome tours wait for initial preference sync and stay dismissed on reload; completed invitation navigation closes when membership sync confirms joining.
 - Room deep links requested before Matrix sync, status banners overlapping the composer, and false app-update prompts during first installation.
 - Native channel/member administration now checks fresh Matrix and Tavern role authority, including native equal/higher members in manual role assignments.
 

@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 try:
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
+    from server_afk import ServerAfkPolicy, AFK
     from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
@@ -17,6 +18,7 @@ try:
 except ImportError:
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
+    from synapse_modules.server_afk import ServerAfkPolicy, AFK
     from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
@@ -251,6 +253,7 @@ class TavernPolicy:
         self.invitations = InvitationPolicy(config, api)
         self.temporary_bans = TemporaryBanPolicy(api, permissions, rank)
         self.private_threads = PrivateThreadPolicy(self, permissions, rank, native_member_power, valid_policy, valid_layout)
+        self.server_afk = ServerAfkPolicy(api)
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed, on_create_room=self.on_create_room,
             check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid)
 
@@ -286,6 +289,8 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        if not await self.server_afk.check(event, state_events):
+            return False, None
         if not check_settings(event, state_events):
             return False, None
         if not await self.invitations.check(event):

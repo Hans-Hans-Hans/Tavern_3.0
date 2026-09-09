@@ -50,7 +50,7 @@ export function AccountSettings() {
         else if (action === 'disable-mfa') { if (await run(() => requestApi('/account/mfa/disable', auth), 'Two-step verification disabled')) setAction(''); }
         else if (action.startsWith('revoke:')) { if (await run(() => requestApi('/account/sessions/' + encodeURIComponent(action.slice(7)), undefined, 'DELETE'), 'Session revoked')) setAction(''); }
         else if (action === 'revoke-others') { if (await run(() => requestApi('/account/sessions/revoke-others', auth), 'Other sessions revoked')) setAction(''); }
-        else if (action === 'delete') { setBusy(true); setError(''); try { await requestApi('/account/deactivate', { ...auth, confirmation: deleteConfirmation, erase }); clearLocalMatrixSession(); accountSignedOut(); } catch (err: any) { setError(err.message); } finally { setBusy(false); } }
+        else if (action === 'delete') { setBusy(true); setError(''); try { const result = await requestApi('/account/deactivate', { ...auth, confirmation: deleteConfirmation, erase }); clearLocalMatrixSession(); accountSignedOut(result.message || 'Your account has been deactivated.'); } catch (err: any) { if (err.details?.signedOut) { clearLocalMatrixSession(); accountSignedOut(err.message); } else setError(err.message); } finally { setBusy(false); } }
       }}>
         {!action.endsWith('-code') && !action.startsWith('revoke:') && sensitive}
         {action === 'email' && <Field label="Email address"><input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)}/></Field>}
