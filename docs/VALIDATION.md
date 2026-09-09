@@ -4,6 +4,14 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34369281708](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34369281708)
+tested the `c591215` checkpoint pushed to `V3`. Its production build passed,
+but one of 272 JavaScript tests exhausted a fixed 100-event-loop-turn wait before
+native WebCrypto completed on the runner. Browser and Docker stages did not run.
+The development-branch test now subscribes to the actual idle state with a
+five-second failure deadline; all 34 affected local checks pass. This correction
+changes the test, while `V3` retains the `c591215` application checkpoint.
+
 [Run 34362064249](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34362064249)
 passed the complete workflow at development commit `12c5c54`: production build,
 242 JavaScript tests, 116 browser tests, 317 Python checks, offline PWA, Compose,

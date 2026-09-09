@@ -4,7 +4,18 @@ import { createHash, webcrypto } from 'node:crypto';
 import { loadTs } from './load-ts.mjs';
 import { pushWorker, generation, deferred } from './fixtures/web-push-worker.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
-async function idle(model) { for (let count = 0; count < 100 && model.webPushSnapshot().busy; count++) await tick(); assert.equal(model.webPushSnapshot().busy, false); }
+async function idle(model) {
+  if (!model.webPushSnapshot().busy) return;
+  // WebCrypto and MessageChannel complete on native queues. A fixed number of
+  // setImmediate turns can expire before they run on a busy CI worker.
+  await new Promise((resolve, reject) => {
+    const stop = model.subscribeWebPush(() => {
+      if (!model.webPushSnapshot().busy) { clearTimeout(timer); stop(); resolve(); }
+    });
+    const timer = setTimeout(() => { stop(); reject(new Error('Background push did not become idle within five seconds.')); }, 5000);
+  });
+  assert.equal(model.webPushSnapshot().busy, false);
+}
 const bytes = new Uint8Array(65); bytes[0] = 4;
 const publicKey = Buffer.from(bytes).toString('base64url');
 function setup(stored) {
