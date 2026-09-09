@@ -2,12 +2,16 @@
 import { expect } from '@playwright/test';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
+import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 export async function privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent }) {
   if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Private discussion smoke requires the isolated CI stack.');
   const privateType = 'io.tavern.private_thread', settingsType = privateType + '.settings';
   const rolesType = 'io.tavern.roles', title = 'CI invited private discussion';
-  const native = (page, path, body, method) => api(page, '/_matrix/client/v3' + path, body, true, false, method);
+  const native = (page, path, body, method) => {
+    const request = () => api(page, '/_matrix/client/v3' + path, body, true, false, method);
+    return body === undefined || method === 'PUT' ? matrixSmokeRequest(request) : request();
+  };
   const roomPath = roomId => '/rooms/' + encodeURIComponent(roomId);
   const statePath = (roomId, type, key = '') => roomPath(roomId) + '/state/' + encodeURIComponent(type) + '/' + encodeURIComponent(key);
   function ok(result, description) { assert.equal(result.status, 200, description + ': ' + JSON.stringify(result.data)); return result.data; }
