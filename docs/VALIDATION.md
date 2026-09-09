@@ -2,7 +2,27 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
-## Local formatting and role-mention checkpoint
+## Local history, read-state and invitation checkpoint
+
+The combined development changes passed the production build and all 381
+JavaScript checks. The full Python suite completed 559 checks with eight
+platform-dependent skips and no failures. The full browser run passed 189 of 193 checks; the four
+failures were fixture integration issues (a missing account-data adapter export
+in the forum fixture and an invalid restricted-invitation token). All four
+passed after fixture corrections. Three additional real-Radix checks reproduce
+the closing-menu race, verify the live helper's corrected sequence and preserve
+ordinary-member denial. This covers 196 browser checks across the full run and
+focused reruns, without claiming a new fully passing live workflow.
+
+History tests use real encrypted IndexedDB storage and reject delayed writes
+after account or membership changes. Read-state tests exercise the installed
+SDK's private unthreaded receipts and current notification counts. Named-link
+HTTP tests cover permanent reservations, shared limits, native version-12 IDs
+and creator authority, and current verified-email checks after remote waits.
+The new isolated role-mention probe has nine local guard tests; actual
+multi-device encrypted role-mention delivery still requires live CI.
+
+## Earlier local formatting and role-mention checkpoint
 
 The combined changes passed the production build and all 354 JavaScript tests.
 The full browser run passed 169 checks; three activity-notification fixtures
@@ -17,6 +37,23 @@ audiences before sending; forwarding suppresses mentions. These browser
 fixtures do not establish live encrypted multi-device role-mention delivery.
 
 ## Observed continuous integration
+
+[Run 34381965768](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34381965768)
+at development commit `ea3d52f` passed build, all 354 JavaScript tests, all 174
+browser tests, 538 Python checks, PWA/Compose/Docker and the gateway fixture.
+The live stack passed the preceding SMTP/bootstrap, encrypted messaging,
+private-discussion, AFK, eligibility and profile probes. Restricted room creation
+and invitations succeeded, and the actual isolated bot was provisioned and
+became ready in both fixture rooms. The browser then timed out opening the
+server-settings menu; no notice-delivery assertions were reached. DM inbox,
+native invitation-privacy acceptance and the final restart remain pending.
+Independent failed-update rollback passed. This is a failed workflow despite
+its passing build and test stages; `V3` remains the separate `c591215` checkpoint.
+
+The menu failure was reproduced with Tavern's actual header, Radix controls and
+SDK permissions. The live helper now waits for the closing menu layer to be
+removed before reopening it through the normal trigger. Its three local browser
+checks pass; notice delivery and later acceptance still need the live rerun.
 
 [Run 34378243058](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34378243058)
 at development commit `0a7c68b` passed build, 310 JavaScript tests, 154 browser
@@ -33,7 +70,8 @@ Only that restricted configuration retries confirmed rate limits, using the
 pre-persistence limits in pinned Synapse 1.160.0; known-target invitations check
 native membership before any retry. Ambiguous failures are never replayed.
 Fourteen local request-helper checks and six isolated DM/invitation guard checks
-pass. Live execution of the revised fixture remains pending.
+pass. The revised creation/invitation steps subsequently succeeded in run
+34381965768 above; later live assertions remain pending.
 
 [Run 34376809528](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34376809528)
 at development commit `58a129c` passed build, 291 JavaScript tests, 141 browser
