@@ -23,11 +23,15 @@ _models = {}
 
 def policy_model(service):
     directory = service.config.synapse_config.parent / 'tavern_modules'
-    if not (directory / 'tavern_policy.py').is_file():
-        if (Path(__file__).resolve().parent.parent / 'synapse_modules' / 'tavern_policy.py').is_file():
-            return import_module('synapse_modules.tavern_policy')
-        raise APIError(503, 'The deployed server-role policy is unavailable. Ask an administrator to check provisioning.')
-    key = str(directory.resolve())
+    try:
+        deployed = (directory / 'tavern_policy.py').is_file()
+        if not deployed:
+            if (Path(__file__).resolve().parent.parent / 'synapse_modules' / 'tavern_policy.py').is_file():
+                return import_module('synapse_modules.tavern_policy')
+            raise APIError(503, 'The deployed server-role policy is unavailable. Ask an administrator to check provisioning.')
+        key = str(directory.resolve())
+    except OSError:
+        raise APIError(503, 'The deployed server-role policy is unreadable. Ask an administrator to check provisioning.') from None
     if key not in _models:
         # Imports are synchronous, from a deployment-controlled read-only path.
         sys.path.insert(0, key)

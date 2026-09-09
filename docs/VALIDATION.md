@@ -41,6 +41,17 @@ class without request contents or credentials, and the live probe checks that
 GET directly. The 33 affected Python and eight browser checks pass locally;
 the underlying production-only settings failure is not yet claimed fixed.
 
+The permission failure was traced to initialization under `umask(077)`:
+`mkdir(mode=0750)` produced a policy directory with mode `0700`, preventing the
+API's supplementary Synapse group from traversing it. The initializer now
+explicitly applies `0750`, also repairing previously initialized directories.
+Policy loader preflight errors become a sanitized 503. Focused provisioning/API
+tests pass locally with the POSIX-specific cases explicitly skipped on Windows.
+The next CI run includes a read-only, network-isolated test container whose
+reader drops to API UID/GID 10001 with supplementary group 991, proving denial
+before repair and actual policy loading/authorization afterward. That exact
+Linux identity proof and the repaired live system-notice path remain pending.
+
 User-facing recovery instructions are in [HISTORY_RECOVERY.md](HISTORY_RECOVERY.md).
 
 ## Local history, read-state and invitation checkpoint

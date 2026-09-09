@@ -124,6 +124,25 @@ class SystemMessagesAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await recovered.json())['ready'])
         self.assertEqual(self.writes, [])
 
+    async def test_unreadable_deployed_policy_returns_unavailable_without_using_development_fallback(self):
+        target = self.service.config.synapse_config.parent / 'tavern_modules' / 'tavern_policy.py'
+        original = Path.is_file
+        def probe(path):
+            if path == target:
+                raise PermissionError('sensitive-deployment-path-and-configuration')
+            return original(path)
+        with patch.object(Path, 'is_file', probe), patch.object(self.service.integrations, 'read') as configuration:
+            response = await self.request('GET', '/api/servers/'+SERVER+'/system-messages', cookie=self.owner)
+            body = await response.json()
+            self.assertEqual(response.status, 503)
+            self.assertIn('provisioning', body['error'])
+            self.assertNotIn('sensitive-deployment', json.dumps(body))
+            configuration.assert_not_called()
+        response = await self.request('GET', '/api/servers/'+SERVER+'/system-messages', cookie=self.owner)
+        self.assertEqual(response.status, 200)
+        self.assertTrue((await response.json())['ready'])
+        self.assertEqual(self.writes, [])
+
     async def test_missing_initial_route_and_bridge_configuration_return_the_real_off_inventory(self):
         self.extra[SERVER] = [item for item in self.extra[SERVER] if item['type'] != system.SYSTEM_MESSAGES]
         self.config.pop('system_messages'); self.config.pop('retired_hooks')

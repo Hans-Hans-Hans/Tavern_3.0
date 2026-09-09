@@ -11,6 +11,8 @@ Server settings can route future server joins and departures to an existing encr
 
 The first enable generates the private `system-messages.hmac` key inside the existing bot configuration directory and adds a fixed internal callback configuration to `bot.json`. This is separate from public webhook signing keys. A missing bot identity shows **Unconfigured**; the saved route can still be disabled. Readiness describes provisioned configuration, not proof that the bot is currently connected or that every recipient device is approved.
 
+The API reads the provisioned native policy through its supplementary Synapse group. The initializer sets `synapse/tavern_modules` to `0750` and policy files to `0640`, owned by `991:991`. If an older initializer left this directory at `0700`, rerun the matching updated initializer with `docker compose run --rm init`, then reload the settings panel. This repairs directory access while preserving existing credentials and their file permissions. An unreadable deployed policy returns a service-unavailable response and does not grant configuration access.
+
 The bot needs ordinary current native send authority and all governing custom send permissions. The destination's own policy and every reciprocal canonical ancestor apply additional restrictions. Timeouts, temporary bans, archived channels and server account requirements can block delivery. Read-only, rules and announcement channels additionally require message-management permission and native redact authority. Native Synapse authorization remains the final gate.
 
 ## Audience and delivery behavior

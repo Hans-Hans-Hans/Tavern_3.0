@@ -177,6 +177,10 @@ def install_policy(root, config, integrations=False):
     target = root / 'synapse/tavern_modules'
     target.mkdir(exist_ok=True, mode=0o750)
     own(target, 991)
+    # provision() uses umask 077: mkdir's mode alone would leave a new tree
+    # at 0700. The API's supplementary Synapse group needs read/traverse access.
+    # Also repair already-provisioned trees without widening any secret file.
+    os.chmod(target, 0o750)
     privacy_key = root / 'synapse/tavern-privacy.key'
     write_new(privacy_key, secrets.token_hex(32) + '\n', 0o640)
     if not re.fullmatch(r'[0-9a-f]{64}', privacy_key.read_text(encoding='utf-8').strip()):
