@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { privateDiscussionSmoke } from './smoke-private-discussions.mjs';
 import { afkSmoke } from './smoke-afk.mjs';
 import { eligibilitySmoke } from './smoke-eligibility.mjs';
+import { profilePolicySmoke } from './smoke-profile-policy.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
@@ -232,6 +233,7 @@ try {
   await privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent });
   const afkFixture = await afkSmoke({ admin, alice, adminSession, aliceSession, api });
   await eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, encryptedProbe: { roomId, eventId }, origin, api, ready, encryptedResponse, encryptedEvent });
+  await profilePolicySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, origin, api });
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
 } catch (error) {
   console.error('Live browser errors:', errors);

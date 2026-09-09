@@ -1,7 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
 
 // Direct callers use explicitly retryable native GET/PUT probes; known-room
-// joins use the membership-aware helper below. Never wrap room
+// joins and leaves use the membership-aware helpers below. Never wrap room
 // creation: an invitation can be rate-limited after the room already exists.
 // Network failures and other statuses are returned or thrown unchanged.
 // Production rate limits stay enabled.
@@ -23,5 +23,16 @@ export async function matrixSmokeJoin(readMembership, join, pause = setTimeout) 
     if (membership.status === 200 && membership.data?.membership === 'join') return membership;
     if (![200, 403, 404].includes(membership.status)) return membership;
     return join();
+  }, pause);
+}
+
+// A leave may persist before the response is rate limited. Confirm its native
+// membership before replaying; a forbidden read alone does not prove departure.
+export async function matrixSmokeLeave(readMembership, leave, pause = setTimeout) {
+  return matrixSmokeRequest(async () => {
+    const membership = await readMembership();
+    if (membership.status === 200 && membership.data?.membership === 'leave') return membership;
+    if (![200, 403, 404].includes(membership.status)) return membership;
+    return leave();
   }, pause);
 }

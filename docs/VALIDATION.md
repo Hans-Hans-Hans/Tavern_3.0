@@ -4,6 +4,17 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34370886413](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34370886413)
+at development commit `41abdee` passed the production build, all 272 JavaScript
+and 124 browser tests, Python checks, offline PWA, Compose, both remote-context
+Docker image builds, restricted gateway and the new call/push routing fixture.
+The independent failed-update rollback also passed. Live native eligibility
+enforced configuration authority and the account-age restriction, then the
+probe failed on a rate-limited leave request before email/recovery acceptance.
+The known-room leave helper now rechecks membership before a bounded retry of
+`M_LIMIT_EXCEEDED`; ambiguous network errors remain failures. This run did not
+complete the fresh-stack workflow or test the subsequent profile rules.
+
 [Run 34369281708](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34369281708)
 tested the `c591215` checkpoint pushed to `V3`. Its production build passed,
 but one of 272 JavaScript tests exhausted a fixed 100-event-loop-turn wait before
@@ -78,6 +89,19 @@ Development run [34358857688](https://github.com/Hans-Hans-Hans/Tavern_3.0/actio
 Development run [34360606392](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34360606392) at `a84c23e` passed 239 JavaScript and 116 browser tests, 317 Python checks, production/PWA/Docker validation, fresh stack, TLS setup, encrypted message/edit/thread/file and avatar-reload acceptance, and isolated failed-update rollback. The real three-account private-discussion probe completed: explicit creation grants, source-owner exclusion, invitation acceptance, bidirectional encryption/reload, source permission and membership loss, archive rejection and stale-state rejection all passed. AFK setup then hit `M_LIMIT_EXCEEDED` while Alice joined its explicitly created fixture rooms. A bounded retry now rechecks native membership before repeating that known-room join; network ambiguity is not automatically replayed. That failed run did not reach native AFK assertions or account deactivation.
 
 ## Subsequent local verification
+
+The subsequent profile metadata rules passed 282 JavaScript tests, 446 Python
+checks (eight Windows/platform skips), and the production build/typecheck.
+The integrated browser run passed 135 of 136 cases; its sole failure was an
+older nickname fixture missing the SDK's list form of `getStateEvents` and room
+identity. After correcting that fixture, all 14 affected nickname/profile
+browser checks passed using pinned full Chromium 153. Actual profile editor
+coverage includes retained rejected drafts, global-to-room projection, reset
+without waiting for sync, unavailable rules, account/server replacement during
+requests and clearing unsubmitted image crops on scope change. The native
+profile acceptance probe is mounted after eligibility; actual Synapse execution
+remains pending. A separate system-message feature is still under development
+and is excluded from these profile results.
 
 The conference authorization, background Web Push and server account requirements
 working tree passed the production build/typecheck, offline PWA check, 272

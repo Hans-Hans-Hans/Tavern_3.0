@@ -30,6 +30,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Opt-in background Web Push with persistent signing keys, encrypted provider subscriptions, generic notices, current access checks and account-scoped worker cleanup.
 - Conference token and reconnect authorization with durable modern participant identities, revocation retries and exact-device channel-plus-call removal.
 - Protected per-server verified-email and account-age requirements, with native join/post/call enforcement, source inheritance for private discussions, owner recovery and revision-safe settings.
+- Optional native server profile metadata rules for structured links, custom fields, bio and status, with inherited limits, revision-safe settings, compliant room copies and preserved rejected editor drafts.
 
 ### Changed
 

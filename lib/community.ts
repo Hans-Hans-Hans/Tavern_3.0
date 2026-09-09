@@ -5,6 +5,7 @@ import { readImageResponse } from './response-image';
 import { nativeSelfProfile } from './self-profile';
 import { effectiveRolePermissions, mayEditCategoryLayout, readRolePolicy } from './roles';
 import { serverNicknameForRoom } from './server-nickname';
+import { checkProfileMetadataPublication, visibleProfileMetadata } from './profile-metadata-policy';
 
 export const communityEvents = { layout: 'io.tavern.server.layout', channel: 'io.tavern.channel', profile: 'io.tavern.profile', preferences: 'io.tavern.community.preferences' } as const;
 export type Category = { id: string; name: string; icon: string };
@@ -59,13 +60,15 @@ export function readOwnProfile(serverId?: string): Profile {
 export function readMemberProfile(roomId: string, userId: string, serverId?: string): Profile {
   const c = getMatrixClient(), r = c?.getRoom(roomId), own = state(r, 'm.room.member', userId), server = serverId ? state(c?.getRoom(serverId), 'm.room.member', userId) : {};
   const p = server[communityEvents.profile]?.serverOverride ? server : own;
-  return normalizeProfile({ ...p[communityEvents.profile], name: serverNicknameForRoom(roomId, userId, serverId) ?? (p.displayname || r?.getMember(userId)?.name || userId), avatar: p.avatar_url });
+  return visibleProfileMetadata(normalizeProfile({ ...p[communityEvents.profile], name: serverNicknameForRoom(roomId, userId, serverId) ?? (p.displayname || r?.getMember(userId)?.name || userId), avatar: p.avatar_url }), roomId);
 }
-async function publishOwnProfile(roomId: string, profile: Profile, override: string) {
-  const { c, me } = context(roomId), old = await c.getStateEvent(roomId, 'm.room.member' as any, me);
-  if (old.membership !== 'join') throw new Error('Your room membership changed.');
+async function publishOwnProfile(roomId: string, profile: Profile, override: string, owner = getMatrixClient(), project = false) {
+  const checked = await checkProfileMetadataPublication(roomId, profile, owner, project), { client: c, actor: me, membership: old } = checked;
+  if (c !== getMatrixClient() || c.getUserId() !== me || c.getRoom(roomId)?.getMyMembership() !== 'join') throw new Error('Your account or room membership changed.');
   // Matrix authenticates self membership updates. An unprivileged user cannot overwrite another user's profile.
-  await c.sendStateEvent(roomId, 'm.room.member' as any, { ...old, membership: 'join', displayname: profile.name, avatar_url: profile.avatar, [communityEvents.profile]: { ...profile, serverOverride: override } }, me);
+  await c.sendStateEvent(roomId, 'm.room.member' as any, { ...old, membership: 'join', displayname: checked.profile.name, avatar_url: checked.profile.avatar, [communityEvents.profile]: { ...checked.profile, serverOverride: override } }, me);
+  if (c !== getMatrixClient() || c.getUserId() !== me) throw new Error('Your account changed while the profile was saving.');
+  return checked.profile;
 }
 export async function saveOwnProfile(value: Profile, serverId?: string) {
   const { c, me } = context(serverId), profile = normalizeProfile(value); if (!profile.name.trim()) throw new Error('Enter a display name.');
@@ -74,16 +77,18 @@ export async function saveOwnProfile(value: Profile, serverId?: string) {
   if (profile.fields.length !== (value.fields || []).length) throw new Error('Each custom profile field needs a label and value. Keep at most eight fields.');
   if (profile.links.length !== value.links.length) throw new Error('Profile links must use HTTP or HTTPS and cannot contain a username or password.');
   if (serverId && !c.getRoom(serverId)?.isSpaceRoom()) throw new Error('Choose a server for this profile.');
-  if (serverId) { await publishOwnProfile(serverId, profile, serverId); return; }
+  if (serverId) { await publishOwnProfile(serverId, profile, serverId, c); return; }
   // Preserve server-specific profiles, including when Synapse updates memberships after a global profile change.
   const overrides = c.getRooms().filter(r => r.getMyMembership() === 'join' && state(r, 'm.room.member', me)[communityEvents.profile]?.serverOverride).map(r => ({ id: r.roomId, profile: readOwnProfile(r.roomId), override: state(r, 'm.room.member', me)[communityEvents.profile].serverOverride as string }));
-  await c.setDisplayName(profile.name); await c.setAvatarUrl(profile.avatar); await c.setAccountData(communityEvents.profile as any, profile as any);
+  const current = () => { if (getMatrixClient() !== c || c.getUserId() !== me) throw new Error('Your account changed. Remaining profile updates were stopped.'); };
+  try { current(); await c.setDisplayName(profile.name); current(); await c.setAvatarUrl(profile.avatar); current(); await c.setAccountData(communityEvents.profile as any, profile as any); current(); }
+  catch (failure) { throw new Error(`Some account profile changes may have been saved, but the update did not finish. ${(failure as Error).message}`); }
   const overridden = new Set(overrides.map(r => r.id));
   const updates = [...overrides, ...c.getRooms().filter(r => r.getMyMembership() === 'join' && !overridden.has(r.roomId)).map(r => ({ id: r.roomId, profile, override: '' }))];
-  let failed = 0; for (let i = 0; i < updates.length; i += 4) { const results = await Promise.allSettled(updates.slice(i, i + 4).map(r => publishOwnProfile(r.id, r.profile, r.override))); failed += results.filter(r => r.status === 'rejected').length; }
-  if (failed) throw new Error(`Your account profile was saved, but ${failed} conversation profile update(s) failed. Save again to retry.`);
+  let failed = 0, detail = ''; for (let i = 0; i < updates.length; i += 4) { current(); const results = await Promise.allSettled(updates.slice(i, i + 4).map(r => publishOwnProfile(r.id, r.profile, r.override, c, true))); for (const result of results) if (result.status === 'rejected') { failed++; detail ||= result.reason instanceof Error ? result.reason.message : 'The server rejected a profile update.'; } }
+  if (failed) throw new Error(`Your account profile was saved, but ${failed} conversation profile update(s) failed. ${detail} Save again to retry.`);
 }
-export async function resetServerProfile(serverId: string) { await publishOwnProfile(serverId, readOwnProfile(), ''); }
+export async function resetServerProfile(serverId: string): Promise<Profile> { const { c, room } = context(serverId); if (!room!.isSpaceRoom()) throw new Error('Choose a server for this profile.'); return publishOwnProfile(serverId, readOwnProfile(), '', c, true); }
 export function collapsedCategories(serverId: string): string[] { const p = getMatrixClient()?.getAccountData(communityEvents.preferences as any)?.getContent(); const values = record(record(p).collapsed)[serverId]; return Array.isArray(values) ? values.filter(v => typeof v === 'string').slice(0, 100) : []; }
 let preferenceQueue: Promise<unknown> = Promise.resolve();
 export function setCollapsedCategory(serverId: string, categoryId: string, collapsed: boolean) {

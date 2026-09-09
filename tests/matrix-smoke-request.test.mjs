@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matrixSmokeJoin, matrixSmokeRequest } from '../scripts/matrix-smoke-request.mjs';
+import { matrixSmokeJoin, matrixSmokeLeave, matrixSmokeRequest } from '../scripts/matrix-smoke-request.mjs';
 const limited=delay=>({status:429,data:{errcode:'M_LIMIT_EXCEEDED',retry_after_ms:delay}});
 test('live native probes respect the reported retry delay before retrying a rejected request',async()=>{
   let calls=0;const delays=[],success={status:200,data:{event_id:'$archived'}};
@@ -39,4 +39,28 @@ test('unavailable membership and ambiguous join errors do not submit another joi
   let joins=0;
   await assert.rejects(matrixSmokeJoin(async () => ({status:403,data:{}}), async () => {joins++;throw new Error('Unknown join outcome');}), /Unknown join outcome/);
   assert.equal(joins,1);
+});
+
+test('a rate-limited leave rechecks membership and stops after confirmed departure', async () => {
+  const departed = {status:200,data:{membership:'leave'}};
+  let reads = 0, leaves = 0;
+  assert.equal(await matrixSmokeLeave(async () => ++reads === 1 ? {status:200,data:{membership:'join'}} : departed,
+    async () => {leaves++;return limited(5);}, async () => {}), departed);
+  assert.equal(reads,2); assert.equal(leaves,1);
+});
+
+test('a forbidden membership read does not silently count as a successful leave', async () => {
+  let reads = 0, leaves = 0; const success = {status:200,data:{}};
+  assert.equal(await matrixSmokeLeave(async () => {reads++;return {status:403,data:{}};},
+    async () => ++leaves === 1 ? limited(5) : success, async () => {}), success);
+  assert.equal(reads,2); assert.equal(leaves,2);
+});
+
+test('unavailable membership and ambiguous leave errors never replay departure', async () => {
+  const unavailable = {status:502,data:{}};
+  assert.equal(await matrixSmokeLeave(async () => unavailable, async () => assert.fail('No leave after unavailable membership')), unavailable);
+  let leaves = 0;
+  await assert.rejects(matrixSmokeLeave(async () => ({status:200,data:{membership:'join'}}),
+    async () => {leaves++;throw new Error('Unknown leave outcome');}), /Unknown leave outcome/);
+  assert.equal(leaves,1);
 });

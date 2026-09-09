@@ -1,7 +1,7 @@
 // Actual isolated Synapse enforcement; no account metadata or credentials are fabricated.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { matrixSmokeJoin, matrixSmokeRequest } from './matrix-smoke-request.mjs';
+import { matrixSmokeJoin, matrixSmokeLeave, matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 export async function eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture, encryptedProbe,
   origin, api, ready, encryptedResponse, encryptedEvent }) {
@@ -85,12 +85,15 @@ export async function eligibilitySmoke({ admin, alice, adminSession, aliceSessio
   const join = id => matrixSmokeJoin(
     () => native(alice, state(id, 'm.room.member', aliceSession.userId)),
     () => native(alice, '/join/' + encodeURIComponent(id), {}));
+  const leave = id => matrixSmokeLeave(
+    () => native(alice, state(id, 'm.room.member', aliceSession.userId)),
+    () => native(alice, room(id) + '/leave', {}));
   await write(false, 604800);
   rejected(await encryptedAttempt(), /7 days/, 'A current member cannot send opaque ciphertext before the native account age threshold');
   rejected(await callWrite(callPayload), /7 days/, 'A young account cannot republish native call admission');
   checked(await callWrite({}), 200, 'A restricted member can remove its own existing call membership');
   for (const id of [voice, server]) {
-    checked(await native(alice, room(id) + '/leave', {}), 200, 'A restricted member can leave the room');
+    checked(await leave(id), 200, 'A restricted member can leave the room');
     rejected(await join(id), /7 days/, 'A new native join cannot bypass the server age requirement');
   }
   await write(false, 0); // The equally young native owner can recover the server.
@@ -99,7 +102,7 @@ export async function eligibilitySmoke({ admin, alice, adminSession, aliceSessio
   rejected(await encryptedAttempt(), /Verify your email/, 'The current unverified account is rejected using the real private verification bridge');
   rejected(await callWrite(callPayload), /Verify your email/, 'Email requirements also restrict native call admission');
   for (const id of [voice, server]) {
-    checked(await native(alice, room(id) + '/leave', {}), 200, 'Email verification does not trap a member');
+    checked(await leave(id), 200, 'Email verification does not trap a member');
     rejected(await join(id), /Verify your email/, 'An unverified account cannot regain native membership');
   }
   await write(false, 0);

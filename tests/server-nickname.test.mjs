@@ -5,7 +5,7 @@ let client;
 const matrix = { getMatrixClient: () => client };
 const roles = loadTs('../lib/roles.ts', { './matrix': matrix });
 const nicknames = loadTs('../lib/server-nickname.ts', { './matrix': matrix, './roles': roles });
-const community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './server-nickname': nicknames, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}), './server-branding': {}, './self-profile': loadTs('../lib/self-profile.ts', { 'matrix-js-sdk/lib/http-api/method': { Method: { Get: 'GET' } } }) });
+const community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './server-nickname': nicknames, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}), './profile-metadata-policy': { visibleProfileMetadata: profile => profile, checkProfileMetadataPublication: async (roomId, profile, client) => ({ client, actor: client.getUserId(), membership: await client.getStateEvent(roomId, 'm.room.member', client.getUserId()), profile }) }, './server-branding': {}, './self-profile': loadTs('../lib/self-profile.ts', { 'matrix-js-sdk/lib/http-api/method': { Method: { Get: 'GET' } } }) });
 const type = nicknames.serverNicknameEvent;
 function fixture() {
   const event = (type, state_key, content, sender = '@owner:test', event_id = '$' + type + state_key) => ({ type, state_key, content, sender, event_id });

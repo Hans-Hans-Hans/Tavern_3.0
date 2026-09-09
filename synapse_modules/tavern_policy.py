@@ -12,6 +12,7 @@ try:
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from server_afk import ServerAfkPolicy, AFK
     from server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
+    from profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
     from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
@@ -22,6 +23,7 @@ except ImportError:
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
     from synapse_modules.server_afk import ServerAfkPolicy, AFK
     from synapse_modules.server_eligibility import ServerEligibilityPolicy, EligibilityDenied, ELIGIBILITY, cleanup as eligibility_cleanup
+    from synapse_modules.profile_metadata_policy import ProfileMetadataPolicy, ProfilePolicyDenied, PROFILE_POLICY
     from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
@@ -259,6 +261,8 @@ class TavernPolicy:
         self.server_afk = ServerAfkPolicy(api)
         self.server_eligibility = ServerEligibilityPolicy(config, api, SimpleNamespace(POLICY=POLICY,
             valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
+        self.profile_metadata = ProfileMetadataPolicy(api, SimpleNamespace(POLICY=POLICY,
+            valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_with_errors, on_create_room=self.on_create_room,
             check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid)
 
@@ -278,7 +282,7 @@ class TavernPolicy:
     async def check_event_with_errors(self, event, state_events):
         try:
             return await self.check_event_allowed(event, state_events)
-        except EligibilityDenied as error:
+        except (EligibilityDenied, ProfilePolicyDenied) as error:
             from synapse.module_api.errors import SynapseError
             raise SynapseError(403, str(error), 'M_FORBIDDEN') from None
 
@@ -312,6 +316,8 @@ class TavernPolicy:
             return False, None
         if eligibility_cleanup(event, state_events):
             return True, None  # Native auth still applies; account requirements cannot trap members.
+        if not await self.profile_metadata.check(event, state_events):
+            return False, None
         if not await self.server_afk.check(event, state_events):
             return False, None
         if not check_settings(event, state_events):
