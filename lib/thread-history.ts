@@ -2,9 +2,38 @@ import { Direction, RoomEvent, ThreadEvent, type EventTimeline, type MatrixClien
 import { resolveJoinedEvent } from './resolve-event';
 
 const initialReads = new WeakMap<MatrixClient, WeakMap<Room, Map<string, Promise<Thread>>>>();
-const olderReads = new WeakMap<Thread, { promise: Promise<boolean>; timeline: EventTimeline }>();
+const olderReads = new WeakMap<Thread, { promise: Promise<boolean>; history: ThreadHistoryGraph }>();
 const initialTimeout = 20_000;
 const unavailable = () => new Error('Thread history did not finish loading. Reconnect your Matrix session and reopen this thread.');
+const timelineChanged = () => new Error('The thread timeline changed while loading earlier replies. Reopen the thread.');
+export type ThreadHistoryGraph = { timelines: EventTimeline[]; oldest: EventTimeline; cursor: string | null };
+
+/** A null cursor ends one SDK segment, not necessarily the connected history.
+ * Follow only reciprocal older links belonging to this exact thread timeline set. */
+export function threadHistoryGraph(thread: Thread): ThreadHistoryGraph {
+  const set = thread.timelineSet, timelines: EventTimeline[] = [], seen = new Set<EventTimeline>();
+  let timeline: EventTimeline | null = set.getLiveTimeline();
+  while (timeline) {
+    if (seen.has(timeline) || timeline.getTimelineSet() !== set || timeline.getRoomId() !== thread.room.roomId) throw timelineChanged();
+    if (timelines.length >= 256) throw new Error('This thread exceeds the 256 connected-timeline discovery limit. The participant list remains incomplete.');
+    seen.add(timeline); timelines.push(timeline);
+    const older: EventTimeline | null = timeline.getNeighbouringTimeline(Direction.Backward);
+    if (older && older.getNeighbouringTimeline(Direction.Forward) !== timeline) throw timelineChanged();
+    timeline = older;
+  }
+  const oldest = timelines[timelines.length - 1];
+  if (!oldest) throw timelineChanged();
+  const cursor = oldest.getPaginationToken(Direction.Backward);
+  if (cursor !== null && cursor !== undefined && (typeof cursor !== 'string' || !cursor || cursor.length > 8192)) throw new Error('The homeserver returned an invalid thread history cursor. Reopen this thread.');
+  return { timelines, oldest, cursor: cursor ?? null };
+}
+
+/** Appends within segments and a completed cursor advance are normal. A reset
+ * or relink changes the read's scope, even if the live timeline stays the same. */
+export function assertThreadHistoryGraph(thread: Thread, previous: ThreadHistoryGraph) {
+  const next = threadHistoryGraph(thread);
+  if (next.timelines.length !== previous.timelines.length || next.timelines.some((timeline, index) => timeline !== previous.timelines[index])) throw timelineChanged();
+}
 
 function scope(client: MatrixClient, room: Room, current: () => boolean, thread?: Thread) {
   if (!current() || client.getRoom(room.roomId) !== room || room.getMyMembership() !== 'join') throw new Error('Your account or room access changed. Reopen the conversation.');
@@ -69,16 +98,33 @@ export async function ensureThreadHistory(client: MatrixClient, room: Room, root
   return thread;
 }
 
-export async function readThreadEvents(client: MatrixClient, room: Room, rootId: string, cachedRoot: MatrixEvent | undefined, current: () => boolean): Promise<MatrixEvent[]> {
-  const thread = await ensureThreadHistory(client, room, rootId, cachedRoot, current);
-  scope(client, room, current, thread);
+export async function readThreadSnapshot(client: MatrixClient, room: Room, rootId: string, cachedRoot: MatrixEvent | undefined, current: () => boolean): Promise<{ events: MatrixEvent[]; assertCurrent: () => void }> {
+  const actor = client.getUserId(), device = client.getDeviceId();
+  const owned = () => current() && client.getUserId() === actor && client.getDeviceId() === device;
+  const thread = await ensureThreadHistory(client, room, rootId, cachedRoot, owned);
+  scope(client, room, owned, thread);
   // The SDK retains edits/reactions in its own timeline for aggregation. The
   // message projection will select direct replies after normal decryption.
-  return thread.events.filter(event => event.getRoomId() === room.roomId);
+  const history = threadHistoryGraph(thread), seen = new Set<string>(), events: MatrixEvent[] = [];
+  for (const timeline of [...history.timelines].reverse()) for (const event of timeline.getEvents()) {
+    const id = event.getId();
+    if (event.getRoomId() !== room.roomId || id && seen.has(id)) continue;
+    if (id) seen.add(id);
+    events.push(event);
+  }
+  const assertCurrent = () => { scope(client, room, owned, thread); assertThreadHistoryGraph(thread, history); };
+  assertCurrent();
+  return { events, assertCurrent };
+}
+
+export async function readThreadEvents(client: MatrixClient, room: Room, rootId: string, cachedRoot: MatrixEvent | undefined, current: () => boolean): Promise<MatrixEvent[]> {
+  const snapshot = await readThreadSnapshot(client, room, rootId, cachedRoot, current);
+  snapshot.assertCurrent();
+  return snapshot.events;
 }
 
 export function threadHistoryHasOlder(client: MatrixClient, room: Room, rootId: string): boolean {
-  try { const thread = room.getThread(rootId); if (!thread) return false; scope(client, room, () => true, thread); return thread.initialEventsFetched && !!thread.timelineSet.getLiveTimeline().getPaginationToken(Direction.Backward); } catch { return false; }
+  try { const thread = room.getThread(rootId); if (!thread) return false; scope(client, room, () => true, thread); return thread.initialEventsFetched && threadHistoryGraph(thread).cursor !== null; } catch { return false; }
 }
 
 export async function loadOlderThreadHistory(client: MatrixClient, room: Room, rootId: string, cachedRoot: MatrixEvent | undefined, current: () => boolean): Promise<boolean> {
@@ -86,15 +132,16 @@ export async function loadOlderThreadHistory(client: MatrixClient, room: Room, r
   scope(client, room, current, thread);
   let request = olderReads.get(thread);
   if (!request) {
-    const timeline = thread.timelineSet.getLiveTimeline();
-    if (!timeline.getPaginationToken(Direction.Backward)) return false;
-    request = { promise: client.paginateEventTimeline(timeline, { backwards: true, limit: 50 }), timeline };
+    const history = threadHistoryGraph(thread);
+    if (history.cursor === null) return false;
+    request = { promise: client.paginateEventTimeline(history.oldest, { backwards: true, limit: 50 }), history };
     olderReads.set(thread, request);
     const release = () => { if (olderReads.get(thread) === request) olderReads.delete(thread); };
     void request.promise.then(release, release);
   }
+  assertThreadHistoryGraph(thread, request.history);
   const hasMore = await request.promise;
   scope(client, room, current, thread);
-  if (thread.timelineSet.getLiveTimeline() !== request.timeline) throw new Error('The thread timeline changed while loading earlier replies. Reopen the thread.');
+  assertThreadHistoryGraph(thread, request.history);
   return hasMore;
 }

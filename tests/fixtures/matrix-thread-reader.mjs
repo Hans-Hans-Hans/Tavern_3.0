@@ -13,11 +13,15 @@ export function matrixThreadReader(client) {
     './room-read-scope': loadTs('../lib/room-read-scope.ts', {}),
     './message-projection': loadTs('../lib/message-projection.ts', {}),
     './webhook-metadata': { webhookMetadata: () => null },
+    './api': { accountArtworkOwner: () => accountOwner },
   };
+  let accountOwner = {};
+  dependencies['./thread-participants'] = loadTs('../lib/thread-participants.ts', { 'matrix-js-sdk': sdk, './thread-history': dependencies['./thread-history'] });
   const source = readFileSync(new URL('../../lib/matrix.ts', import.meta.url), 'utf8') + '\nexport function fixtureClient(value:any,moduleSdk:any){client=value;if(moduleSdk)sdk=moduleSdk;eventCache.clear();}\nexport function fixtureCache(event:any){eventCache.set(event.getId(),event);}\nexport function fixtureCacheIds(){return [...eventCache.keys()];}';
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   new Function('require', 'exports', compiled)(name => dependencies[name] || new Proxy({}, { get: (_value, key) => { throw new Error(`Unexpected dependency in Matrix read fixture: ${name}.${String(key)}`); } }), exports);
   exports.fixtureClient(client, sdk);
+  exports.fixtureAccountChanged = () => { accountOwner = {}; };
   return exports;
 }

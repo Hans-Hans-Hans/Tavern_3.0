@@ -6,7 +6,8 @@ import { isPrivateDiscussion } from './conversation-routing';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
 import { readJoinedRoom } from './room-read-scope';
-import { loadOlderThreadHistory, readThreadEvents, threadHistoryHasOlder } from './thread-history';
+import { loadOlderThreadHistory, readThreadSnapshot, threadHistoryHasOlder } from './thread-history';
+import { discoverThreadParticipants, type ThreadParticipantOptions } from './thread-participants';
 import { disposeCachedImageOwner } from './image-cache';
 import { hydrateSelfProfile, nativeSelfProfile, clearSelfProfile } from './self-profile';
 import { webhookMetadata } from './webhook-metadata';
@@ -52,6 +53,7 @@ export function getMatrixClient(){return client}
 export function matrixSessionInProgress(){return !!sessionPromise||!!client||securityOperationInProgress();}
 export function threadHasOlder(roomId:string,rootId:string){const c=client,room=c?.getRoom(roomId);return !!c&&!!room&&threadHistoryHasOlder(c,room,rootId);}
 export async function loadThreadHistory(roomId:string,rootId:string){const c=requireClient(),room=roomRequired(roomId);await readJoinedRoom(c,room,()=>client===c,()=>loadOlderThreadHistory(c,room,rootId,eventCache.get(rootId),()=>client===c),()=>notify());}
+export async function discoverMatrixThreadParticipants(roomId:string,rootId:string,options:ThreadParticipantOptions={}){const c=requireClient(),room=roomRequired(roomId),actor=c.getUserId(),device=c.getDeviceId(),owner=accountArtworkOwner();const current=()=>client===c&&c.getUserId()===actor&&c.getDeviceId()===device&&accountArtworkOwner()===owner;return discoverThreadParticipants(c,room,rootId,eventCache.get(rootId),current,options);}
 function baseUrl(value:string){const u=new URL(value);if(u.protocol!=='https:')throw new Error('Use an HTTPS homeserver address.');if(u.username||u.password||u.search||u.hash)throw new Error('Enter only the HTTPS homeserver address.');return u.href.replace(/\/$/,'')}
 async function attachSession(s:any){
  sdk??=await import('matrix-js-sdk');
@@ -139,12 +141,14 @@ function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Re
  return {id,webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Open History recovery to restore saved message keys.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:relation?.rel_type==='m.thread'?relation.event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
- const owner=requireClient();return readJoinedRoom(owner,room,()=>client===owner,async()=>{
+ const owner=requireClient(),account=accountArtworkOwner();let validateThread=()=>{};const current=()=>client===owner&&(!parent||accountArtworkOwner()===account);return readJoinedRoom(owner,room,current,async()=>{
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
- if(parent)events=await readThreadEvents(owner,room,parent,eventCache.get(parent),()=>client===owner);
+ if(parent){const snapshot=await readThreadSnapshot(owner,room,parent,eventCache.get(parent),current);events=snapshot.events;validateThread=snapshot.assertCurrent;validateThread();}
  await Promise.all(events.filter(e=>e.isEncrypted()).map(e=>owner.decryptEventIfNeeded(e).catch(()=>{})));
+ validateThread();
  return events;
  },events=>{
+ validateThread();
  const context={reactions:indexReactions(allEvents(room),owner.getUserId()),pinned:new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned)),saved:new Set<string>(savedEvents().map((e:any)=>e.id))};
  return events.filter(e=>(e.getType()==='m.room.message'||e.isDecryptionFailure())&&!e.isRedacted()&&e.getContent()['m.relates_to']?.rel_type!=='m.replace').map(e=>normalize(room,e,context)).filter(m=>parent?m.parent_id===parent:includeThreads||!m.parent_id);
  });

@@ -101,8 +101,9 @@ test('late pagination is rejected after account, membership or live-timeline rep
 
 test('a stalled initialization is bounded and does not call private metadata methods or fabricate an empty success', async context => {
   context.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
-  const room = Object.assign(new EventEmitter(), { roomId: '!slow:local', getMyMembership: () => 'join' }), client = { getRoom: () => room };
+  const room = Object.assign(new EventEmitter(), { roomId: '!slow:local', getMyMembership: () => 'join' }), client = { getRoom: () => room, getUserId: () => '@me:local', getDeviceId: () => 'fixture' };
   const thread = Object.assign(new EventEmitter(), { id: '$root', room, client, initialEventsFetched: false, events: [], updateThreadMetadata: () => assert.fail('Private SDK method must never be called') });
+  thread.timelineSet = new sdk.EventTimelineSet(room, { thread, timelineSupport: true });
   room.getThread = () => thread;
   const pending = api.readThreadEvents(client, room, '$root', undefined, () => true); const rejection = assert.rejects(pending, /Reconnect your Matrix session/);
   await turn(); thread.emit(sdk.ThreadEvent.Update, thread); await turn();
@@ -140,4 +141,27 @@ test('late actual Matrix decryption cannot repopulate the next account event cac
   await until(() => decrypting && f.room.getThread(f.rootId)?.initialEventsFetched);
   matrix.fixtureClient(null); gate.resolve(); await assert.rejects(pending, /account or room access changed/);
   assert.deepEqual(matrix.fixtureCacheIds(), []);
+});
+
+test('late actual Matrix decryption cannot publish replies after a thread graph or owning session changes', async () => {
+  for (const mode of ['reset', 'link', 'actor', 'device', 'api-generation']) {
+    const f = threadHistoryFixture(); await read(f);
+    const matrix = matrixThreadReader(f.client), gate = deferred(); let decrypting = false;
+    f.client.decryptEventIfNeeded = async () => { decrypting = true; await gate.promise; };
+    matrix.fixtureCache(f.root);
+    const pending = matrix.matrixApi('messages', undefined, { conversation: f.room.roomId, parent: f.rootId });
+    await until(() => decrypting);
+    const thread = f.room.getThread(f.rootId);
+    if (mode === 'reset') thread.timelineSet.resetLiveTimeline('replacement');
+    if (mode === 'link') {
+      const live = thread.timelineSet.getLiveTimeline(), old = thread.timelineSet.addTimeline();
+      live.setNeighbouringTimeline(old, sdk.Direction.Backward); old.setNeighbouringTimeline(live, sdk.Direction.Forward);
+    }
+    if (mode === 'actor') f.client.credentials.userId = '@replacement:local';
+    if (mode === 'device') f.client.getDeviceId = () => 'replacement';
+    if (mode === 'api-generation') { matrix.fixtureAccountChanged(); matrix.fixtureAccountChanged(); }
+    gate.resolve();
+    await assert.rejects(pending, /changed/);
+    assert.deepEqual(matrix.fixtureCacheIds(), [f.rootId]);
+  }
 });

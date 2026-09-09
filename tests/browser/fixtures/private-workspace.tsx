@@ -6,11 +6,12 @@ import { SidebarProvider } from '../../../components/ui/sidebar';
 import { Workspace } from '../../../app/tavern';
 import { defaultRolePolicy } from '../../../lib/roles';
 import { isPrivateDiscussion } from '../../../lib/conversation-routing';
+import { setAccountDevice } from '../../../lib/api';
 import '../../../app/globals.css';
 
 export function mountFixture() {
   const w = window as any, me='@owner:local', parameters=new URLSearchParams(location.search), client=createClient({baseUrl:location.origin,userId:me,deviceId:'D1'});
-  const rooms=new Map<string,any>(),raws=new Map<string,any[]>();w.calls=[];w.listeners=new Set();w.resolved=[];w.notify=()=>w.listeners.forEach((fn:any)=>fn());
+  const rooms=new Map<string,any>(),raws=new Map<string,any[]>();w.calls=[];w.listeners=new Set();w.resolved=[];w.notify=()=>w.listeners.forEach((fn:any)=>fn());w.replaceAccount=()=>{setAccountDevice('B');setAccountDevice('A');w.notify();};
   function make(id:string,name:string,kind='',membership='join',source='') {
     const room=new Room(id,client,me,{pendingEventOrdering:'detached'} as any);
     const raw=(type:string,content:any,state_key='')=>({type,content,state_key,room_id:id,event_id:'$'+type+id+state_key,sender:me,origin_server_ts:1000});
@@ -38,7 +39,7 @@ export function mountFixture() {
     if(name==='getMatrixClient')return client;if(name==='onMatrixUpdate'){w.listeners.add(args[0]);return()=>w.listeners.delete(args[0]);}
     if(name==='matrixStatus')return{connected:true,state:'Connected'};if(name==='matrixTyping')return[];if(name==='restoreMatrixSession')return Promise.resolve(true);
     if(name==='resolveMatrixMessage'){w.resolved.push(args);if(w.deferResolve)return new Promise(resolve=>{w.resolveDelayed=()=>resolve(w.publicMessage);});return Promise.resolve(args[1]==='$older'?message('$older',args[0],'Older private target'):(messages[args[0]]||[]).find((item:any)=>item.id===args[1])||w.publicMessage);}
-    if(name==='matrixApi'){const[action,p,params]=args;w.calls.push([action,p,params]);if(action==='bootstrap')return Promise.resolve(bootstrap());if(action==='messages')return Promise.resolve({messages:params?.parent?[]:messages[params?.conversation]||[],hasMore:false});if(action==='saved')return Promise.resolve({messages:[w.privateMessage],hasMore:false});if(action==='send'){(messages[p.conversation]??=[]).push(message('$sent'+w.calls.length,p.conversation,p.body));w.notify();return Promise.resolve({ok:true});}if(action==='read')return Promise.resolve({ok:true});return Promise.resolve({messages:[],hasMore:false});}
+    if(name==='matrixApi'){const[action,p,params]=args;w.calls.push([action,p,params]);if(action==='messages'&&params?.parent&&w.deferThreadReplies)return new Promise((resolve,reject)=>{(w.threadRequests??=[]).push({params,resolve:(bodies:string[])=>resolve({messages:bodies.map((body,index)=>({...message('$reply-'+body+'-'+index,params.conversation,body),parent_id:params.parent})),hasMore:false}),reject});});if(action==='bootstrap')return Promise.resolve(bootstrap());if(action==='messages')return Promise.resolve({messages:params?.parent?[]:messages[params?.conversation]||[],hasMore:false});if(action==='saved')return Promise.resolve({messages:[w.privateMessage],hasMore:false});if(action==='send'){(messages[p.conversation]??=[]).push(message('$sent'+w.calls.length,p.conversation,p.body));w.notify();return Promise.resolve({ok:true});}if(action==='read')return Promise.resolve({ok:true});return Promise.resolve({messages:[],hasMore:false});}
     return Promise.resolve();
   };
   w.ready=true;createRoot(document.getElementById('root')!).render(<TooltipProvider><SidebarProvider><Workspace/></SidebarProvider></TooltipProvider>);

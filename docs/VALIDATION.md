@@ -4,6 +4,14 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+The subsequent historical participant-discovery changes pass the production
+build, all 422 JavaScript checks, and 23 focused thread/private-workspace browser
+checks. Actual SDK timeline fixtures cover connected older segments, cursor
+continuation, sender discovery without decryption keys, cancellation and
+reset/relink/account changes during pagination or decryption. Mounted Workspace
+checks cover reversed reply responses, close/reopen and account/access changes.
+These local results do not establish a new passing deployed-stack workflow.
+
 The production build and all 404 JavaScript checks pass. The complete browser
 suite passes all 210 checks. Nine new modal checks cover 320–1280px viewports,
 short windows, live resizing, wrapped settings tabs, reachable controls and

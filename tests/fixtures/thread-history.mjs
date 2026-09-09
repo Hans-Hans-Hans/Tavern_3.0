@@ -21,6 +21,7 @@ export function threadHistoryFixture({ empty = false, rootId = '$historical/root
     if (url.pathname.includes('/relations/')) {
       if (state.pageGate) await state.pageGate;
       if (state.failPage) return response({ errcode: 'M_FORBIDDEN', error: 'History access was denied' }, 403);
+      if (state.historyPages && url.searchParams.get('from')) return response(state.historyPages(url.searchParams.get('from')));
       // A message-only filter would exclude all three encrypted wire events.
       if (url.pathname.endsWith('/m.room.message')) return response({ chunk: [] });
       return response(empty ? { chunk: [] } : url.searchParams.get('from') ? { chunk: [second, first] } : { chunk: [latest], next_batch: 'older-replies' });
