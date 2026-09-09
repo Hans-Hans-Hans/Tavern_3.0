@@ -270,7 +270,7 @@ async def account_export(request):
     session = service.require_session(request)
     service.store.rate("export:" + session["user_id"], 3, 3600)
     token, user_id = service.store.open(session["token"]), session["user_id"]
-    keys = ["io.harbor.preferences", "io.harbor.bookmarks", "io.harbor.workspace", "io.tavern.profile", "io.tavern.community.preferences"]
+    keys = ["io.harbor.preferences", "io.harbor.bookmarks", "io.harbor.workspace", "io.tavern.profile", "io.tavern.community.preferences", "io.tavern.privacy"]
     settings = {}
     for key in keys:
         status, value = await service.matrix("GET", "/_matrix/client/v3/user/" + quote(user_id, safe="") + "/account_data/" + key, token=token, expected=False)

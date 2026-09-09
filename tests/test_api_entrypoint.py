@@ -16,11 +16,13 @@ import runpy,sys
 from unittest.mock import patch
 sys.path.insert(0,'api')
 def inspect(app,**kwargs):
-    import integrations_admin,admin_resources,community_api,server
+    import integrations_admin,admin_resources,community_api,invitation_privacy,admin_users,server
     expected=app.middlewares[0].__globals__['APIError']
     assert integrations_admin.APIError is expected
     assert admin_resources.APIError is expected
     assert community_api.APIError is expected
+    assert invitation_privacy.APIError is expected
+    assert admin_users.APIError is expected
     assert server.APIError is expected
     app['service'].store.db.close()
 with patch('aiohttp.web.run_app',inspect):

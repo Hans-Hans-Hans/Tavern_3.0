@@ -177,6 +177,12 @@ def install_policy(root, config):
     target = root / 'synapse/tavern_modules'
     target.mkdir(exist_ok=True, mode=0o750)
     own(target, 991)
+    privacy_key = root / 'synapse/tavern-privacy.key'
+    write_new(privacy_key, secrets.token_hex(32) + '\n', 0o640)
+    if not re.fullmatch(r'[0-9a-f]{64}', privacy_key.read_text(encoding='utf-8').strip()):
+        raise ConfigurationError('tavern-privacy.key is invalid. Restore the existing consent-service key before starting.')
+    os.chmod(privacy_key, 0o640)
+    own(privacy_key, 991)
     for module in bundled.glob('*.py'):
         pending = target / (module.name + '.pending')
         shutil.copyfile(module, pending)
@@ -184,14 +190,19 @@ def install_policy(root, config):
         own(pending, 991)
         pending.replace(target / module.name)
     modules = config.setdefault('modules', [])
-    if not any(item.get('module') == 'tavern_policy.TavernPolicy' for item in modules):
+    installed = next((item for item in modules if item.get('module') == 'tavern_policy.TavernPolicy'), None)
+    privacy_config = {'privacy_api_url': 'http://tavern-api:8090', 'privacy_key_file': '/data/tavern-privacy.key'}
+    if installed is None or any(installed.get('config', {}).get(key) != value for key, value in privacy_config.items()):
         # This one additive migration installs server-side authorization. Preserve
         # an exact before image; do not alter existing accounts, rooms, or keys.
         original = root / 'synapse/homeserver.yaml'
         backup = root / 'synapse/homeserver.before-policy.yaml'
         write_new(backup, original.read_text(encoding='utf-8'), 0o640)
         own(backup, 991)
-        modules.append({'module': 'tavern_policy.TavernPolicy', 'config': {}})
+        if installed is None:
+            modules.append({'module': 'tavern_policy.TavernPolicy', 'config': privacy_config})
+        else:
+            installed.setdefault('config', {}).update(privacy_config)
         pending_config = root / 'synapse/homeserver.yaml.pending'
         pending_config.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
         pending_config.replace(original)

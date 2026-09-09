@@ -259,7 +259,10 @@ class Operator:
                 mounts=[docker.types.Mount('/var/lib/postgresql/data', volumes['postgres']), docker.types.Mount('/run/secrets', volumes['secrets'], read_only=True)], labels=labels)
             postgres.start()
             for _ in range(120):
-                if postgres.exec_run(['pg_isready', '-U', 'synapse', '-d', 'synapse']).exit_code == 0:
+                # The image's initialization server accepts Unix sockets before
+                # database creation and shuts down again. TCP becomes available
+                # only on the final server, after initialization has finished.
+                if postgres.exec_run(['pg_isready', '-h', '127.0.0.1', '-U', 'synapse', '-d', 'synapse']).exit_code == 0:
                     break
                 time.sleep(1)
             else:

@@ -349,6 +349,12 @@ class Service:
         device = request.headers.get("X-Tavern-Device")
         if device is not None and not hmac.compare_digest(device, session["device_id"]):
             raise APIError(401, "This browser is now using a different device session. Reload Tavern before continuing.", "M_UNKNOWN_TOKEN")
+        account = self.store.account(session['user_id'])
+        if account.get('access_blocked') and request.path != '/api/auth/logout':
+            raise APIError(403, 'This account is restricted. Contact your administrator.', 'ACCOUNT_RESTRICTED')
+        allowed = {'/api/auth/session', '/api/auth/logout', '/api/account/security', '/api/account/security/email-code', '/api/account/password'}
+        if account.get('password_change_required') and request.path not in allowed:
+            raise APIError(403, 'Change your password before continuing.', 'PASSWORD_CHANGE_REQUIRED')
         return session
 
     async def require_admin(self, request):
@@ -363,7 +369,7 @@ class Service:
         status, result = await self.matrix("GET", "/_synapse/admin/v1/users/" + quote(session["user_id"], safe="") + "/admin", token=self.store.open(session["token"]), expected=False)
         return {"userId": session["user_id"], "deviceId": session["device_id"], "baseUrl": self.config.public_url + "/api/matrix",
                 "admin": status == 200 and result.get("admin") is True, "displayName": account.get("display_name", ""),
-                "email": account.get("email", ""), "emailVerified": bool(account.get("verified"))}
+                "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "passwordChangeRequired": bool(account.get('password_change_required'))}
 
     async def issue_session(self, request, login, remember=False):
         status, _ = await self.matrix("GET", "/_matrix/client/v3/account/whoami", token=login["access_token"], expected=False)
@@ -496,15 +502,22 @@ class Service:
         if local:
             username = local[0]
         password = text_value(data.get("password"), 1024)
+        started = time.time()
         login = await self.login_upstream(username, password)
         # Evaluate factors only while holding the same lock used by enrollment,
         # revocation and password changes. A login started during enrollment must
         # observe the new factor even if its Matrix device was created earlier.
         async with self.user_locks.setdefault(login["user_id"], asyncio.Lock()):
+            if self.store.account(login['user_id']).get('credential_epoch', 0) > started:
+                await self.matrix('POST', '/_matrix/client/v3/logout', {}, login['access_token'], expected=False)
+                raise APIError(401, 'Account security changed while signing in. Start sign-in again.', 'M_UNKNOWN_TOKEN')
             return await self.complete_login(request, login, data.get("remember") is True)
 
     async def complete_login(self, request, login, remember):
         account = self.store.account(login["user_id"])
+        if account.get('access_blocked'):
+            await self.matrix('POST', '/_matrix/client/v3/logout', {}, login['access_token'], expected=False)
+            raise APIError(403, 'This account is restricted. Contact your administrator.', 'ACCOUNT_RESTRICTED')
         methods = self.methods(account)
         if methods:
             code = str(secrets.randbelow(1000000)).zfill(6) if "email" in methods else None
@@ -736,8 +749,9 @@ class Service:
         if data.get("newPassword") == data.get("currentPassword"):
             raise APIError(400, "Choose a different new password.")
         session = await self.require_sensitive(request, data)
-        logout_others = data.get("logoutOtherDevices", True) is not False
+        logout_others = bool(self.store.account(session['user_id']).get('password_change_required')) or data.get("logoutOtherDevices", True) is not False
         await self.uia(session, "/_matrix/client/v3/account/password", {"new_password": data["newPassword"], "logout_devices": logout_others}, data["currentPassword"])
+        self.store.db.execute('UPDATE accounts SET password_change_required=0,credential_epoch=? WHERE user_id=?', (time.time(), session['user_id']))
         if logout_others:
             self.store.db.execute("DELETE FROM sessions WHERE user_id=? AND id<>?", (session["user_id"], session["id"]))
             self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='login'", (session["user_id"],))
@@ -751,6 +765,11 @@ class Service:
         if data.get("confirmation") != session["user_id"]:
             raise APIError(400, "Type your full Matrix user ID to confirm account deletion.")
         session = await self.require_sensitive(request, data)
+        status, admin = await self.matrix('GET', '/_synapse/admin/v1/users/' + quote(session['user_id'], safe='') + '/admin', token=self.store.open(session['token']), expected=False)
+        if status not in (200, 403):
+            raise APIError(503, 'Administrator status could not be checked. Account deactivation remains locked.')
+        if admin.get('admin') is True:
+            raise APIError(400, 'An administrator account must be deactivated by another active administrator.')
         await self.uia(session, "/_matrix/client/v3/account/deactivate", {"erase": data.get("erase") is True}, data["password"])
         await self.security_notice(session["user_id"], "Account deactivated", "Your Tavern account has been deactivated. Copies already held by other people are not removed.")
         self.store.db.execute("DELETE FROM sessions WHERE user_id=?", (session["user_id"],))
@@ -834,6 +853,7 @@ class Service:
         self.store.consume(challenge["id"])
         token = await self.service_token()
         await self.matrix("POST", "/_synapse/admin/v1/reset_password/" + quote(challenge["user_id"], safe=""), {"new_password": data["newPassword"], "logout_devices": True}, token)
+        self.store.db.execute('UPDATE accounts SET password_change_required=0,credential_epoch=? WHERE user_id=?', (time.time(), challenge['user_id']))
         self.store.db.execute("DELETE FROM sessions WHERE user_id=?", (challenge["user_id"],))
         self.audit(challenge["user_id"], "password_recovered", challenge["user_id"])
         await self.security_notice(challenge["user_id"], "Password recovered", "Your Tavern password was reset and all devices were signed out. Your encryption recovery key is still needed to restore encrypted history.")
@@ -850,10 +870,7 @@ class Service:
         session = await self.require_admin(request)
         token = self.store.open(session["token"])
         if request.method == "GET":
-            start = max(0, int(request.query.get("from", "0")))
-            name = request.query.get("search", "")[:200]
-            result = await self.matrix("GET", "/_synapse/admin/v2/users?limit=50&from=" + str(start) + "&name=" + quote(name, safe=""), token=token)
-            return web.json_response(result)
+            return await import_module((__package__ + '.' if __package__ else '') + 'admin_users').listing(request)
         data = await body_json(request)
         username = text_value(data.get("username"), 64)
         if not re.fullmatch(r"[a-z0-9][a-z0-9._=-]{0,63}", username):
@@ -871,25 +888,7 @@ class Service:
         return web.json_response({"userId": login["user_id"]}, status=201)
 
     async def admin_user_update(self, request):
-        session = await self.require_admin(request)
-        data, target = await body_json(request), request.match_info["user_id"]
-        if target == session["user_id"] and (data.get("deactivated") is True or data.get("admin") is False):
-            raise APIError(400, "Use another administrator account to change your own administrator access.")
-        service = self.store.get("service_account", {})
-        if target == service.get("userId"):
-            raise APIError(400, "The account service identity is managed by Tavern.")
-        allowed = {key: value for key, value in data.items() if key in {"displayname", "admin", "deactivated", "locked"}}
-        if "password" in data:
-            error = password_error(data["password"])
-            if error:
-                raise APIError(400, error)
-            allowed["password"] = data["password"]
-            allowed["logout_devices"] = True
-        result = await self.matrix("PUT", "/_synapse/admin/v2/users/" + quote(target, safe=""), allowed, self.store.open(session["token"]))
-        if data.get("deactivated") or "password" in data:
-            self.store.db.execute("DELETE FROM sessions WHERE user_id=?", (target,))
-        self.audit(session["user_id"], "user_updated", target, ", ".join(allowed))
-        return web.json_response({key: result.get(key) for key in ("name", "displayname", "admin", "deactivated", "locked")})
+        return await import_module((__package__ + '.' if __package__ else '') + 'admin_users').update(request)
 
     async def admin_settings(self, request):
         session = await self.require_admin(request)
@@ -1116,7 +1115,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin"):
+    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users"):
         import_module(prefix + module).register_routes(app)
     return app
 

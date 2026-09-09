@@ -88,12 +88,21 @@ jobs:
           COMPOSE_PROFILES: operations
           OPERATIONS_ENABLED: 'true'
           TAVERN_OPERATIONS_IMAGE: tavern-operations:check
+          COMPOSE_FILE: compose.yaml:scripts/ci-live-compose.yaml
+          TAVERN_CI_TLS: /tmp/tavern-ci-tls
+          TAVERN_CI_SMOKE: 'true'
         run: |
+          mkdir -p "$TAVERN_CI_TLS"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$TAVERN_CI_TLS/key.pem" -out "$TAVERN_CI_TLS/cert.pem" -subj '/CN=chat.example.test' -addext 'subjectAltName=DNS:chat.example.test,DNS:ci-mail'
+          cat /etc/ssl/certs/ca-certificates.crt "$TAVERN_CI_TLS/cert.pem" > "$TAVERN_CI_TLS/ca-bundle.pem"
+          chmod 644 "$TAVERN_CI_TLS"/*.pem
           docker compose -p tavern-ci up -d --build --wait --wait-timeout 240
           curl --fail http://127.0.0.1:18081/health
           curl --fail http://127.0.0.1:18081/api/system/version
           curl --fail http://127.0.0.1:18081/_matrix/client/versions
-          docker compose -p tavern-ci exec -T operations python /app/smoke.py
+          docker compose -p tavern-ci exec -T -e TAVERN_CI_SMOKE=true operations python /app/smoke.py
+          curl --fail --retry 10 --retry-all-errors --retry-delay 1 --connect-timeout 3 --max-time 5 http://127.0.0.1:18081/api/auth/config
+          node scripts/smoke-live.mjs
           docker compose -p tavern-ci exec -T synapse python -c 'from pathlib import Path; import hashlib; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())' > /tmp/tavern-identity-before
           docker compose -p tavern-ci down
           docker compose -p tavern-ci up -d --wait --wait-timeout 240
@@ -105,4 +114,6 @@ jobs:
         env:
           TAVERN_DOMAIN: chat.example.test
           NPM_PROXY_NETWORK: tavern_ci_proxy
+          COMPOSE_FILE: compose.yaml:scripts/ci-live-compose.yaml
+          TAVERN_CI_TLS: /tmp/tavern-ci-tls
         run: docker compose -p tavern-ci logs --tail=100

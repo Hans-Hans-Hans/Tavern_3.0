@@ -37,6 +37,8 @@ export function onMatrixUpdate(fn:()=>void){watchers.add(fn);return()=>{watchers
 export function matrixStatus(){return {connected:!!client,state:syncState,homeserver:client?.getHomeserverUrl(),userId:client?.getUserId(),deviceId:client?.getDeviceId(),crypto:!!client?.getCrypto()}}
 export function getMatrixClient(){return client}
 export function matrixSessionInProgress(){return !!sessionPromise||!!client||securityOperationInProgress();}
+export function threadHasOlder(roomId:string,rootId:string){const timeline=client?.getRoom(roomId)?.getThread(rootId)?.timelineSet.getLiveTimeline();return !!timeline?.getPaginationToken(sdk.Direction.Backward);}
+export async function loadThreadHistory(roomId:string,rootId:string){const c=requireClient(),room=roomRequired(roomId);if(!room.getThread(rootId))await getRoomMessages(room,rootId);const timeline=room.getThread(rootId)?.timelineSet.getLiveTimeline();if(!timeline)throw new Error('This thread history is unavailable. Reopen the thread and try again.');await c.paginateEventTimeline(timeline,{backwards:true,limit:50});notify();}
 function baseUrl(value:string){const u=new URL(value);if(u.protocol!=='https:')throw new Error('Use an HTTPS homeserver address.');if(u.username||u.password||u.search||u.hash)throw new Error('Enter only the HTTPS homeserver address.');return u.href.replace(/\/$/,'')}
 async function attachSession(s:any){
  sdk??=await import('matrix-js-sdk');
@@ -130,10 +132,10 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='read'){const room=roomRequired(p.conversation);const event=p.id?room.findEventById(p.id):null;if(event&&!event.status&&lastReceipts.get(room.roomId)!==p.id){lastReceipts.set(room.roomId,p.id);try{await c.sendReadReceipt(event,sdk.ReceiptType.ReadPrivate)}catch(e){lastReceipts.delete(room.roomId);throw e}}return {ok:true}}
  if(action==='send'){
   const room=roomRequired(p.conversation);if(p.parent){const root=room.findEventById(p.parent);if(root&&root.getRoomId()!==room.roomId)throw new Error('Thread belongs to another room.');}
-  const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:room.getJoinedMembers().filter(m=>p.body.includes('@'+m.name)||p.body.includes(m.userId)).map(m=>m.userId)}};
+  const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:room.getJoinedMembers().filter(m=>p.body.includes('@'+m.name)||p.body.includes(m.userId)).map(m=>m.userId)}};
   const formatted=serverEmojiHtml(p.body,readServerEmoji(p.serverId));if(formatted){content.format='org.matrix.custom.html';content.formatted_body=formatted;}
   if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
-  if(p.body.includes('@everyone'))content['m.mentions'].room=true;
+  if(!p.suppressMentions&&p.body.includes('@everyone'))content['m.mentions'].room=true;
   const attachments=(p.attachments||[]).map((id:string)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId)throw new Error('Reattach this file before sending.');return f});
   if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
   if(p.body.trim()){if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}

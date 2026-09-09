@@ -14,7 +14,7 @@ export async function requestApi<T = any>(path: string, body?: unknown, method =
   if (!response.ok) throw new ApiError(typeof data.error === 'string' ? data.error : typeof data.message === 'string' ? data.message : 'The request could not be completed. Please try again.', response.status, data);
   return data;
 }
-export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean };
+export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; passwordChangeRequired?: boolean };
 let managed = false;
 export function setManagedAccount(value: boolean) { managed = value; }
 export function isManagedAccount() { return managed; }

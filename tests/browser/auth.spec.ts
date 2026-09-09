@@ -24,3 +24,18 @@ test('bootstrap requires verified email and fits mobile viewport',async({page})=
 test('account-service outage fails closed instead of showing legacy login',async({page})=>{
   await page.route('**/api/auth/config',route=>route.fulfill({status:502,json:{error:'Temporarily unavailable'}}));await page.goto('/');await expect(page.getByRole('heading',{name:'Unable to connect'})).toBeVisible();await expect(page.getByRole('button',{name:'Connect homeserver'})).toHaveCount(0);
 });
+
+test('required password change retains MFA and prevents access to Matrix until completed',async({page})=>{
+  let changed=false, submission:any, matrixRequests=0;
+  await page.route('**/api/auth/config',r=>r.fulfill({json:{bootstrapRequired:false,smtpConfigured:true,instance:{name:'Test'}}}));
+  await page.route('**/api/auth/session',r=>r.fulfill({json:{userId:'@owner:local',deviceId:'D1',admin:true,baseUrl:'/api/matrix',passwordChangeRequired:!changed}}));
+  await page.route('**/api/account/security',r=>r.fulfill({json:{totpEnabled:true,emailMfaEnabled:false}}));
+  await page.route('**/api/matrix/**',r=>{matrixRequests++;return r.abort();});
+  await page.route('**/api/account/password',r=>{submission=r.request().postDataJSON();changed=true;return r.fulfill({json:{ok:true}});});
+  await page.route('**/api/system/status',r=>r.fulfill({json:{maintenance:{enabled:false},announcements:[]}}));
+  await page.route('**/api/system/events',r=>r.fulfill({contentType:'text/event-stream',body:': test\n\n'}));
+  await page.route('**/api/admin/overview',r=>r.fulfill({json:{users:1,rooms:0,sessions:1}}));
+  await page.goto('/admin');await expect(page.getByRole('heading',{name:'Choose a new password'})).toBeVisible();await expect(page.getByRole('button',{name:'Users',exact:true})).toHaveCount(0);expect(matrixRequests).toBe(0);
+  await page.getByLabel('Current password',{exact:true}).fill('old-password-test');await page.getByLabel('New password',{exact:true}).fill('new-password-test');await page.getByLabel('Confirm new password',{exact:true}).fill('new-password-test');await page.getByLabel('Verification code',{exact:true}).fill('123456');await page.getByRole('button',{name:'Change password and continue'}).click();
+  await expect(page.getByRole('heading',{name:'Overview',exact:true})).toBeVisible();expect(submission).toMatchObject({currentPassword:'old-password-test',newPassword:'new-password-test',confirmation:'new-password-test',method:'totp',code:'123456',logoutOtherDevices:true});expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('password-test');
+});

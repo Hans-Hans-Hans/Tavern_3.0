@@ -17,4 +17,5 @@ test('message virtualization bounds DOM, preserves history position, and measure
   await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; }); await expect(page.getByText('message-2500', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Append message' }).click(); await expect(page.getByText('message-2501', { exact: true })).toBeVisible();
   await expect.poll(() => scroller.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeLessThan(5);
+  await page.getByRole('button',{name:'Jump to unread'}).click();await expect(page.getByText('message-1234',{exact:true})).toBeVisible();expect(await rendered.count()).toBeLessThan(80);
 });

@@ -5,6 +5,7 @@ import './product.css';
 import { useInstanceStatus, InstanceNotices } from './instance-status';
 import { readInstanceConfig } from '@/lib/instance';
 import { pwaUpdateLocked, setPwaReloadAllowed } from '@/lib/pwa';
+import { ForcedPasswordChange } from './forced-password-change';
 
 const Tavern = lazy(() => import('./tavern'));
 const AdminConsole = lazy(() => import('./admin-console'));
@@ -19,12 +20,13 @@ export function AuthGateway() {
   const [displayName, setDisplayName] = useState(''), [instanceName, setInstanceName] = useState('Tavern'), [description, setDescription] = useState('');
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [notice, setNotice] = useState(''),[recoveryMfa,setRecoveryMfa]=useState('');
-  const status=useInstanceStatus(!!config);
+  const status=useInstanceStatus(!!config&&['ready','maintenance','login','bootstrap'].includes(mode));
   useEffect(() => { setPwaReloadAllowed(!busy && ['login', 'failure', 'legacy'].includes(mode)); return () => setPwaReloadAllowed(false); }, [mode, busy]);
   useEffect(() => { const reconnect = () => { if (mode === 'failure') void initialize(); }; window.addEventListener('tavern:reconnect', reconnect); return () => window.removeEventListener('tavern:reconnect', reconnect); }, [mode]);
   useEffect(()=>{if(session&&!session.admin&&status?.maintenance.enabled&&mode==='ready'){void import('@/lib/matrix').then(m=>m.clearLocalMatrixSession());setMode('maintenance');}},[status,session,mode]);
   async function openSession(value: AccountSession) {
     setAccountDevice(value.deviceId);
+    if (value.passwordChangeRequired) { setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
     const health=await requestApi('/system/status').catch(()=>null);
     if(health?.maintenance?.enabled&&!value.admin){setSession(value);setMode('maintenance');return;}
     const { attachManagedMatrixSession } = await import('@/lib/matrix');
@@ -75,6 +77,7 @@ export function AuthGateway() {
   }
   if(mode==='maintenance')return <main className='auth-shell'><section className='auth-card'><h1>Tavern is under maintenance</h1><p>{status?.maintenance.message||'Your administrator is performing maintenance. Please try again shortly.'}</p><button className='primary-button' disabled={busy} onClick={()=>{setBusy(true);void openSession(session!).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>Check again</button><a className='secondary-button' href='/admin'>Administration</a>{error&&<p role='alert'>{error}</p>}</section></main>;
   if (mode === 'legacy' || mode === 'ready') return <><InstanceNotices status={status}/><Suspense fallback={<div className="auth-shell" role="status">Opening Tavern…</div>}>{location.pathname.startsWith('/admin') && session ? <AdminConsole session={session}/> : <Tavern />}</Suspense></>;
+  if (mode === 'password-change') return <ForcedPasswordChange onComplete={async () => openSession(await requestApi<AccountSession>('/auth/session'))}/>;
   const setup = mode === 'bootstrap',register=mode==='register', recovery = mode.startsWith('recovery'), verification = mode.endsWith('-code') || mode === 'mfa';
   return <main className="auth-shell"><section className="auth-card">
     <div className="auth-wordmark"><Beer aria-hidden="true" size={34}/><strong>{config?.instance?.name || 'Tavern'}</strong></div>

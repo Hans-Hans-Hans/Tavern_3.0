@@ -241,11 +241,23 @@ audio immediately. Deafen also mutes the microphone; turning deafen off leaves
 the microphone muted until you choose to speak again.
 
 Conferences stay connected while switching channels or minimizing the dock.
-The embedded call app handles media devices and screen sharing. The participant
-list comes from real MatrixRTC memberships. Context menus offer identity
-verification and local playback controls where supported; Tavern does not claim
-moderator control over another person's microphone without server enforcement.
-Do not recreate its crypto store on each deployment.
+The embedded call app handles media devices, local participant volume, and screen
+sharing. The participant list comes from real MatrixRTC memberships. Context
+menus offer identity verification. Keep its crypto store across deployments.
+
+With the canonical calls profile, channel moderators can choose **Remove from
+channel and call**. Synapse authorizes the channel kick using the moderator's
+own account and role hierarchy; only then does the API disconnect the matching
+LiveKit devices. A confirmation explains the membership change. If the media
+service fails afterward, Tavern reports that membership was removed but the
+media disconnect remains unconfirmed.
+
+This action supports the pinned `lk-jwt-service:0.6.0` legacy MatrixRTC identity
+mapping used by the bundled call app. It fails before changing membership if
+device identities cannot be verified. It removes current participation; it is
+not a server ban or a promise to revoke previously issued LiveKit tokens. See
+the [LiveKit participant API](https://docs.livekit.io/reference/other/roomservice-api/)
+and [pinned authentication service](https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/handler.go).
 
 ## Dockhand and Portainer
 

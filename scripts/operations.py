@@ -81,7 +81,7 @@ class Operations:
                 self.run('run', '--rm', '-T', '--no-deps', '--entrypoint', 'python', 'init', '/app/state_archive.py', 'restore', stdin=source)
             self.run('up', '-d', '--no-deps', 'postgres')
             for _ in range(60):
-                ready = subprocess.run([*self.command, 'exec', '-T', 'postgres', 'pg_isready', '-U', 'synapse', '-d', 'synapse'], capture_output=True)
+                ready = subprocess.run([*self.command, 'exec', '-T', 'postgres', 'pg_isready', '-h', '127.0.0.1', '-U', 'synapse', '-d', 'synapse'], capture_output=True)
                 if ready.returncode == 0:
                     break
                 time.sleep(1)

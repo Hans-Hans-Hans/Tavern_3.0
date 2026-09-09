@@ -59,6 +59,43 @@ class PolicyTests(unittest.TestCase):
         value = policy(); value['members']['@member:local'] = [[]]
         self.assertFalse(policy_module.valid_policy(value))
 
+    def test_category_then_channel_override_order_and_internal_context_binding(self):
+        value = policy()
+        value['categoryOverrides'] = {'private': {'roles': {'everyone': {'send_messages': -1}, 'mod': {'send_messages': 1}}, 'users': {'@mod:local': {'send_messages': 1}}}}
+        self.assertIn('send_messages', policy_module.permissions(value, '@mod:local', '!channel:local', 'private'))
+        self.assertNotIn('send_messages', policy_module.permissions(value, '@member:local', '!channel:local', 'private'))
+        value['overrides']['!channel:local'] = {'roles': {'everyone': {'send_messages': 1}}, 'users': {'@mod:local': {'send_messages': -1}}}
+        self.assertIn('send_messages', policy_module.permissions(value, '@member:local', '!channel:local', 'private'))
+        self.assertNotIn('send_messages', policy_module.permissions(value, '@mod:local', '!channel:local', 'private'))
+        value['overrides'] = {}
+        value['_category_by_room'] = {'!channel:local': 'private'}
+        self.assertIn('send_messages', policy_module.permissions(value, '@member:local', '!channel:local'), 'Serialized context hints must be ignored')
+        bound = policy_module.ResolvedPolicy(value, {'version': 1, 'categories': [{'id': 'private'}], 'channels': [{'id': '!channel:local', 'category': 'private'}]})
+        self.assertNotIn('send_messages', policy_module.permissions(bound, '@member:local', '!channel:local'))
+
+    def test_category_rules_use_same_hierarchy_and_permission_validation(self):
+        old, new = policy(), policy()
+        new['categoryOverrides'] = {'private': {'roles': {'admin': {'send_messages': -1}}}}
+        self.assertFalse(policy_module.may_edit_policy(old, new, '@mod:local'))
+        new['categoryOverrides'] = {'private': {'roles': {'everyone': {'ban': 1}}}}
+        self.assertFalse(policy_module.may_edit_policy(old, new, '@mod:local'))
+        new['categoryOverrides'] = {'private': {'roles': {'everyone': {'send_messages': -1}}}}
+        self.assertTrue(policy_module.may_edit_policy(old, new, '@mod:local'))
+        new['categoryOverrides']['private']['roles']['everyone']['manage_server'] = 1
+        self.assertFalse(policy_module.valid_policy(new))
+
+    def test_category_permission_boundary_cannot_be_removed_by_layout_editor(self):
+        value = policy()
+        value['categoryOverrides'] = {'private': {'roles': {'everyone': {'send_messages': -1}}}, 'public': {'roles': {'everyone': {'send_messages': 0}}, 'users': {}}}
+        old = {'version': 1, 'categories': [{'id': 'private'}, {'id': 'public'}], 'channels': [{'id': '!channel:local', 'category': 'private'}]}
+        new = copy.deepcopy(old); new['channels'][0]['category'] = 'public'
+        self.assertFalse(policy_module.may_edit_layout(old, new, value, '@mod:local'))
+        self.assertTrue(policy_module.may_edit_layout(old, new, value, '@owner:local'))
+        reordered = copy.deepcopy(old); reordered['categories'].reverse()
+        self.assertTrue(policy_module.may_edit_layout(old, reordered, value, '@mod:local'))
+        old['channels'][0]['category'] = 'public'; new['channels'][0]['category'] = ''
+        self.assertTrue(policy_module.may_edit_layout(old, new, value, '@mod:local'), 'All-inherited rules do not create a boundary')
+
 class EventTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.policy = policy()
@@ -76,6 +113,16 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_encrypted_api_message_obeys_channel_deny(self):
         self.policy['overrides']['!channel:local'] = {'roles': {'everyone': {'send_messages': -1}}, 'users': {}}
         self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (False, None))
+
+    async def test_encrypted_message_uses_only_canonical_parent_category_assignment(self):
+        self.policy['categoryOverrides'] = {'private': {'roles': {'everyone': {'send_messages': -1}}}}
+        layout = {'version': 1, 'categories': [{'id': 'private'}], 'channels': [{'id': '!channel:local', 'category': 'private'}]}
+        self.server[(policy_module.LAYOUT, '')] = event(policy_module.LAYOUT, body=layout)
+        self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (False, None))
+        self.room[(policy_module.LAYOUT, '')] = event(policy_module.LAYOUT, body={'version': 1, 'categories': [], 'channels': []})
+        self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (False, None), 'Child metadata cannot override authoritative server categories')
+        self.policy['overrides']['!channel:local'] = {'users': {'@member:local': {'send_messages': 1}}}
+        self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (True, None))
 
     async def test_cannot_escape_policy_by_removing_or_redacting_parent(self):
         self.assertEqual(await self.module.check_event_allowed(event('m.space.parent', key='!server:local'), self.room), (False, None))

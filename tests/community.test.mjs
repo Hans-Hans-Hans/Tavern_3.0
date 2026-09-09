@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 let client;
-const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client } });
+const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {} });
 const { normalizeProfile, normalizeServerLayout, moveChannel, normalizeChannelAppearance, cleanMxc } = community;
 test('profile links reject scripts, credentials, and non-web schemes', () => {
   const profile = normalizeProfile({ links: [{ url: 'javascript:alert(1)' }, { url: 'https://user:secret@example.com' }, { url: 'data:text/html,no' }, { url: 'https://example.com', label: 'Safe' }] });

@@ -1,4 +1,5 @@
 import { readPresenceMode } from './presence';
+import { readThreadNotification } from './thread-preferences';
 import { notificationEligible, notificationServerForRoom, readNotificationPreferences, resolveNotificationPreference, updateNotificationPreferences, type NotificationPreferences } from './notification-preferences';
 import { ClientEvent, MatrixEventEvent, RoomEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
 import { ConditionKind, PushRuleActionName, PushRuleKind } from 'matrix-js-sdk/lib/@types/PushRules';
@@ -16,8 +17,12 @@ function eventReceived(event:MatrixEvent,room?:unknown,toStart?:boolean,removed?
   seen.add(id);if(seen.size>5000)seen.delete(seen.values().next().value!);
   if(focus||document.visibilityState==='visible')return;
   const preferences=readNotificationPreferences(client),content=event.getContent(),me=client.getUserId()!,setting=resolveNotificationPreference(preferences,event.getRoomId(),notificationServerForRoom(client,event.getRoomId()!));
+  const relation=content['m.relates_to'];
+  const threadMode=relation?.rel_type==='m.thread'&&typeof relation.event_id==='string'?readThreadNotification(event.getRoomId()!,relation.event_id,client):'inherit';
+  const threadOverride=threadMode==='all'&&!setting.muted&&setting.mode!=='nothing';
+  if(threadMode!=='inherit'&&setting.mode!=='nothing')setting.mode=threadMode;
   const mention=content['m.mentions']?.user_ids?.includes(me)||content['m.mentions']?.room===true||String(content.body||'').includes(me);
-  if(!notificationEligible(setting,{mention:!!mention,ignored:client.getIgnoredUsers().includes(event.getSender()!),dnd:readPresenceMode(client)==='dnd',own:event.getSender()===me,nativeNotify:client.getPushActionsForEvent(event,true)?.notify===true}))return;
+  if(!notificationEligible(setting,{mention:!!mention,ignored:client.getIgnoredUsers().includes(event.getSender()!),dnd:readPresenceMode(client)==='dnd',own:event.getSender()===me,nativeNotify:threadOverride?undefined:client.getPushActionsForEvent(event,true)?.notify===true}))return;
   // Never expose room names, senders or decrypted content on a locked desktop.
   if(browserNotificationsEnabled()){const notice=new Notification('Tavern',{body:'You have a new message.',tag:`tavern:${event.getRoomId()}`,silent:true});notice.onclick=()=>{window.focus();notice.close();};}
   if(setting.sound)void playNotificationSound().catch(()=>{});

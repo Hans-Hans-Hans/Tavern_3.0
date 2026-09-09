@@ -1,0 +1,52 @@
+# Test-only overlay: the deployed application still uses the single compose.yaml.
+services:
+  tavern-api:
+    environment:
+      SMTP_ENABLED: 'true'
+      SMTP_HOST: ci-mail
+      SMTP_PORT: '1465'
+      SMTP_SECURE: 'true'
+      SMTP_FROM_ADDRESS: tavern@example.test
+      SSL_CERT_FILE: /ci/tls/ca-bundle.pem
+    volumes:
+      - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
+    depends_on:
+      ci-mail:
+        condition: service_healthy
+  ci-mail:
+    build:
+      context: ./api
+    image: tavern-api:check
+    entrypoint: [python, /ci/ci-mail.py]
+    environment:
+      TAVERN_CI_SMOKE: 'true'
+    volumes:
+      - ./scripts/ci-mail.py:/ci/ci-mail.py:ro
+      - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
+    networks: [private]
+    ports: [127.0.0.1:18085:8085]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8085/health', timeout=3)"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+  ci-proxy:
+    image: tavern:check
+    entrypoint: [nginx, -c, /ci/nginx.conf, -g, 'daemon off;']
+    volumes:
+      - ./scripts/ci-nginx.conf:/ci/nginx.conf:ro
+      - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
+    networks: [proxy]
+    ports: [127.0.0.1:443:8443]
+    read_only: true
+    tmpfs: [/tmp:size=16m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      disable: true
+    depends_on:
+      tavern-web:
+        condition: service_healthy

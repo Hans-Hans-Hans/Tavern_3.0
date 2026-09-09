@@ -1,0 +1,10 @@
+import { useEffect, useState } from 'react';
+import { getMatrixClient, loadThreadHistory, onMatrixUpdate, threadHasOlder } from '@/lib/matrix';
+import { readThreadNotification, saveThreadNotification, type ThreadNotificationMode } from '@/lib/thread-preferences';
+export function ThreadTools({ roomId, rootId, authorId, replies, onChanged }: { roomId: string; rootId: string; authorId: string; replies: { author_id: string }[]; onChanged: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [, refresh] = useState(0);
+  useEffect(() => onMatrixUpdate(() => refresh(value => value + 1)), []);
+  const room = getMatrixClient()?.getRoom(roomId), participants = [...new Set([authorId, ...replies.map(reply => reply.author_id)])];
+  async function run(action: () => Promise<unknown>) { setBusy(true); setError(''); try { await action(); await onChanged(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
+  return <section className='thread-tools'><label>Thread notifications<select value={readThreadNotification(roomId, rootId)} disabled={busy} onChange={e => void run(() => saveThreadNotification(roomId, rootId, e.target.value as ThreadNotificationMode))}><option value='inherit'>Follow channel settings</option><option value='all'>All replies</option><option value='mentions'>Mentions only</option><option value='nothing'>Mute this thread</option></select></label><p className='login-help'>Applies in Tavern. Channel mutes and Do Not Disturb still take priority.</p><details><summary>{participants.length} participant{participants.length === 1 ? '' : 's'} in loaded replies</summary><ul>{participants.map(id => <li key={id}>{room?.getMember(id)?.name || id}</li>)}</ul></details>{threadHasOlder(roomId, rootId) && <button className='secondary-button' disabled={busy} onClick={() => void run(() => loadThreadHistory(roomId, rootId))}>{busy ? 'Loading replies…' : 'Load 50 earlier replies'}</button>}{error && <p className='connect-error' role='alert'>{error}</p>}</section>;
+}

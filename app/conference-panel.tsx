@@ -6,6 +6,9 @@ import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { callSnapshot, callsConfigured } from '@/lib/calls';
 import { conferenceSnapshot, subscribeConference, openConference, minimizeConference, conferenceJoined, conferenceFailed, conferenceClosing, clearConference } from '@/lib/conference-session';
 import { requestPeerVerification } from '@/lib/security';
+import { isManagedAccount, requestApi } from '@/lib/api';
+import { canModerateMember } from '@/lib/channel-policy';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { ActionMenu, copyText } from './action-menu';
 import './calls.css';
@@ -49,7 +52,13 @@ export function ConferencePanel() {
   const session = useSyncExternalStore(subscribeConference, conferenceSnapshot);
   const frame = useRef<HTMLIFrameElement>(null), closeRef = useRef<(() => Promise<void>) | null>(null), epoch = useRef(0);
   const controlsRef = useRef<ConferenceControls | null>(null), [devices, setDevices] = useState<ConferenceDevices>({}), [deviceBusy, setDeviceBusy] = useState(false);
+  const [moderation, setModeration] = useState(false), [removing, setRemoving] = useState<{ userId: string; name: string } | null>(null), [moderationBusy, setModerationBusy] = useState(false);
   const participants = useParticipants(session.roomId);
+  useEffect(() => {
+    let alive = true; setModeration(false); setRemoving(null);
+    if (session.roomId && isManagedAccount()) void requestApi('/calls/capabilities').then(value => { if (alive) setModeration(value.available === true); }).catch(() => {});
+    return () => { alive = false; };
+  }, [session.roomId]);
   useEffect(() => {
     if (!session.roomId || !frame.current) return;
     const generation = session.generation, roomId = session.roomId, currentEpoch = ++epoch.current;
@@ -84,6 +93,17 @@ export function ConferencePanel() {
   }, [session.roomId, session.minimized]);
   if (!session.roomId) return null;
   async function changeDevices(patch: ConferenceDevices) { setDeviceBusy(true); try { await controlsRef.current?.setDevices(patch); } catch (error) { toast.error((error as Error).message); } finally { setDeviceBusy(false); } }
+  async function removeParticipant() {
+    if (!removing || !session.roomId) return;
+    setModerationBusy(true);
+    try {
+      const result = await requestApi('/calls/remove', { roomId: session.roomId, userId: removing.userId, confirmation: 'REMOVE FROM CHANNEL AND CALL' });
+      setRemoving(null);
+      if (result.mediaDisconnectConfirmed) toast.success('Removed from the channel and conference.');
+      else toast.warning(result.message || 'Channel membership was removed, but media disconnect could not be confirmed.', { duration: 12000 });
+    } catch (error) { toast.error((error as Error).message); }
+    finally { setModerationBusy(false); }
+  }
   const client = getMatrixClient(), room = client?.getRoom(session.roomId), me = client?.getUserId();
   return <section className={'conference-panel persistent-conference' + (session.minimized ? ' conference-minimized' : '')} aria-label={'Conference in ' + (room?.name || 'conversation')}>
     <header><div><strong>{room?.name || 'Tavern conference'}</strong><small aria-live="polite">{session.phase === 'joining' ? 'Preparing your conference' : session.phase === 'joined' ? 'Conference active' : session.phase === 'closing' ? 'Leaving conference' : 'Connection needs attention'} · {participants.length} participating</small></div><div className="inline-actions">
@@ -97,8 +117,10 @@ export function ConferencePanel() {
       <div className="conference-participants" aria-label="Conference participants">{participants.map(member => <ActionMenu key={member.userId} actions={[
         { label: 'Copy user ID', run: () => copyText(member.userId) },
         { label: 'Verify participant identity', visible: member.userId !== me, run: () => requestPeerVerification(member.userId, session.roomId!) },
+        { label: 'Remove from channel and call', danger: true, separator: true, visible: moderation && member.userId !== me && canModerateMember(session.roomId!, member.userId, 'kick'), run: () => setRemoving(member) },
       ]}><button title={member.userId + (member.devices > 1 ? ' · ' + member.devices + ' devices' : '')} className="conference-participant">{member.name}{member.userId === me ? ' (you)' : ''}</button></ActionMenu>)}</div>
       <iframe ref={frame} title="Tavern encrypted conference" allow="camera; microphone; display-capture; autoplay; fullscreen" referrerPolicy="no-referrer" tabIndex={session.minimized ? -1 : 0}/>
     </div>
+    <AlertDialog open={!!removing} onOpenChange={open => { if (!open && !moderationBusy) setRemoving(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle><AlertDialogDescription>This removes their membership in this channel and disconnects their current conference devices. They will need channel access again to receive new encrypted conversations. This does not ban their account from the server.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={moderationBusy}>Cancel</AlertDialogCancel><AlertDialogAction disabled={moderationBusy} onClick={event => { event.preventDefault(); void removeParticipant(); }}>{moderationBusy ? 'Removing…' : 'Remove from channel and call'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>;
 }

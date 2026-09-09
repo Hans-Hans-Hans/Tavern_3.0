@@ -138,7 +138,8 @@ class UploadQuota:
             global_used = db.execute("SELECT bytes FROM upload_usage WHERE user_id='*'").fetchone()[0]
             if size > policy["maxUploadBytes"]:
                 raise APIError(413, "This file exceeds the upload size limit.", "M_TOO_LARGE")
-            if own + size > policy["userQuotaBytes"] or global_used + size > policy["globalQuotaBytes"]:
+            user_quota = service.store.account(user_id).get('upload_quota_bytes') or policy['userQuotaBytes']
+            if own + size > user_quota or global_used + size > policy["globalQuotaBytes"]:
                 raise APIError(413, "The account or instance storage quota is full. Contact your administrator.", "STORAGE_QUOTA_EXCEEDED")
             db.execute("UPDATE upload_usage SET bytes=bytes+? WHERE user_id IN (?, '*')", (size, user_id))
             db.execute("INSERT INTO upload_reservations VALUES(?,?,?,'reserved',?,NULL)", (identity, user_id, size, time.time()))
@@ -217,6 +218,7 @@ class UploadQuota:
         row = service.store.db.execute("SELECT bytes FROM upload_usage WHERE user_id='*'").fetchone()
         value = {**limits(service), "usageInitialized": initialized, "globalUsedBytes": row[0] if row else None, "reconciledAt": service.store.get("upload_usage_reconciled"), "scope": "Local original media bytes, including existing uploads at the last reconciliation. Thumbnails and backups are not included."}
         if user_id:
+            value['userQuotaBytes'] = service.store.account(user_id).get('upload_quota_bytes') or value['userQuotaBytes']
             row = service.store.db.execute("SELECT bytes FROM upload_usage WHERE user_id=?", (user_id,)).fetchone()
             value["ownUsedBytes"] = row[0] if row else 0 if initialized else None
         else:
