@@ -116,3 +116,6 @@ must also pass in CI before claiming production media validation.
 Server mute/deafen and moving a participant into another conference are not
 implemented by these admission controls. A user-facing mute button must have
 actual SFU enforcement and reconnect-safe grants before it can claim that effect.
+The [pinned audio-moderation analysis](SFU_AUDIO_MODERATION.md) records the
+source/kind validation and audio-subscribe permission extensions required to
+preserve video while enforcing those controls.
