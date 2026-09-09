@@ -38,6 +38,15 @@ fixtures do not establish live encrypted multi-device role-mention delivery.
 
 ## Observed continuous integration
 
+[Run 34385471233](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34385471233)
+at development commit `5b718fd` passed build and all 384 JavaScript tests, then
+failed on the same Google apt package-index checksum mismatch. The workflow now
+disables only the runner's unrelated Google Chrome apt source before installing
+Playwright's pinned Chromium and Ubuntu dependencies. Normal package signature
+and checksum checks remain enabled. This follows the runner-image build's own
+[Chrome repository cleanup](https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/install-google-chrome.sh).
+The revised installation and subsequent stages still require a fresh CI run.
+
 [Run 34384936096](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34384936096)
 at development commit `c370b3b` passed the repository check, build and all 381
 JavaScript tests. Browser dependency installation then failed because Google's

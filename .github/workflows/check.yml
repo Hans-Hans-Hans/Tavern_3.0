@@ -26,7 +26,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
-      - run: npx playwright install --with-deps chromium
+      - name: Install Playwright and Ubuntu browser dependencies
+        run: |
+          # Tests use Playwright's pinned Chromium. The runner's unrelated
+          # Chrome apt feed has returned inconsistent package-index checksums.
+          # Keep normal Ubuntu package signature/hash verification enabled.
+          for source in /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources; do
+            if [ -f "$source" ]; then
+              sudo mv -- "$source" "$source.disabled"
+            fi
+          done
+          npx playwright install --with-deps chromium
       - run: npm run test:browser
       - name: Verify installed app opens safely offline
         run: node scripts/smoke-pwa.mjs
