@@ -17,10 +17,12 @@ try:
     from .server import APIError, body_json
     from .push_transport import bounded_json, encode64, subscription_value, subscription_hash, send_push
     from .push_policy import eligible
+    from .push_social_policy import eligible as social_eligible, current_request
 except ImportError:
     from server import APIError, body_json
     from push_transport import bounded_json, encode64, subscription_value, subscription_hash, send_push
     from push_policy import eligible
+    from push_social_policy import eligible as social_eligible, current_request
 
 LOG = logging.getLogger('tavern.api.push')
 APP_ID = 'io.tavern.web'
@@ -59,6 +61,7 @@ class PushNotifications:
                 PRIMARY KEY(subscription_id,client_id));
             CREATE INDEX IF NOT EXISTS push_foreground_expiry ON push_foreground(expires);
         ''')
+        self.migrate_jobs()
         self.db.execute("UPDATE push_jobs SET state='pending' WHERE state='sending'")
         self.pem, self.public_key = None, None
         if self.enabled:
@@ -72,6 +75,56 @@ class PushNotifications:
             key = Vapid02.from_pem(pem.encode())
             self.pem = pem
             self.public_key = encode64(key.public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
+
+    def migrate_jobs(self):
+        # Existing Matrix tickets survive this child-table-only migration. Social
+        # work has a real contact-request reference, never an invented Matrix ID.
+        if 'kind' in {row['name'] for row in self.db.execute('PRAGMA table_info(push_jobs)')}:
+            return
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('''CREATE TABLE push_jobs_v2(
+                id TEXT PRIMARY KEY,subscription_id TEXT NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL DEFAULT 'matrix',room_id TEXT,event_id TEXT,
+                social_request_id TEXT REFERENCES social_requests(id) ON DELETE CASCADE,
+                created REAL NOT NULL,expires REAL NOT NULL,next_attempt REAL NOT NULL DEFAULT 0,
+                attempts INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'pending',
+                ticket_hash TEXT UNIQUE NOT NULL,ticket TEXT NOT NULL,
+                CHECK((kind='matrix' AND room_id IS NOT NULL AND event_id IS NOT NULL AND social_request_id IS NULL)
+                   OR (kind='social_request' AND room_id IS NULL AND event_id IS NULL AND social_request_id IS NOT NULL)),
+                UNIQUE(subscription_id,event_id),UNIQUE(subscription_id,social_request_id))''')
+            columns = 'id,subscription_id,room_id,event_id,created,expires,next_attempt,attempts,state,ticket_hash,ticket'
+            self.db.execute('INSERT INTO push_jobs_v2(' + columns + ') SELECT ' + columns + ' FROM push_jobs')
+            self.db.execute('DROP TABLE push_jobs')
+            self.db.execute('ALTER TABLE push_jobs_v2 RENAME TO push_jobs')
+            self.db.execute('CREATE INDEX push_due ON push_jobs(state,next_attempt)')
+            self.db.execute('CREATE INDEX push_job_expiry ON push_jobs(expires)')
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+
+    def enqueue_social_request(self, identity, target, now):
+        """Called inside the same transaction that persists the contact request."""
+        if not self.enabled or self.maintenance():
+            return
+        rows = self.db.execute("SELECT p.* FROM push_subscriptions p JOIN sessions s ON s.id=p.session_id WHERE s.user_id=? AND p.state='active'", (target,)).fetchall()
+        for row in rows:
+            try:
+                self.live(row)
+            except APIError:
+                continue
+            if self.db.execute('SELECT count(*) FROM push_jobs WHERE subscription_id=?', (row['id'],)).fetchone()[0] >= 50 or self.db.execute('SELECT count(*) FROM push_jobs').fetchone()[0] >= 2000:
+                continue
+            ticket = secrets.token_urlsafe(32)
+            self.db.execute('''INSERT OR IGNORE INTO push_jobs
+                (id,subscription_id,kind,social_request_id,created,expires,ticket_hash,ticket) VALUES(?,?,'social_request',?,?,?,?,?)''',
+                (secrets.token_urlsafe(24), row['id'], identity, now, min(now + TTL, row['expires']), self.service.store.digest(ticket), self.service.store.seal(ticket)))
+
+    async def eligible(self, row, job):
+        if job['kind'] == 'social_request':
+            return await social_eligible(self, row, job)
+        return job['kind'] == 'matrix' and await eligible(self, row, job)
 
     def live(self, subscription):
         row = self.db.execute('SELECT * FROM push_subscriptions WHERE id=? AND generation=?', (subscription['id'], subscription['generation'])).fetchone()
@@ -98,6 +151,8 @@ class PushNotifications:
     def delivery_live(self, row, job):
         self.live(row)
         if self.maintenance() or job['expires'] <= time.time() or self.has_foreground(row):
+            raise APIError(403, 'This notification is no longer eligible.', 'PUSH_SUPPRESSED')
+        if job['kind'] == 'social_request' and current_request(self, row, job) is None:
             raise APIError(403, 'This notification is no longer eligible.', 'PUSH_SUPPRESSED')
 
     async def native(self, method, path, body=None, token=None):
@@ -326,7 +381,7 @@ class PushNotifications:
             try:
                 self.service.store.rate('push-display:' + row['id'], 60, 60)
                 async with asyncio.timeout(12):
-                    show = await eligible(self, row, job)
+                    show = await self.eligible(row, job)
                 self.live(row)
                 show = show and job['expires'] > time.time()
             except (APIError, aiohttp.ClientError, asyncio.TimeoutError):
@@ -340,14 +395,14 @@ class PushNotifications:
         try:
             async with asyncio.timeout(20):
                 self.delivery_live(row, job)
-                if not await eligible(self, row, job):
+                if not await self.eligible(row, job):
                     self.db.execute("UPDATE push_jobs SET state='suppressed' WHERE id=?", (job['id'],)); return
                 self.delivery_live(row, job)
                 secret = self.service.store.open(row['secret'])
                 payload = {'v': 1, 'kind': 'activity', 'generation': row['generation'], 'ticket': self.service.store.open(job['ticket']), 'expiresAt': int(job['expires'] * 1000)}
                 async def refresh():
                     self.delivery_live(row, job)
-                    if not await eligible(self, row, job):
+                    if not await self.eligible(row, job):
                         raise APIError(403, 'This notification is no longer eligible.', 'PUSH_SUPPRESSED')
                     self.delivery_live(row, job)
                 status, retry = await send_push(secret['subscription'], self.pem, self.service.config.public_url, payload, job['expires'] - time.time(), lambda: self.delivery_live(row, job), refresh)

@@ -150,7 +150,19 @@ async def send_request(request):
         raise APIError(409, 'This member cannot receive more contact requests right now.')
     if db.execute('SELECT 1 FROM social_requests WHERE sender=? AND target=? AND updated>?', (user, target, now - 86400)).fetchone():
         raise APIError(429, 'Wait one day before sending another request to this member.')
-    db.execute('INSERT INTO social_requests VALUES(?,?,?,?,?,?)', (secrets.token_urlsafe(18), user, target, 'pending', now, now))
+    identity = secrets.token_urlsafe(18)
+    push = getattr(service, 'push', None)
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        db.execute('INSERT INTO social_requests VALUES(?,?,?,?,?,?)', (identity, user, target, 'pending', now, now))
+        if push:
+            push.enqueue_social_request(identity, target, now)
+        db.execute('COMMIT')
+    except BaseException:
+        db.execute('ROLLBACK')
+        raise
+    if push:
+        push.wake.set()
     service.audit(user, 'contacts.requested', target)
     announce(request, user, target)
     return web.json_response(snapshot(db, user), status=201)
