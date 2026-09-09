@@ -120,6 +120,8 @@ class WorkerHTTP(unittest.IsolatedAsyncioTestCase):
     async def test_private_requests_require_operator_secret(self):
         self.assertEqual((await self.client.get('/health')).status, 200)
         self.assertEqual((await self.client.get('/state')).status, 401)
+        self.assertEqual((await self.client.get('/logs')).status, 401)
+        self.assertEqual((await self.client.get('/performance')).status, 401)
         self.assertEqual((await self.client.get('/state', headers={'Authorization': 'Bearer incorrect'})).status, 401)
         result = await self.client.get('/state', headers={'Authorization': 'Bearer ' + self.secret})
         self.assertEqual(result.status, 200)

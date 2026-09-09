@@ -40,6 +40,14 @@ class PolicyTests(unittest.TestCase):
         new = copy.deepcopy(old); new['members']['@member:local'] = ['helper']
         self.assertTrue(policy_module.may_edit_policy(old, new, '@mod:local'))
 
+    def test_manager_cannot_assign_lower_role_with_permissions_they_do_not_have(self):
+        old = policy()
+        old['roles'].append({'id': 'powerful_low_role', 'name': 'Privileged', 'position': 10, 'permissions': ['manage_server']})
+        new = copy.deepcopy(old)
+        new['members']['@member:local'] = ['powerful_low_role']
+        self.assertFalse(policy_module.may_edit_policy(old, new, '@mod:local'))
+        self.assertTrue(policy_module.may_edit_policy(old, new, '@owner:local'))
+
     def test_invalid_policy_and_owner_change_rejected(self):
         old, new = policy(), policy(); new['owner'] = '@mod:local'
         self.assertFalse(policy_module.may_edit_policy(old, new, '@owner:local'))
@@ -151,6 +159,19 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.module.check_event_allowed(event('io.tavern.roles', sender='@attacker:local', key='', body=self.policy), state), (False, None))
         create.content['m.federate'] = True
         self.assertEqual(await self.module.check_event_allowed(event('io.tavern.roles', sender='@owner:local', key='', body=self.policy), state), (False, None))
+
+    async def test_optional_role_revision_rejects_stale_owner_updates(self):
+        create = event('m.room.create', sender='@owner:local', key='', body={'type': 'm.space', 'm.federate': False})
+        state = {('m.room.create', ''): create, (policy_module.POLICY, ''): event(policy_module.POLICY, key='', body=self.policy, eid='$current')}
+        proposed = {**self.policy, 'io.tavern.previous_event': '$stale'}
+        self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=proposed), state), (False, None))
+        proposed['io.tavern.previous_event'] = '$current'
+        self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=proposed), state), (True, None))
+        self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=self.policy), state), (True, None), 'Existing clients without revision metadata remain compatible')
+        del state[(policy_module.POLICY, '')]
+        self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=proposed), state), (False, None))
+        proposed['io.tavern.previous_event'] = None
+        self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=proposed), state), (True, None))
 
     async def test_fake_one_way_parent_does_not_inherit_server(self):
         self.server.pop(('m.space.child', '!channel:local'))

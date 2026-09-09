@@ -1,11 +1,13 @@
 """Measured system diagnostics and release tracking; no Docker socket in the API."""
 import asyncio
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import time
+from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
@@ -16,6 +18,15 @@ RELEASE_API = f'https://api.github.com/repos/{REPOSITORY}/releases?per_page=30'
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+async def bounded_json(response):
+    content = bytearray()
+    async for chunk in response.content.iter_chunked(65536):
+        content.extend(chunk)
+        if len(content) > 1024 * 1024:
+            raise ValueError('Service response exceeded its size limit.')
+    return json.loads(content)
 
 
 def version_info():
@@ -126,11 +137,7 @@ async def updates(request):
                                     timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False, auto_decompress=True) as response:
             if response.status != 200:
                 raise ValueError('The release service did not return release metadata.')
-            content = await response.content.read(1024 * 1024 + 1)
-            if len(content) > 1024 * 1024:
-                raise ValueError('Release response was too large.')
-            import json
-            releases = json.loads(content)
+            releases = await bounded_json(response)
             if not isinstance(releases, list):
                 raise ValueError('Invalid release metadata.')
         result = release_summary(releases)
@@ -236,6 +243,34 @@ async def operation_job(request):
     return await proxy_operation(request, '/jobs/' + identity)
 
 
+async def observations(request):
+    service = request.app['service']
+    session = await service.require_admin(request)
+    performance = request.path.endswith('/performance')
+    service.store.rate('observations:' + session['user_id'], 60, 60)
+    if not operations_enabled():
+        return web.json_response({'available': False, 'reason': 'Enable the operations profile to view scoped container logs and performance.',
+                                  **({'checks': await measure(service)} if performance else {})})
+    if set(request.query) - ({'component', 'severity', 'minutes', 'limit', 'search'} if not performance else set()):
+        return web.json_response({'error': 'Unknown observation filter.'}, status=400)
+    path = '/performance' if performance else '/logs'
+    if request.query:
+        path += '?' + urlencode(dict(request.query))
+    try:
+        async with service.http.get(os.environ.get('OPERATIONS_URL', 'http://operations:8091') + path,
+                                    headers=operations_auth(), timeout=aiohttp.ClientTimeout(total=20), allow_redirects=False) as response:
+            result = await bounded_json(response)
+            if not isinstance(result, dict):
+                raise ValueError('Invalid observation response.')
+            if performance and response.status == 200:
+                result['checks'] = await measure(service)
+            if not performance and response.status == 200:
+                service.audit(session['user_id'], 'system.logs_viewed', request.query.get('component', 'all'))
+            return web.json_response(result, status=response.status, headers={'Cache-Control': 'no-store'})
+    except (OSError, ValueError, aiohttp.ClientError, asyncio.TimeoutError):
+        return web.json_response({'available': False, 'reason': 'The operations worker did not provide observations. Check its health and private credential mount.'}, status=503)
+
+
 def register_routes(app):
     app.add_routes([web.get('/api/system/version', version), web.get('/health/live', live), web.get('/health/ready', ready),
                     web.get('/api/admin/diagnostics', diagnostics), web.get('/api/admin/updates', updates),
@@ -243,4 +278,5 @@ def register_routes(app):
                     web.get('/api/admin/operations/settings', operation_settings), web.put('/api/admin/operations/settings', operation_settings),
                     web.get('/api/admin/backups/{identity}/download', backup_item), web.delete('/api/admin/backups/{identity}', backup_item),
                     web.post('/api/admin/backups/{identity}/restore', backup_item), web.post('/api/admin/updates/apply', apply_update),
-                    web.get('/api/admin/operations/jobs/{identity}', operation_job)])
+                    web.get('/api/admin/operations/jobs/{identity}', operation_job), web.get('/api/admin/logs', observations),
+                    web.get('/api/admin/performance', observations)])

@@ -6,6 +6,7 @@ WORKDIR /app
 COPY ops/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY ops/server.py /app/server.py
+COPY ops/telemetry.py /app/telemetry.py
 COPY ops/smoke.py /app/smoke.py
 COPY scripts/operations.py /app/archive_host.py
 EXPOSE 8091

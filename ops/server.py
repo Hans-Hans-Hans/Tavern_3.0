@@ -533,6 +533,11 @@ def create_app(directory=None, project=None, engine=None, token=None):
                     web.post('/backups/{identity}/restore', restore), web.post('/updates/apply', update), web.get('/jobs/{identity}', job)])
     app.on_startup.append(start)
     app.on_cleanup.append(close)
+    try:
+        from telemetry import register_routes
+    except ImportError:
+        from ops.telemetry import register_routes
+    register_routes(app, operator)
     return app
 
 

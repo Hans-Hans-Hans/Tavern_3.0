@@ -19,9 +19,11 @@ from aiohttp import web
 try:
     from .server import APIError, body_json, text_value
     from .security import email_address, password_error
+    from .invitation_roles import checked_roles, apply_roles, role_ids
 except ImportError:
     from server import APIError, body_json, text_value
     from security import email_address, password_error
+    from invitation_roles import checked_roles, apply_roles, role_ids
 
 
 def schema(store):
@@ -39,11 +41,13 @@ def schema(store):
         CREATE INDEX IF NOT EXISTS report_status ON reports(status,id);
         CREATE INDEX IF NOT EXISTS report_reporter ON reports(reporter,id);
     """)
+    if 'default_roles' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
+        store.db.execute("ALTER TABLE invitations ADD COLUMN default_roles TEXT NOT NULL DEFAULT '[]'")
 
 
 def invite_view(row):
     return {"id": row["id"], "roomId": row["room_id"], "roomName": row["room_name"], "creator": row["creator"], "createdAt": int(row["created"] * 1000),
-            "expiresAt": int(row["expires"] * 1000), "maxUses": row["max_uses"], "uses": row["uses"], "revoked": bool(row["revoked"]), "email": row["email"], "domain": row["domain"]}
+            "expiresAt": int(row["expires"] * 1000), "maxUses": row["max_uses"], "uses": row["uses"], "revoked": bool(row["revoked"]), "email": row["email"], "domain": row["domain"], "defaultRoleIds": json.loads(row["default_roles"])}
 
 
 def report_view(row, own=False):
@@ -75,6 +79,8 @@ def invitation_email(invitation, email, verified):
 
 
 async def issuer_authority(service, room_id: str, issuer: str, token=None):
+    if service.store.account(issuer).get('access_blocked'):
+        raise APIError(403, 'The invitation issuer is suspended. Ask another moderator for an invitation.', 'INVITATION_UNAVAILABLE')
     if token:
         prefix = "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/"
         membership = await service.matrix("GET", prefix + "m.room.member/" + quote(issuer, safe=""), token=token)
@@ -123,16 +129,31 @@ async def invitations(request):
     domain = text_value(data.get("domain", ""), 253).strip().casefold() or None
     if domain and (not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", domain) or "." not in domain or ".." in domain):
         raise APIError(400, "Enter a valid email domain.")
+    default_roles = role_ids(data.get("defaultRoleIds", []))
+    send_email = data.get("sendEmail") is True
+    if send_email and (not email or not service.smtp()["enabled"]):
+        raise APIError(400, "Configure email delivery and enter a recipient email before sending an invitation.")
+    if send_email: service.store.rate("invite-email:" + session["user_id"], 10, 3600)
     token = service.store.open(session["token"])
     await issuer_authority(service, room_id, session["user_id"], token)
+    await checked_roles(service, room_id, session["user_id"], default_roles)
     status, name = await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/m.room.name/", token=token, expected=False)
     now, secret, identity = time.time(), secrets.token_urlsafe(32), secrets.token_urlsafe(18)
     room_name = name.get("name", room_id) if status == 200 else room_id
-    service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                             (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain))
+    service.require_session(request)
+    service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                             (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles)))
     service.audit(session["user_id"], "invitation_created", room_id, identity)
     value = invite_view(service.store.db.execute("SELECT * FROM invitations WHERE id=?", (identity,)).fetchone())
     value.update(token=secret, url=service.config.public_url + "/?invite=" + secret)
+    if send_email:
+        try:
+            await service.send_email(email, "You’re invited to " + room_name[:100], "You have been invited to " + room_name[:255] + ".\n\nOpen this invitation to sign in or create an eligible account:\n" + value['url'] + "\n\nThis link expires in " + str(hours) + " hours. Ignore it if you were not expecting an invitation.")
+            value['emailSent'] = True
+            service.audit(session['user_id'], 'invitation_emailed', room_id, identity)
+        except APIError:
+            value['emailSent'] = False
+            value['warning'] = 'Invitation created, but email delivery failed. Copy the link below or revoke it before creating a replacement.'
     return web.json_response(value, status=201)
 
 
@@ -153,7 +174,9 @@ async def preview_invitation(request):
     service = request.app["service"]
     service.store.rate("invite-preview:" + service.ip(request), 30, 60)
     value = active_invitation(service, request.match_info["token"])
-    if value["uses"] >= value["max_uses"]:
+    session = service.authenticate(request)
+    resume = bool(session and service.store.db.execute("SELECT 1 FROM invitation_redemptions WHERE invitation_id=? AND user_id=?", (value['id'], session['user_id'])).fetchone())
+    if value["uses"] >= value["max_uses"] and not resume:
         raise APIError(404, "This invitation has no uses remaining.", "INVITATION_UNAVAILABLE")
     return web.json_response({"roomId": value["room_id"], "roomName": value["room_name"], "expiresAt": int(value["expires"] * 1000), "requiresEmail": bool(value["email"] or value["domain"])})
 
@@ -163,6 +186,8 @@ async def redeem(service, session, secret):
     account = service.store.account(session["user_id"])
     invitation_email(value, account.get("email"), account.get("verified"))
     await issuer_authority(service, value["room_id"], value["creator"])
+    default_roles = json.loads(value['default_roles'])
+    await checked_roles(service, value['room_id'], value['creator'], default_roles)
     db = service.store.db
     # Single SQLite transaction reserves capacity before any remote side effect.
     db.execute("BEGIN IMMEDIATE")
@@ -193,6 +218,11 @@ async def redeem(service, session, secret):
                 # The impersonation token has a hard 60-second upstream expiry.
                 service.audit("system", "temporary_invite_token_logout_failed", value["room_id"])
     await service.matrix("POST", "/_matrix/client/v3/join/" + quote(value["room_id"], safe=""), {}, service.store.open(session["token"]))
+    if default_roles:
+        try:
+            await apply_roles(service, value, session, default_roles)
+        except APIError as error:
+            raise APIError(409, 'You joined the server, but its default roles could not be assigned. Retry this invitation or ask the server owner. ' + error.message, 'INVITATION_ROLES_PENDING') from None
     db.execute("UPDATE invitation_redemptions SET state='joined' WHERE invitation_id=? AND user_id=?", (value["id"], session["user_id"]))
     service.audit(session["user_id"], "invitation_redeemed", value["room_id"], value["id"])
     return value["room_id"]
@@ -270,7 +300,7 @@ async def account_export(request):
     session = service.require_session(request)
     service.store.rate("export:" + session["user_id"], 3, 3600)
     token, user_id = service.store.open(session["token"]), session["user_id"]
-    keys = ["io.harbor.preferences", "io.harbor.bookmarks", "io.harbor.workspace", "io.tavern.profile", "io.tavern.community.preferences", "io.tavern.privacy"]
+    keys = ["io.harbor.preferences", "io.harbor.bookmarks", "io.harbor.workspace", "io.tavern.profile", "io.tavern.community.preferences", "io.tavern.privacy", "io.tavern.appearance", "io.tavern.navigation", "io.tavern.server_folders", "io.tavern.notification_preferences", "io.tavern.thread_preferences", "io.tavern.text_media", "io.tavern.onboarding", "io.tavern.server_welcome", "io.tavern.presence"]
     settings = {}
     for key in keys:
         status, value = await service.matrix("GET", "/_matrix/client/v3/user/" + quote(user_id, safe="") + "/account_data/" + key, token=token, expected=False)
@@ -288,6 +318,13 @@ async def account_export(request):
         if status == 200:
             value["uploads"] = media.get("media", [])
             value["uploadsScope"] = {"limit": 100, "total": media.get("total"), "nextToken": media.get("next_token")}
+    try:
+        from .moderation import view as warning_view
+    except ImportError:
+        from moderation import view as warning_view
+    warnings = service.store.db.execute('SELECT * FROM moderation_warnings WHERE target=? ORDER BY id DESC LIMIT 1000', (user_id,)).fetchall()
+    value['warnings'] = [warning_view(service, row, True) for row in warnings]
+    value['warningsScope'] = 'Your most recent 1000 private user-visible moderation records. Older records remain available through the moderation inbox.'
     service.audit(user_id, "account_exported", user_id)
     return web.json_response(value, headers={"Content-Disposition": 'attachment; filename="tavern-account.json"'})
 

@@ -1,22 +1,24 @@
 # Generated image-only stack. Build images first or select published release images in the environment.
 name: tavern
+x-logging: &id001
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: ${LOG_MAX_FILES:-3}
 x-hardening:
   restart: unless-stopped
-  cap_drop: &id001
+  cap_drop: &id002
   - ALL
-  security_opt: &id002
+  security_opt: &id003
   - no-new-privileges:true
   labels: &id004
     io.tavern.managed: 'true'
-  logging: &id003
-    driver: json-file
-    options:
-      max-size: 10m
-      max-file: '3'
+  logging: *id001
 services:
   init:
     image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.0}
     restart: 'no'
+    logging: *id001
     network_mode: none
     read_only: true
     tmpfs:
@@ -53,13 +55,13 @@ services:
       io.tavern.managed: 'true'
   tavern-web:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels:
       dockhand.prune: 'false'
       io.tavern.managed: 'true'
       io.tavern.component: web
-    logging: *id003
+    logging: *id001
     image: ${TAVERN_WEB_IMAGE:-tavern:0.4.0}
     environment:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
@@ -93,12 +95,12 @@ services:
       retries: 5
   tavern-api:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels:
       io.tavern.managed: 'true'
       io.tavern.component: api
-    logging: *id003
+    logging: *id001
     image: ${TAVERN_API_IMAGE:-tavern-api:0.4.0}
     user: 10001:10001
     group_add:
@@ -157,10 +159,10 @@ services:
       start_period: 30s
   synapse:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     image: ${SYNAPSE_IMAGE:-matrixdotorg/synapse:v1.160.0}
     user: 991:991
     environment:
@@ -216,17 +218,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: '3'
+    logging: *id001
   operations:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     profiles:
     - operations
     image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.0}
@@ -258,10 +256,10 @@ services:
       retries: 5
   coturn:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     profiles:
     - calls
     image: ${COTURN_IMAGE:-coturn/coturn:4.17.2-r0}
@@ -295,10 +293,10 @@ services:
       retries: 5
   livekit:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     profiles:
     - calls
     image: ${LIVEKIT_IMAGE:-livekit/livekit-server:v1.13.6}
@@ -332,10 +330,10 @@ services:
       retries: 5
   rtc-auth:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     profiles:
     - calls
     image: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
@@ -358,10 +356,10 @@ services:
         condition: service_started
   integrations:
     restart: unless-stopped
-    cap_drop: *id001
-    security_opt: *id002
+    cap_drop: *id002
+    security_opt: *id003
     labels: *id004
-    logging: *id003
+    logging: *id001
     profiles:
     - integrations
     image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.0}

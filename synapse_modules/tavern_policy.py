@@ -181,6 +181,9 @@ def may_edit_policy(previous, proposed, actor):
             continue
         if "manage_roles" not in grants or user == actor or rank(previous, user) >= actor_rank or rank(proposed, user) >= actor_rank:
             return False
+        added_roles = set(new_members.get(user, [])) - set(old_members.get(user, []))
+        if any(not set(new_roles[role]["permissions"]) <= grants for role in added_roles):
+            return False
     for override_key in ('overrides', 'categoryOverrides'):
         if previous.get(override_key, {}) == proposed.get(override_key, {}):
             continue
@@ -238,6 +241,11 @@ class TavernPolicy:
             create = state_events.get(("m.room.create", ""))
             if getattr(event, "state_key", None) != "" or not create or create.content.get("type") != "m.space" or create.content.get("m.federate", True):
                 return False, None
+            if 'io.tavern.previous_event' in event.content:
+                current_event = state_events.get((POLICY, ''))
+                current_id = current_event.event_id if current_event else None
+                if event.content['io.tavern.previous_event'] != current_id:
+                    return False, None
             old = content(state_events, POLICY)
             if not old:
                 return bool(valid_policy(event.content) and event.sender == create.sender and event.content["owner"] == create.sender), None

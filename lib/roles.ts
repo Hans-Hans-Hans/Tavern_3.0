@@ -41,3 +41,31 @@ export async function saveRolePolicy(serverId: string, policy: RolePolicy) { con
 export function canManageCategoryPermissions(serverId: string) { const policy = readRolePolicy(serverId), me = getMatrixClient()?.getUserId(); return !!(policy && me && canManageServerRoles(serverId) && effectiveRolePermissions(policy, me).has('manage_channels')); }
 export function mergePermissionTargets(current: PermissionTargets, proposed: PermissionTargets, previous: PermissionTargets) { const next: PermissionTargets = { roles: { ...current.roles }, users: { ...current.users } }; for (const kind of ['roles', 'users'] as const) for (const target of new Set([...Object.keys(previous[kind]), ...Object.keys(proposed[kind])])) { const before = previous[kind][target] || {}, after = proposed[kind][target] || {}, fresh = { ...current[kind][target] }; for (const name of new Set([...Object.keys(before), ...Object.keys(after)]) as Set<RolePermission>) { if (before[name] === after[name]) continue; if (fresh[name] !== before[name] && fresh[name] !== after[name]) throw new Error('These permissions changed elsewhere. Reopen the category and retry.'); if (after[name] === undefined) delete fresh[name]; else fresh[name] = after[name]; } if (Object.keys(fresh).length) next[kind][target] = fresh; else delete next[kind][target]; } return next; }
 export async function saveCategoryPermissions(serverId: string, categoryId: string, value: PermissionTargets, previous?: PermissionTargets) { const c = getMatrixClient(); if (!c || !canManageCategoryPermissions(serverId)) throw new Error('You do not have permission to manage category permissions.'); const [raw, layout] = await Promise.all([c.getStateEvent(serverId, rolesEvent as any, ''), c.getStateEvent(serverId, 'io.tavern.server.layout' as any, '')]), policy = parseRolePolicy(raw); if (!policy || !Array.isArray(layout.categories) || !layout.categories.some((cat: any) => cat.id === categoryId)) throw new Error('This category or role policy changed. Reopen it and retry.'); const merged = previous ? mergePermissionTargets(policy.categoryOverrides[categoryId] || { roles: {}, users: {} }, value, previous) : value, next = { ...policy, categoryOverrides: { ...policy.categoryOverrides, [categoryId]: merged } }; if (!parseRolePolicy(next)) throw new Error('These category permission settings are invalid.'); await c.sendStateEvent(serverId, rolesEvent as any, next, ''); return next; }
+
+export function canAssignMemberRoles(serverId: string, userId: string) { const client = getMatrixClient(), me = client?.getUserId(), room = client?.getRoom(serverId), policy = readRolePolicy(serverId); return !!(client && me && room?.isSpaceRoom() && room.getMyMembership() === 'join' && room.getMember(userId)?.membership === 'join' && userId !== me && policy && canManageServerRoles(serverId) && memberRoleRank(policy, userId) < memberRoleRank(policy, me)); }
+export function mergeMemberRoles(policy: RolePolicy, actor: string, userId: string, selected: string[], previous: string[]) {
+  const actorRank = memberRoleRank(policy, actor), grants = effectiveRolePermissions(policy, actor);
+  if (!grants.has('manage_roles') || actor === userId || memberRoleRank(policy, userId) >= actorRank) throw new Error('You can manage roles only for members below your highest role.');
+  const desired = new Set(selected.filter(id => id !== 'everyone')), before = new Set(previous.filter(id => id !== 'everyone')), current = new Set(policy.members[userId] || []);
+  for (const id of new Set([...desired, ...before])) {
+    if (desired.has(id) === before.has(id)) continue;
+    const role = policy.roles.find(role => role.id === id);
+    if (!role || role.position >= actorRank) throw new Error('A selected role changed or is above your authority. Reopen this member’s roles.');
+    if (desired.has(id)) { if (role.permissions.some(permission => !grants.has(permission))) throw new Error('You cannot grant permissions you do not have.'); current.add(id); } else current.delete(id);
+  }
+  const next = { ...policy, members: { ...policy.members, [userId]: [...current] } };
+  if (memberRoleRank(next, userId) >= actorRank || !parseRolePolicy(next)) throw new Error('These role assignments are invalid or exceed your authority.');
+  return next;
+}
+let memberRoleWrites: Promise<unknown> = Promise.resolve();
+function stableRoleJson(value: any): string { if (Array.isArray(value)) return '[' + value.map(stableRoleJson).join(',') + ']'; if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableRoleJson(value[key])).join(',') + '}'; return JSON.stringify(value); }
+export function saveMemberRoles(serverId: string, userId: string, selected: string[], previous: string[]) {
+  const client = getMatrixClient(); if (!client || !canAssignMemberRoles(serverId, userId)) return Promise.reject(new Error('You cannot manage this member’s roles.'));
+  const task = memberRoleWrites.catch(() => {}).then(async () => {
+    const observed = client.getRoom(serverId)?.currentState.getStateEvents(rolesEvent, ''), revision = observed?.getId(), snapshot = observed ? parseRolePolicy(structuredClone(observed.getContent())) : null;
+    const [raw, member] = await Promise.all([client.getStateEvent(serverId, rolesEvent as any, ''), client.getStateEvent(serverId, 'm.room.member' as any, userId)]), policy = parseRolePolicy(raw), me = client.getUserId();
+    if (client !== getMatrixClient() || !me || !policy || member.membership !== 'join' || !canManageServerRoles(serverId)) throw new Error('Your account, membership, or role policy changed. Reopen the member’s roles.');
+    if (!revision || !snapshot || stableRoleJson(snapshot) !== stableRoleJson(policy)) throw new Error('Server roles changed while syncing. Wait for the latest state, reload assignments, and retry.');
+    const next = mergeMemberRoles(policy, me, userId, selected, previous); await client.sendStateEvent(serverId, rolesEvent as any, { ...next, 'io.tavern.previous_event': revision }, ''); return next;
+  }); memberRoleWrites = task; return task;
+}

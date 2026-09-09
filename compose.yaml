@@ -1,14 +1,15 @@
 # Complete stack. Optional profiles require external media routing or a bot identity.
 name: tavern
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "${LOG_MAX_SIZE:-10m}", max-file: "${LOG_MAX_FILES:-3}"}
 x-hardening: &hardening
   restart: unless-stopped
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   labels:
     io.tavern.managed: "true"
-  logging:
-    driver: json-file
-    options: {max-size: 10m, max-file: "3"}
+  logging: *logging
 services:
   init:
     image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.0}
@@ -16,6 +17,7 @@ services:
       context: ${TAVERN_SOURCE_DIR:-.}
       dockerfile: docker/init/Dockerfile
     restart: "no"
+    logging: *logging
     network_mode: none
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]
@@ -167,9 +169,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    logging:
-      driver: json-file
-      options: {max-size: 10m, max-file: "3"}
+    logging: *logging
   operations:
     <<: *hardening
     profiles: [operations]
