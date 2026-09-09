@@ -5,6 +5,7 @@ the CI loopback mapping, and requires the run's filesystem capability for every
 control operation. Matrix credentials are accepted once and never returned.
 """
 import asyncio
+import base64
 import hmac
 import json
 import os
@@ -33,7 +34,11 @@ def require_ci():
 
 
 def room_id(value):
-    return isinstance(value, str) and bool(re.fullmatch(r'![^\s/\\?#:]{1,200}:chat\.example\.test', value))
+    if not isinstance(value, str): return False
+    if re.fullmatch(r'![^\s/\\?#:\x00-\x1f\x7f]{1,200}:chat\.example\.test', value): return True
+    if not re.fullmatch(r'![A-Za-z0-9_-]{43}', value): return False
+    raw = base64.urlsafe_b64decode(value[1:] + '=')
+    return len(raw) == 32 and base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=') == value[1:]
 
 
 def valid_prepare(data):
@@ -89,10 +94,17 @@ class Controller:
     async def verify_rooms(self, token, data):
         parent=await self.native_state(token,data['serverId'])
         child=await self.native_state(token,data['channelId'])
-        for current,kind in ((parent,'server'),(child,'channel')):
+        for identity,current,kind in ((data['serverId'],parent,'server'),(data['channelId'],child,'channel')):
             create=current.get(('m.room.create',''),{})
             body=create.get('content',{})
-            if (create.get('sender')!=OWNER or body.get('m.federate') is not False
+            # Syntax never establishes locality for v12. This method gates the
+            # durable prepared manifest and sender startup after the trusted CI
+            # creator/capability handoff and fixed-homeserver bot joins.
+            hashed = ':' not in identity
+            if (not room_id(identity) or (body.get('room_version') == '12') != hashed
+                or create.get('sender')!=OWNER or body.get('m.federate') is not False
+                or body.get('additional_creators') is not None
+                or current.get(('m.room.member',OWNER),{}).get('content',{}).get('membership')!='join'
                 or body.get('io.tavern.ci_system')!=data['runId']
                 or current.get(('m.room.name',''),{}).get('content',{}).get('name')!='CI system notices '+data['runId']+' '+kind
                 or current.get(('m.room.member',BOT),{}).get('content',{}).get('membership')!='join'):

@@ -2,12 +2,13 @@
 // The extra owning sender has no prior shared Spaces or contact relationship.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeRequest, matrixSmokeJoin, matrixSmokeLeave, matrixSmokeCreateFixture } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test', ADMIN = '@ciadmin:chat.example.test';
 const BOB = '@cibob:chat.example.test', SENDER = '@ciinviter:chat.example.test';
 const PRIVACY = 'io.tavern.privacy', IGNORED = 'm.ignored_user_list';
-const ROOM_ID = /^![^\s/\\?#:]{1,200}:chat\.example\.test$/;
+
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export async function invitationPrivacySmoke({ admin, bob, adminSession, bobSession, origin, api, createPage, login }) {
@@ -33,7 +34,7 @@ export async function invitationPrivacySmoke({ admin, bob, adminSession, bobSess
     // Mutation retry belongs to the known-target helpers below, never createRoom.
     return body === undefined ? matrixSmokeRequest(request) : request();
   };
-  const room = id => { assert.ok(ROOM_ID.test(id) && fixtures.has(id)); return '/rooms/' + encodeURIComponent(id); };
+  const room = id => { assert.ok(isCiRoomId(id) && fixtures.has(id)); return '/rooms/' + encodeURIComponent(id); };
   const state = (id, type, key = '') => room(id) + '/state/' + encodeURIComponent(type) + '/' + encodeURIComponent(key);
   const accountPath = type => '/user/' + encodeURIComponent(BOB) + '/account_data/' + encodeURIComponent(type);
   async function account(type) {
@@ -79,6 +80,7 @@ export async function invitationPrivacySmoke({ admin, bob, adminSession, bobSess
   async function inspect(id) {
     await session(sender, senderSession);
     const events = checked(await native(sender, room(id) + '/state'), 'Inspect fresh marked native fixture');
+    assertCiRoomCreation({ id, events, creator: SENDER, ...fixtures.get(id), marker: 'io.tavern.ci_invitation_privacy', runId: nonce });
     const find = type => events.find(event => event.type === type && event.state_key === '');
     const create = find('m.room.create');
     assert.equal(create.sender, SENDER); assert.equal(create.content['m.federate'], false);
@@ -103,7 +105,7 @@ export async function invitationPrivacySmoke({ admin, bob, adminSession, bobSess
       name, visibility: 'private', preset: 'private_chat',
       creation_content: { 'm.federate': false, 'io.tavern.ci_invitation_privacy': nonce, ...(space ? { type: 'm.space' } : {}) }, initial_state: initial,
     }), 'Create exactly one fresh CI room without invitation side effects').room_id;
-    assert.ok(ROOM_ID.test(id) && !fixtures.has(id)); fixtures.set(id, { name, space }); await inspect(id); return id;
+    assert.ok(isCiRoomId(id) && !fixtures.has(id)); fixtures.set(id, { name, space }); await inspect(id); return id;
   }
   const membership = (viewer, id, user) => { assert.ok([SENDER, BOB].includes(user)); return native(viewer, state(id, 'm.room.member', user)); };
   async function leave(page, id, expected) {

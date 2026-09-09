@@ -2,11 +2,12 @@
 // No application routes, crypto, account data, or browser responses are mocked.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { expect } from '@playwright/test';
 import { matrixSmokeRequest, matrixSmokeCreateFixture, matrixSmokeInvite } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test', ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
-const ROOM_ID = /^![^\s/\\?#:]{1,200}:chat\.example\.test$/;
+
 const MODES = ['everyone', 'contacts', 'shared_server', 'nobody'];
 
 export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent }) {
@@ -31,7 +32,7 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
     // Never replay createRoom: its invitation may fail after the room persists.
     return body === undefined || method === 'PUT' ? matrixSmokeRequest(request) : request();
   };
-  const room = id => { assert.ok(fixtures.has(id) && ROOM_ID.test(id)); return '/rooms/' + encodeURIComponent(id); };
+  const room = id => { assert.ok(fixtures.has(id) && isCiRoomId(id)); return '/rooms/' + encodeURIComponent(id); };
   const state = (id, type, key = '') => room(id) + '/state/' + encodeURIComponent(type) + '/' + encodeURIComponent(key);
   const membership = async id => checked(await native(alice, state(id, 'm.room.member', BOB)), 'Read Bob membership in the CI room').membership;
   const direct = async () => {
@@ -47,6 +48,7 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
   async function inspect(id, expected) {
     await session(alice, aliceSession);
     const events = checked(await native(alice, room(id) + '/state'), 'Inspect the fresh CI direct room');
+    assertCiRoomCreation({ id, events, creator: ALICE, name: fixtures.get(id), marker: 'io.tavern.ci_dm', runId: nonce, space: false });
     const content = type => events.find(event => event.type === type && event.state_key === '')?.content;
     const createEvent = events.find(event => event.type === 'm.room.create' && event.state_key === '');
     const create = createEvent?.content;
@@ -58,7 +60,7 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
     assert.equal(content('m.room.encryption').algorithm, 'm.megolm.v1.aes-sha2');
     assert.equal(content('m.room.history_visibility').history_visibility, 'joined');
     assert.equal(content('m.room.join_rules').join_rule, 'invite');
-    assert.deepEqual(events.filter(event => event.type === 'm.room.member').map(event => [event.state_key, event.content.membership]).sort(), [[ALICE, 'join'], [BOB, expected]].sort());
+    assert.deepEqual(events.filter(event => event.type === 'm.room.member').map(event => [event.state_key, event.content.membership]).sort(), [[ALICE, 'join'], ...(expected ? [[BOB, expected]] : [])].sort());
     if (expected === 'invite') {
       const invite = events.find(event => event.type === 'm.room.member' && event.state_key === BOB);
       assert.equal(invite.sender, ALICE); assert.equal(invite.content.is_direct, true);
@@ -76,7 +78,8 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
         { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
       ],
     }), 'Create one fresh direct invitation').room_id;
-    assert.ok(ROOM_ID.test(id)); assert.ok(!fixtures.has(id)); fixtures.set(id, name);
+    assert.ok(isCiRoomId(id)); assert.ok(!fixtures.has(id)); fixtures.set(id, name);
+    await inspect(id); // Prove the fresh native marker before inviting another account.
     checked(await matrixSmokeInvite(
       () => native(alice, state(id, 'm.room.member', BOB)),
       () => api(alice, '/_matrix/client/v3' + state(id, 'm.room.member', BOB), { membership: 'invite', is_direct: true }, true, false, 'PUT'),

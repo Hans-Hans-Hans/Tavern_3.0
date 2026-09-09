@@ -34,3 +34,27 @@ test('a redirected owning browser is rejected without contacting the redirected 
   let calls = 0; const base = options(async () => { calls++; }); base.admin = { url: () => 'https://tavern.example.com/' };
   await assert.rejects(invitationPrivacySmoke(base), /isolated owning browser/); assert.equal(calls, 0);
 }));
+
+test('the native privacy probe inspects immutable legacy/v12 creation before proceeding to another room', () => ci(async () => {
+  for (const id of ['!privacy:chat.example.test', '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ']) for (const valid of [true, false]) {
+    const sender = { url: () => origin }, senderSession = { userId: '@ciinviter:chat.example.test', deviceId: 'SENDER', admin: false };
+    let configuration, creates = 0; const stop = new Error('next verified fixture boundary');
+    const base = options(async (page, path, body) => {
+      if (path === '/api/auth/session') return { status: 200, data: page === base.admin ? adminSession : page === sender ? senderSession : bobSession };
+      if (path.includes('/account_data/')) return { status: 200, data: {} };
+      if (path === '/api/social') return { status: 200, data: { privacy: 'everyone', requests: [], blocked: [] } };
+      if (path === '/api/admin/users') return { status: 201, data: {} };
+      if (path.endsWith('/createRoom')) { if (++creates === 2) throw stop; configuration = body; return { status: 200, data: { room_id: id } }; }
+      assert.ok(path.endsWith('/state'));
+      return { status: 200, data: [
+        { type: 'm.room.create', state_key: '', sender: senderSession.userId, content: { ...configuration.creation_content,
+          room_version: id.includes(':') ? '11' : '12', ...(valid ? {} : { 'io.tavern.ci_invitation_privacy': 'wrong-run' }) } },
+        { type: 'm.room.name', state_key: '', content: { name: configuration.name } },
+        { type: 'm.room.member', state_key: senderSession.userId, content: { membership: 'join' } },
+        { type: 'm.room.join_rules', state_key: '', content: { join_rule: 'invite' } }, ...configuration.initial_state,
+      ] };
+    }); base.createPage = async () => sender;
+    await assert.rejects(invitationPrivacySmoke(base), error => valid ? error === stop : error.code === 'ERR_ASSERTION');
+    assert.equal(creates, valid ? 2 : 1);
+  }
+}));

@@ -48,3 +48,27 @@ test('a redirected browser is rejected before account inspection or fixture writ
   await assert.rejects(dmRequestsSmoke(opts), /isolated owning browser/);
   assert.equal(calls, 0);
 }));
+
+test('the actual DM probe proves freshly created legacy and v12 rooms before issuing a native invitation', () => ci(async () => {
+  for (const id of ['!dm:chat.example.test', '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ']) for (const valid of [true, false]) {
+    let configuration, invitations = 0; const stop = new Error('verified native invitation boundary');
+    const opts = options(async (page, path, body) => {
+      if (path === '/api/auth/session') return { status: 200, data: page === opts.alice ? aliceSession : bobSession };
+      if (path === '/api/social/invitation-privacy') return { status: 200, data: { invitations: 'everyone' } };
+      if (path.endsWith('/account_data/m.direct')) return { status: 200, data: {} };
+      if (path.endsWith('/createRoom')) { configuration = body; return { status: 200, data: { room_id: id } }; }
+      if (path.endsWith('/state')) return { status: 200, data: [
+        { type: 'm.room.create', state_key: '', sender: aliceSession.userId, content: { ...configuration.creation_content,
+          room_version: id.includes(':') ? '11' : '12', ...(valid ? {} : { 'm.federate': true }) } },
+        { type: 'm.room.name', state_key: '', content: { name: configuration.name } },
+        { type: 'm.room.member', state_key: aliceSession.userId, content: { membership: 'join' } },
+        { type: 'm.room.join_rules', state_key: '', content: { join_rule: 'invite' } }, ...configuration.initial_state,
+      ] };
+      assert.ok(decodeURIComponent(path).endsWith('/state/m.room.member/' + bobSession.userId));
+      if (body === undefined) return { status: 404, data: { errcode: 'M_NOT_FOUND' } };
+      invitations++; throw stop;
+    });
+    await assert.rejects(dmRequestsSmoke(opts), error => valid ? error === stop : error.code === 'ERR_ASSERTION');
+    assert.equal(invitations, valid ? 1 : 0);
+  }
+}));

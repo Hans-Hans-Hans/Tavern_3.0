@@ -1,16 +1,19 @@
 // Native plaintext profile metadata only; no message content or media is classified.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 export async function profilePolicySmoke({ admin, alice, adminSession, aliceSession, fixture, origin, api }) {
-  if (process.env.TAVERN_CI_SMOKE !== 'true' || origin !== 'https://chat.example.test'
+  if (process.env.TAVERN_CI_SMOKE !== 'true' || process.env.TAVERN_CI_TLS !== '/tmp/tavern-ci-tls' || origin !== 'https://chat.example.test'
     || adminSession.userId !== '@ciadmin:chat.example.test' || adminSession.admin !== true
     || aliceSession.userId !== '@cialice:chat.example.test' || aliceSession.admin !== false
-    || ![fixture?.server, fixture?.voice].every(id => typeof id === 'string' && /^![^\s]+:chat\.example\.test$/.test(id))
+    || ![fixture?.server, fixture?.voice].every(isCiRoomId) || !/^[a-f0-9]{24}$/.test(fixture?.runId || '')
+    || !adminSession.deviceId || !aliceSession.deviceId || [admin, alice].some(page => new URL(page.url()).origin !== origin)
     || fixture.server === fixture.voice) throw new Error('Profile policy smoke requires the isolated CI accounts and AFK fixture.');
   const { server, voice } = fixture, policyType = 'io.tavern.server.profile_policy', extension = 'io.tavern.profile';
   const native = (page, path, body, method) => {
+    assert.equal(new URL(page.url()).origin, origin);
     const request = () => api(page, '/_matrix/client/v3' + path, body, true, false, method);
     return body === undefined || method === 'PUT' ? matrixSmokeRequest(request) : request();
   };
@@ -31,7 +34,7 @@ export async function profilePolicySmoke({ admin, alice, adminSession, aliceSess
   const original = new Map();
   for (const [id, name, space] of [[server, 'CI AFK settings server', true], [voice, 'CI AFK voice destination', false]]) {
     const all = checked(await native(admin, room(id) + '/state'), 200, 'Inspect authoritative isolated fixture state');
-    assert.ok(Array.isArray(all));
+    assertCiRoomCreation({ id, events: all, creator: adminSession.userId, name, space, marker: 'io.tavern.ci_afk', runId: fixture.runId });
     const entry = (type, key = '') => all.find(item => item.type === type && item.state_key === key);
     const create = entry('m.room.create'); assert.equal(create?.sender, adminSession.userId); assert.equal(create.content['m.federate'], false);
     assert.equal(create.content.type === 'm.space', space); assert.equal(entry('m.room.name')?.content.name, name);

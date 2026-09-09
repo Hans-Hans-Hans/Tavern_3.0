@@ -1,18 +1,21 @@
 // Actual isolated Synapse enforcement; no account metadata or credentials are fabricated.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeJoin, matrixSmokeLeave, matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 export async function eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture, encryptedProbe,
   origin, api, ready, encryptedResponse, encryptedEvent }) {
-  if (process.env.TAVERN_CI_SMOKE !== 'true' || origin !== 'https://chat.example.test'
+  if (process.env.TAVERN_CI_SMOKE !== 'true' || process.env.TAVERN_CI_TLS !== '/tmp/tavern-ci-tls' || origin !== 'https://chat.example.test'
     || adminSession.userId !== '@ciadmin:chat.example.test' || adminSession.admin !== true
     || aliceSession.userId !== '@cialice:chat.example.test' || aliceSession.admin !== false
-    || ![fixture?.server, fixture?.voice].every(id => typeof id === 'string' && /^![^\s]+:chat\.example\.test$/.test(id))) {
+    || ![fixture?.server, fixture?.voice].every(isCiRoomId) || !/^[a-f0-9]{24}$/.test(fixture?.runId || '') || fixture.server === fixture.voice
+    || !adminSession.deviceId || !aliceSession.deviceId || [admin, alice].some(page => new URL(page.url()).origin !== origin)) {
     throw new Error('Eligibility smoke requires the isolated CI accounts and AFK fixture.');
   }
   const { server, voice } = fixture, eligibility = 'io.tavern.server.eligibility', callMember = 'org.matrix.msc3401.call.member';
   const native = (page, path, body, method) => {
+    assert.equal(new URL(page.url()).origin, origin);
     const request = () => api(page, '/_matrix/client/v3' + path, body, true, false, method);
     return body === undefined || method === 'PUT' ? matrixSmokeRequest(request) : request();
   };
@@ -27,6 +30,20 @@ export async function eligibilitySmoke({ admin, alice, adminSession, aliceSessio
     assert.equal(data.errcode, 'M_FORBIDDEN');
     assert.match(data.error, reason, description + ' must fail for the actual eligibility rule.');
   };
+  for (const [page, expected] of [[admin, adminSession], [alice, aliceSession]]) {
+    const current = checked(await matrixSmokeRequest(() => api(page, '/api/auth/session')), 200, 'Inspect the owning eligibility session');
+    assert.equal(current.userId, expected.userId); assert.equal(current.deviceId, expected.deviceId); assert.equal(current.admin, expected.admin);
+  }
+  for (const [id, name, space] of [[server, 'CI AFK settings server', true], [voice, 'CI AFK voice destination', false]]) {
+    const all = checked(await native(admin, room(id) + '/state'), 200, 'Prove the native reused AFK fixture');
+    const find = assertCiRoomCreation({ id, events: all, creator: adminSession.userId, name, space, marker: 'io.tavern.ci_afk', runId: fixture.runId });
+    assert.equal(find('m.room.member', aliceSession.userId)?.content.membership, 'join');
+    if (space) assert.deepEqual(find('m.space.child', voice)?.content.via, ['chat.example.test']);
+    else {
+      assert.equal(find('m.room.encryption')?.content.algorithm, 'm.megolm.v1.aes-sha2');
+      assert.deepEqual(find('m.space.parent', server)?.content, { canonical: true, via: ['chat.example.test'] });
+    }
+  }
   const currentSession = checked(await matrixSmokeRequest(() => api(alice, '/api/auth/session')), 200, 'Inspect current CI Alice account');
   assert.equal(currentSession.userId, aliceSession.userId);
   assert.equal(currentSession.emailVerified, false, 'This probe requires the actual unverified admin-created account.');

@@ -2,6 +2,7 @@
 // Imported only by the guarded isolated live smoke; no application routes mock.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { execFile } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ const OWNER = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test', AD
 const SUBJECT = '@cinoticesubject:chat.example.test', TYPE = 'io.tavern.server.system_messages';
 const HOOK = 'ci-system-notices', CONTROL = 'http://127.0.0.1:18086';
 const run = promisify(execFile);
-const roomId = value => typeof value === 'string' && /^![^\s/\\?#:]{1,200}:chat\.example\.test$/.test(value);
+
 
 export async function openSystemMessageSettings(page, serverName) {
   const trigger = page.locator('.workspace-select');
@@ -84,7 +85,14 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     const request = () => api(page,'/_matrix/client/v3'+path,body,true,false,method);
     return body === undefined || method === 'PUT' ? matrixSmokeRequest(request) : request();
   };
-  const room = id => '/rooms/'+encodeURIComponent(id);
+  const fixtures = new Map();
+  const room = id => { assert.ok(isCiRoomId(id) && fixtures.has(id)); return '/rooms/'+encodeURIComponent(id); };
+  async function guardFixture(id, name, space) {
+    assert.ok(isCiRoomId(id) && !fixtures.has(id)); fixtures.set(id, { name, space });
+    const events = checked(await native(alice, room(id) + '/state'), 200, 'Prove native isolation before fixture mutation');
+    const find = assertCiRoomCreation({ id, events, creator: OWNER, name, space, marker: 'io.tavern.ci_system', runId });
+    assert.equal(find(TYPE), undefined);
+  }
   const state = (id,type,key='') => room(id)+'/state/'+encodeURIComponent(type)+'/'+encodeURIComponent(key);
   const session = async (page,expected) => {
     assert.equal(new URL(page.url()).origin,ORIGIN,'Only the isolated owning browser is permitted.');
@@ -121,14 +129,14 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
   const createFixture = config => matrixSmokeCreateFixture(body => native(alice,'/createRoom',body),config);
   const server = checked(await createFixture({name:serverName,visibility:'private',preset:'private_chat',
     creation_content:{type:'m.space','m.federate':false,'io.tavern.ci_system':runId}}),200,'Create a fresh isolated native Space').room_id;
-  assert.ok(roomId(server));
+  await guardFixture(server, serverName, true);
   const channel = checked(await createFixture({name:channelName,visibility:'private',preset:'private_chat',
     creation_content:{'m.federate':false,'io.tavern.ci_system':runId},initial_state:[
       {type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},
       {type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}},
       {type:'m.space.parent',state_key:server,content:{canonical:true,via:['chat.example.test']}},
     ]}),200,'Create the fresh encrypted CI child').room_id;
-  assert.ok(roomId(channel)); assert.notEqual(server,channel);
+  assert.notEqual(server,channel); await guardFixture(channel, channelName, false);
   checked(await native(alice,state(server,'m.space.child',channel),{via:['chat.example.test']},'PUT'),200,'Publish the reciprocal CI child link');
   const membership = (viewer,id,user) => native(viewer,state(id,'m.room.member',user));
   const inviteRoom = async (id,user) => {
@@ -142,6 +150,7 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
   await joinRoom(bob,server,BOB); await joinRoom(bob,channel,BOB);
   for (const [id,name,space] of [[server,serverName,true],[channel,channelName,false]]) {
     const all=checked(await native(alice,room(id)+'/state'),200,'Guard the newly created native fixture');
+    assertCiRoomCreation({ id, events: all, creator: OWNER, name, space, marker: 'io.tavern.ci_system', runId });
     const content=type => all.find(event => event.type===type && event.state_key==='');
     assert.equal(content('m.room.create').sender,OWNER); assert.equal(content('m.room.create').content['io.tavern.ci_system'],runId);
     assert.equal(content('m.room.create').content['m.federate'],false); assert.equal(content('m.room.create').content.type==='m.space',space);

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -83,3 +83,58 @@ class ControllerGuardTests(unittest.IsolatedAsyncioTestCase):
         restored=await self.post('/recipient-pins',{'enabled':True}); self.assertEqual(restored.status,200)
         self.assertEqual(json.loads((self.config/'bot.json').read_text()),config)
         self.assertEqual((await self.post('/recipient-pins',{'enabled':True,'devices':{'untrusted':'value'}})).status,400)
+
+
+class NativeFixtureProofTests(unittest.IsolatedAsyncioTestCase):
+    def fixture(self, modern=False):
+        data=prepared()
+        if modern:
+            data.update(serverId='!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ', channelId='!'+'A'*43)
+        states=[]
+        for identity,kind in ((data['serverId'],'server'),(data['channelId'],'channel')):
+            state={
+                ('m.room.create',''):{'sender':helper.OWNER,'content':{'room_version':'12' if modern else '11',
+                    'm.federate':False,'io.tavern.ci_system':data['runId'],**({'type':'m.space'} if kind=='server' else {})}},
+                ('m.room.name',''):{'content':{'name':'CI system notices '+data['runId']+' '+kind}},
+                **{('m.room.member',user):{'content':{'membership':'join'}} for user in (helper.OWNER,helper.BOB,helper.BOT)},
+            }
+            if kind=='server': state[('m.space.child',data['channelId'])]={'content':{'via':['chat.example.test']}}
+            else:
+                state[('m.space.parent',data['serverId'])]={'content':{'canonical':True,'via':['chat.example.test']}}
+                state[('m.room.encryption','')]={'content':{'algorithm':'m.megolm.v1.aes-sha2'}}
+            states.append(state)
+        return data,states
+
+    async def test_full_controller_proof_accepts_exact_legacy_and_canonical_v12_fixtures(self):
+        for modern in (False,True):
+            data,states=self.fixture(modern)
+            self.assertTrue(helper.valid_prepare(data))
+            controller=helper.Controller(); controller.native_state=AsyncMock(side_effect=states)
+            await controller.verify_rooms('only-a-fixture-token',data)
+            self.assertEqual([call.args[1] for call in controller.native_state.await_args_list],[data['serverId'],data['channelId']])
+
+    async def test_domainless_syntax_cannot_substitute_for_native_isolation_version_or_recipient_proof(self):
+        changes=[
+            lambda p,c:p[('m.room.create','')]['content'].update(room_version='11'),
+            lambda p,c:p[('m.room.create','')].update(sender='@real:chat.example.test'),
+            lambda p,c:p[('m.room.create','')]['content'].update({'m.federate':True}),
+            lambda p,c:p[('m.room.create','')]['content'].update({'io.tavern.ci_system':'b'*24}),
+            lambda p,c:p[('m.room.create','')]['content'].update(additional_creators=['@real:chat.example.test']),
+            lambda p,c:p[('m.room.member',helper.OWNER)]['content'].update(membership='leave'),
+            lambda p,c:c[('m.room.member',helper.BOT)]['content'].update(membership='invite'),
+            lambda p,c:c.update({('m.room.member','@real:chat.example.test'):{'content':{'membership':'join'}}}),
+            lambda p,c:c[('m.room.encryption','')]['content'].update(algorithm='not-encryption'),
+            lambda p,c:p.pop(next(key for key in p if key[0]=='m.space.child')),
+        ]
+        for change in changes:
+            data,states=self.fixture(True);change(*states)
+            controller=helper.Controller();controller.native_state=AsyncMock(side_effect=states)
+            with self.assertRaises(RuntimeError):await controller.verify_rooms('only-a-fixture-token',data)
+        data,states=self.fixture(False);states[0][('m.room.create','')]['content']['room_version']='12'
+        controller=helper.Controller();controller.native_state=AsyncMock(side_effect=states)
+        with self.assertRaises(RuntimeError):await controller.verify_rooms('only-a-fixture-token',data)
+
+    async def test_controller_rejects_noncanonical_hashes_foreign_legacy_ids_and_unsafe_controls(self):
+        for identity in ('!'+'A'*42+'B','!'+'A'*42,'!'+'A'*44,'!'+'A'*43+'=','!s:real.example','!s\x00:chat.example.test','!s\x7f:chat.example.test'):
+            self.assertFalse(helper.room_id(identity))
+            self.assertFalse(helper.valid_prepare(prepared()|{'serverId':identity}))
