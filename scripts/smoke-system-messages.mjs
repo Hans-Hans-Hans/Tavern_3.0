@@ -280,14 +280,16 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     await inviteRoom(server,SUBJECT);
     await joinRoom(subject,server,SUBJECT);
     await waitFor('API pending while the bot is offline',async () => (await readSettings()).counts.pending>=1);
-    const cancelledBefore=(await readSettings()).counts.cancelled;
+    // The grouped API counts omit states with no rows; their baseline is zero.
+    // Comparing a first cancellation against undefined can never succeed.
+    const cancelledBefore=(await readSettings()).counts.cancelled ?? 0;
     await save(false);
     await waitFor('Disabled route cancels queued work',async () => (await readSettings()).counts.cancelled>cancelledBefore);
     await startBot(identity); await save(true);
     await inviteRoom(channel,ADMIN);
     await joinRoom(admin,channel,ADMIN); adminJoined=true;
     assert.ok([403,404].includes((await membership(alice,server,ADMIN)).status) || (await membership(alice,server,ADMIN)).data.membership!=='join');
-    const beforeAudience=(await readSettings()).counts.cancelled;
+    const beforeAudience=(await readSettings()).counts.cancelled ?? 0;
     await leaveRoom(subject,server,SUBJECT);
     await waitFor('New destination-only audience cancels the notice',async () => (await readSettings()).counts.cancelled>beforeAudience);
     await pause(3500);
