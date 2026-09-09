@@ -8,9 +8,10 @@ export function nextUnreadConversation(conversations: UnreadConversation[], curr
   return null;
 }
 export function normalizeUnreadShortcut(value: unknown): UnreadShortcut { return value === 'disabled' || value === 'alt-shift' ? value : 'alt'; }
-export function matchTavernShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented'>, unread: UnreadShortcut) {
+export function matchTavernShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented'> & { repeat?: boolean }, unread: UnreadShortcut) {
   if (event.defaultPrevented || event.isComposing) return null;
   if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === '/' || event.code === 'Slash')) return 'reference';
+  if (!event.ctrlKey && !event.metaKey && event.altKey && event.shiftKey && !event.repeat && event.code === 'KeyR') return 'mark-all-read';
   if (unread === 'disabled' || event.ctrlKey || event.metaKey || !event.altKey || event.shiftKey !== (unread === 'alt-shift')) return null;
   return event.key === 'ArrowUp' ? 'previous-unread' : event.key === 'ArrowDown' ? 'next-unread' : null;
 }

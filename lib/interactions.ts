@@ -1,7 +1,8 @@
 import type { MatrixClient } from 'matrix-js-sdk';
-import { isManagedAccount } from './api';
+import { accountArtworkOwner, isManagedAccount } from './api';
 import { setUserBlocked } from './social';
-import { getMatrixClient } from './matrix';
+import { getMatrixClient, mutateMatrixAccountData } from './matrix';
+import { navigationAccountKey, navigationLists, noteNavigationUnreadChange } from './read-state';
 import { readRolePolicy, effectiveRolePermissions, rolesEvent, type RolePermission } from './roles';
 function roleAllows(roomId:string,userId:string,permission:RolePermission){
   const c=getMatrixClient(),room=c?.getRoom(roomId);if(!room||!c)return false;
@@ -15,16 +16,17 @@ export function messagePermissions(roomId: string, sender: string) {
   return { edit: send && sender === me, delete: joined && (sender === me || (roleAllows(roomId,me,'manage_messages')&&r.currentState.hasSufficientPowerLevelFor('redact', r.getMember(me)?.powerLevel || 0))), pin: joined && roleAllows(roomId,me,'pin_messages')&&r.currentState.maySendStateEvent('m.room.pinned_events', me), react: joined && roleAllows(roomId,me,'add_reactions')&&r.currentState.maySendEvent('m.reaction', me), send };
 }
 export function canInviteToRoom(roomId:string){const c=getMatrixClient(),r=c?.getRoom(roomId),me=c?.getUserId();return !!(c&&r&&me&&r.getMyMembership()==='join'&&r.canInvite(me)&&roleAllows(roomId,me,'invite'));}
-const navKey = 'io.tavern.navigation';
+const navKey = navigationAccountKey;
 export function navigationPreferences(c: MatrixClient | null = getMatrixClient()): { favorites: string[]; unread: string[] } {
-  const value = c?.getAccountData(navKey as any)?.getContent() || {};
-  const list = (x: unknown) => Array.isArray(x) ? x.filter(v => typeof v === 'string').slice(0, 1000) : [];
-  return { favorites: list(value.favorites), unread: list(value.unread) };
+  return navigationLists(c?.getAccountData(navKey as any)?.getContent());
 }
 let queue: Promise<unknown> = Promise.resolve();
 export function setNavigationFlag(roomId: string, key: 'favorites' | 'unread', enabled: boolean) {
   const c = getMatrixClient(); if (!c) throw new Error('Sign in first.');
-  const task = queue.catch(() => {}).then(async () => { const prefs = navigationPreferences(c); prefs[key] = enabled ? [...new Set([...prefs[key], roomId])].slice(0, 1000) : prefs[key].filter(id => id !== roomId); await (c as any).setAccountData(navKey, prefs); }); queue = task; return task;
+  const actor = c.getUserId(), generation = accountArtworkOwner();
+  const current = () => { if (getMatrixClient() !== c || c.getUserId() !== actor || accountArtworkOwner() !== generation) throw new Error('Your account changed. Retry this action from your current account.'); };
+  if (key === 'unread') noteNavigationUnreadChange(c, roomId);
+  return mutateMatrixAccountData(c, navKey, old => { const prefs = navigationLists(old); prefs[key] = enabled ? [...new Set([...prefs[key], roomId])].slice(0, 1000) : prefs[key].filter(id => id !== roomId); return { ...(old && typeof old === 'object' && !Array.isArray(old) ? old : {}), ...prefs }; }, current);
 }
 export async function blockUser(userId: string, blocked: boolean) {
   if(isManagedAccount())return setUserBlocked(userId,blocked);

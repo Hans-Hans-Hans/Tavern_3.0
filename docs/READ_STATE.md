@@ -1,0 +1,9 @@
+# Read state
+
+Conversation badges show Matrix's unread notification count and a separate `@` count for unread mentions and highlights. The highlight count can also include keyword push rules and native thread notifications; it is not added to the unread total. Counts reflect the SDK's current sync and decryption state. A manual unread marker is a dot, not an invented notification count. Focus mode and muted conversations hide these badges.
+
+**Mark all read** (also **Alt + Shift + R**) marks joined conversations with current unread notifications, highlights, or a manual marker, including your joined private discussions and muted rooms, through their confirmed events already loaded when the action starts. It does not fetch history or accept invitations. Receipt targets stay fixed at the start of the action; later arrivals are not selected as new targets. Conversations without a confirmed loaded event are skipped. Room and server read actions use the same behavior. The shortcut does not run during composition, a repeated key press, or an open dialog/menu.
+
+Tavern sends private, unthreaded Matrix read receipts, covering room and native thread notifications without publishing a public read receipt. Read positions sync through Matrix to your other devices. Successful rooms clear their captured manual unread markers; failed receipts retain them, and a newer marker set on this tab is preserved. Partial failures and skipped rooms are reported. Retry after reconnecting if an update fails.
+
+Manual markers and favorites use Matrix account data. Writes merge fresh native data through Tavern's session-bound queue, preserving other fields. Matrix account data has no cross-device compare-and-swap: simultaneous updates from separate devices can still overwrite each other. A success is receipt confirmation for the captured loaded events, not proof that unloaded history or later arrivals were read.

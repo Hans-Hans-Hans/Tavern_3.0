@@ -1,6 +1,7 @@
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
 import { readInstanceConfig } from './instance';
+import { markRoomsRead, roomReadCounts, watchRoomReadCounts } from './read-state';
 import { isPrivateDiscussion } from './conversation-routing';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
@@ -26,6 +27,7 @@ import { accountArtworkOwner, notifyAccountRequirement, requestApi, isManagedAcc
 let client:MatrixClient|null=null;
 let sessionPromise:Promise<boolean>|null=null;
 let releaseLock:(()=>void)|null=null;
+let stopReadCounts:(()=>void)|null=null;
 let sdk:typeof import('matrix-js-sdk');
 // Legacy prototype identifiers intentionally remain stable: changing the crypto
 // database or Web Lock name can strand keys or permit concurrent store access.
@@ -61,7 +63,7 @@ async function attachSession(s:any){
  try{
   syncState='Initializing encryption';notify();
   await c.initRustCrypto({cryptoDatabasePrefix:'harbor-crypto-'+s.userId+'-'+s.deviceId});
-  client=c;c.on(HttpApiEvent.SessionLoggedOut,()=>{clearLocalMatrixSession();if(s.managed)accountSignedOut();});initializeSecurity(c);initializeCalls(c);initializeNotifications(c);
+  client=c;c.on(HttpApiEvent.SessionLoggedOut,()=>{clearLocalMatrixSession();if(s.managed)accountSignedOut();});initializeSecurity(c);initializeCalls(c);initializeNotifications(c);stopReadCounts=watchRoomReadCounts(c,()=>{if(client===c)notify();});
   c.on(sdk.ClientEvent.Sync,state=>{syncState=state==='PREPARED'||state==='SYNCING'?'Connected':state==='ERROR'?'Reconnecting':state;notify()});
   c.on(sdk.RoomEvent.Timeline,notify);c.on(sdk.RoomEvent.Receipt,notify);c.on(sdk.RoomEvent.MyMembership,notify);c.on(sdk.MatrixEventEvent.Decrypted,notify);c.on(sdk.RoomEvent.LocalEchoUpdated,notify);c.on(sdk.RoomMemberEvent.Typing,notify);c.on(sdk.RoomStateEvent.Events,notify);c.on(sdk.RoomMemberEvent.Name,notify);c.on(sdk.UserEvent.Presence,notify);c.on(sdk.ClientEvent.AccountData,notify);
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>{c.off(sdk.ClientEvent.Sync,onSync);reject(new Error('The homeserver did not complete the initial sync. Please reconnect.'))},45000);const onSync=(state:string,_prev?:string|null,data?:any)=>{if(state==='ERROR'&&data?.error?.errcode==='M_UNKNOWN_TOKEN'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(data.error);}if(state==='PREPARED'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);resolve()}};c.on(sdk.ClientEvent.Sync,onSync);c.startClient({initialSyncLimit:60,lazyLoadMembers:true,threadSupport:true,pollTimeout:30000}).catch(e=>{clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(e)})});
@@ -70,7 +72,7 @@ async function attachSession(s:any){
   initializeAppearance(c);void initializeOutbox(c,item=>matrixApi('send',{conversation:item.roomId,parent:item.parent,serverId:item.serverId,body:item.body,nonce:item.id})).catch(error=>console.warn('Local outbox unavailable:',error.message));
   void initializeSearch(c).catch(error=>console.warn('Local search unavailable:',error.message));
   return true;
- }catch(e){resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
+ }catch(e){stopReadCounts?.();stopReadCounts=null;resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
 }
 export async function restoreMatrixSession(){if(client)return true;if(sessionPromise)return sessionPromise;const raw=sessionStorage.getItem(sessionKey);if(!raw)return false;sessionPromise=(async()=>{try{return await attachSession(JSON.parse(raw))}catch(e){if((e as any)?.errcode==='M_UNKNOWN_TOKEN')sessionStorage.removeItem(sessionKey);throw e}finally{sessionPromise=null}})();return sessionPromise}
 export async function attachManagedMatrixSession(s:AccountSession){if(client)return true;if(sessionPromise)return sessionPromise;const url=new URL(s.baseUrl,location.origin);if(url.origin!==location.origin)throw new Error('Invalid account gateway.');sessionPromise=attachSession({...s,baseUrl:url.href,accessToken:'cookie-session:'+s.deviceId,managed:true});try{return await sessionPromise}finally{sessionPromise=null}}
@@ -87,7 +89,7 @@ async function performConnect(server:string,user:string,password:string,onStatus
  const s={baseUrl:base,accessToken:result.access_token,userId:result.user_id,deviceId:result.device_id};
  onStatus('Preparing encryption and syncing your rooms…');try{await attachSession(s);sessionStorage.setItem(sessionKey,JSON.stringify(s))}catch(e){const cleanup=sdk.createClient({baseUrl:base,accessToken:s.accessToken});await cleanup.logout().catch(()=>{});throw e}notify();
 }
-export function clearLocalMatrixSession(){const c=client;if(c){disposeCachedImageOwner(c);clearSelfProfile(c);}resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export function clearLocalMatrixSession(){stopReadCounts?.();stopReadCounts=null;const c=client;if(c){disposeCachedImageOwner(c);clearSelfProfile(c);}resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
 export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');if(isManagedAccount())await requestApi('/auth/logout',{});else if(client)await client.logout();clearLocalMatrixSession();if(isManagedAccount())accountSignedOut()}
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
@@ -114,6 +116,10 @@ export function mutateMatrixAccountData(owner:MatrixClient,key:string,mutate:(ol
   current();await (owner as any).setAccountData(key,mutate(value||{}));current();notify();
  });
  accountQueues.set(key,task);return task;
+}
+export function markMatrixRoomsRead(roomIds?:readonly string[]){
+ const owner=requireClient(),actor=owner.getUserId(),generation=accountArtworkOwner();
+ return markRoomsRead({client:owner,current:()=>client===owner&&owner.getUserId()===actor&&accountArtworkOwner()===generation,mutateAccountData:(key,update,validate)=>mutateMatrixAccountData(owner,key,update,validate)},roomIds);
 }
 const savedEvents=()=>Array.isArray(account(savedKey).events)?account(savedKey).events.filter((x:any)=>typeof x?.id==='string'&&typeof x?.roomId==='string').slice(0,500):[];
 function allEvents(room:Room){return [...new Map([...room.getLiveTimeline().getEvents(),...room.getThreads().flatMap(t=>t.events)].map(e=>[e.getId(),e])).values()];}
@@ -147,7 +153,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   const c=client,me=c.getUserId()!,rooms=joined(),dms=directIds(),members=new Map<string,any>(),memberships:any[]=[];
   for(const r of rooms)for(const m of r.getJoinedMembers()){members.set(m.userId,{id:m.userId,name:safeString(m.name,m.userId),role:'member'});memberships.push({conversation_id:r.roomId,user_id:m.userId});}
   const profile=nativeSelfProfile(c);members.set(me,{id:me,name:safeString(profile.name,me),role:'member'});
-  return {me:{...members.get(me),email:me},workspace:{name:safeString(account(workspaceKey).name,new URL(c.getHomeserverUrl()).hostname)},members:[...members.values()],memberships,conversations:rooms.filter(r=>!isPrivateDiscussion(r)).map(r=>({id:r.roomId,name:safeString(r.name,r.roomId),description:safeString(r.currentState.getStateEvents('m.room.topic','')?.getContent().topic,'A place for your conversations.'),kind:dms.has(r.roomId)?'dm':'channel',unread:r.getUnreadNotificationCount()||0,encrypted:r.hasEncryptionStateEvent(),private:r.getJoinRule()!=='public'})),servers:c.getRooms().filter(r=>r.isSpaceRoom()&&r.getMyMembership()==='join').map(r=>({id:r.roomId,name:safeString(r.name,r.roomId),roomIds:r.currentState.getStateEvents('m.space.child').filter(e=>safeStrings(e.getContent().via).length>0).map(e=>e.getStateKey()!)})),preferences:safePrefs(account(prefsKey)),invitations:c.getRooms().filter(r=>r.getMyMembership()==='invite').map(r=>({id:r.roomId,name:safeString(r.name,r.roomId)})),preview:false};
+  return {me:{...members.get(me),email:me},workspace:{name:safeString(account(workspaceKey).name,new URL(c.getHomeserverUrl()).hostname)},members:[...members.values()],memberships,conversations:rooms.filter(r=>!isPrivateDiscussion(r)).map(r=>({id:r.roomId,name:safeString(r.name,r.roomId),description:safeString(r.currentState.getStateEvents('m.room.topic','')?.getContent().topic,'A place for your conversations.'),kind:dms.has(r.roomId)?'dm':'channel',...roomReadCounts(r),encrypted:r.hasEncryptionStateEvent(),private:r.getJoinRule()!=='public'})),servers:c.getRooms().filter(r=>r.isSpaceRoom()&&r.getMyMembership()==='join').map(r=>({id:r.roomId,name:safeString(r.name,r.roomId),roomIds:r.currentState.getStateEvents('m.space.child').filter(e=>safeStrings(e.getContent().via).length>0).map(e=>e.getStateKey()!)})),preferences:safePrefs(account(prefsKey)),invitations:c.getRooms().filter(r=>r.getMyMembership()==='invite').map(r=>({id:r.roomId,name:safeString(r.name,r.roomId)})),preview:false};
  }
  if(action==='preferences'){p=safePrefs(p);localStorage.setItem('harbor.appearance',JSON.stringify(p));if(client)await writeAccount(prefsKey,p);return {preferences:p}}
  if(!client&&['messages','search','saved','threads','mentions','files'].includes(action))return {messages:[],hasMore:false};

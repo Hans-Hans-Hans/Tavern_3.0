@@ -1,0 +1,8 @@
+.read-state-badges{display:inline-flex;align-items:center;gap:4px;margin-left:auto;flex-shrink:0}
+.read-state-badges:empty{display:none}
+.read-state-badges .unread-count{margin-left:0}
+.mention-count{display:inline-flex;align-items:center;justify-content:center;min-width:23px;padding:1px 5px;border-radius:8px;background:var(--sidebar-primary,#d7b880);color:var(--sidebar-primary-foreground,#252b34);font-size:11px;font-weight:750;line-height:17px}
+.read-state-badges .manual-unread{width:7px;height:7px;border-radius:50%;background:currentColor}
+.mark-all-read{display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;border-radius:7px;text-align:left;font-size:12px;color:var(--muted-foreground)}
+.mark-all-read:hover:not(:disabled){background:var(--sidebar-accent);color:var(--sidebar-accent-foreground)}
+.mark-all-read:disabled{opacity:.6;cursor:default}
