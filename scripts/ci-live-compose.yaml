@@ -1,7 +1,14 @@
 # Test-only overlay: the deployed application still uses the single compose.yaml.
 services:
+  init:
+    environment:
+      INTEGRATIONS_ENABLED: 'true'
+      # Provision the native notice worker while the real profile service stays
+      # excluded. The guarded helper owns its private alias in this CI project.
+      COMPOSE_PROFILES: operations,integrations
   tavern-api:
     environment:
+      INTEGRATIONS_ENABLED: 'true'
       SMTP_ENABLED: 'true'
       SMTP_HOST: ci-mail
       SMTP_PORT: '1465'
@@ -13,6 +20,38 @@ services:
     depends_on:
       ci-mail:
         condition: service_healthy
+  ci-system-bot:
+    image: tavern-integrations:check
+    entrypoint: [python, /ci/ci-system-bot.py]
+    environment:
+      TAVERN_CI_SMOKE: 'true'
+      TAVERN_PUBLIC_URL: https://chat.example.test
+    volumes:
+      - ./scripts/ci-system-bot.py:/ci/ci-system-bot.py:ro
+      - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
+      - integrations_config:/config
+      - integrations_data:/data
+    networks:
+      private:
+        aliases: [integrations]
+      proxy: {}
+    ports: [127.0.0.1:18086:8086]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      synapse:
+        condition: service_healthy
+    # This reports the control helper only. The live probe starts the actual
+    # sender later and separately requires its Matrix/crypto readiness.
+    healthcheck:
+      test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8086/health', timeout=3)"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
   ci-mail:
     build:
       context: ./api

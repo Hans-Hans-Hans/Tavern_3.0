@@ -4,6 +4,28 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34375353644](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34375353644)
+passed the complete workflow at development commit `42edb43`: production build,
+291 JavaScript tests, 141 browser tests, 491 Python tests, offline PWA, Compose,
+remote Docker builds, restricted HTTP/WebSocket gateways and fresh-stack restart.
+Real TLS SMTP/bootstrap, ordinary-account authorization, encrypted messaging,
+edits, threads, files, avatar reload, private discussions and AFK passed.
+Native account requirements denied ineligible existing sends, fresh joins and
+call membership and restored encrypted posting after disable. Native profile
+limits enforced custom authority, revisions, protected configuration, UTF16
+lengths, forbidden links/fields/status, and profileless joins/leaves. Durable
+account deactivation and isolated failed-update rollback also passed. This run
+does not establish live encrypted bot notices, DM request inbox acceptance,
+external push delivery or physical media. `V3` remains the separate `c591215`
+test checkpoint; this evidence applies to the development commit above.
+
+The next isolated live probe adds a dormant CI-only controller for the actual
+integration image, dedicated fixture accounts and a real persistent nio device.
+It pins each recipient's independently read current-device fingerprint, then
+checks native ciphertext and both browsers' decrypted join/leave notices,
+restart recovery, missing-pin retry, disabled routing and audience changes.
+Its six local helper guard/HTTP checks pass; actual Docker execution is pending.
+
 [Run 34374301063](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34374301063)
 at development commit `a73a362` passed the production build, 291 JavaScript
 tests, 141 browser tests and offline PWA. One of 491 Python checks errored because
