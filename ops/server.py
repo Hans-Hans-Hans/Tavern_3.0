@@ -132,12 +132,16 @@ class Operator:
 
     def exec_to_file(self, container, command, target):
         self.check(container)
+        self.stream_exec(container, command, target)
+
+    def stream_exec(self, container, command, target):
+        """Use the raw exec stream: Docker's JSON logs replace invalid UTF-8 bytes."""
         execution = self.engine.api.exec_create(container.id, command, stdout=True, stderr=True)
         for output, error in self.engine.api.exec_start(execution['Id'], stream=True, demux=True):
             if output:
                 target.write(output)
         if self.engine.api.exec_inspect(execution['Id']).get('ExitCode') != 0:
-            raise ValueError('Database export failed; no complete backup was created.')
+            raise ValueError('File export failed; no complete backup was created.')
 
     def backup(self, identity):
         containers = self.containers()
@@ -163,16 +167,19 @@ class Operator:
                     self.exec_to_file(containers['postgres'], ['pg_dump', '-U', 'synapse', '-Fc', 'synapse'], target)
                 initializer = containers['init']
                 self.check(initializer)
-                helper = self.engine.containers.create(initializer.attrs['Image'], command=['/app/state_archive.py', 'export'],
+                helper = self.engine.containers.create(initializer.attrs['Image'], command=['-c', 'import time; time.sleep(3600)'],
                     entrypoint=['python'], network_mode='none', volumes_from=[initializer.id + ':ro'], read_only=True,
                     cap_drop=['ALL'], cap_add=['DAC_READ_SEARCH'], security_opt=['no-new-privileges:true'], user='0:0',
                     labels={'io.tavern.managed': 'true', 'io.tavern.temporary': identity, 'com.docker.compose.project': self.project})
                 helper.start()
                 with (scratch / 'state.tar.gz').open('wb') as target:
-                    for chunk in helper.logs(stream=True, stdout=True, stderr=False, follow=True):
-                        target.write(chunk)
-                if helper.wait(timeout=3600)['StatusCode'] != 0:
-                    raise ValueError('Persistent file export failed; no complete backup was created.')
+                    # This exact helper was just created above from the trusted
+                    # initializer image with only this stack's read-only volumes.
+                    self.stream_exec(helper, ['python', '/app/state_archive.py', 'export'], target)
+                with tarfile.open(scratch / 'state.tar.gz', 'r:gz') as state_archive:
+                    for member in state_archive:
+                        if not member.isfile() and not member.isdir():
+                            raise ValueError('Persistent export contains unsupported file types.')
                 manifest = {'format': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
                     'files': {name: digest(scratch / name) for name in ('synapse.dump', 'state.tar.gz')},
                     'images': {key: {'id': containers[key].attrs['Image'], 'reference': containers[key].attrs['Config']['Image']} for key in ('init', 'postgres', 'synapse', 'tavern-api', 'tavern-web') if key in containers}}

@@ -1,5 +1,7 @@
 """Privilege boundary, scheduling and API checks without accessing Docker."""
 import asyncio
+import gzip
+import io
 import importlib.util
 import os
 from pathlib import Path
@@ -21,6 +23,22 @@ class FakeEngine:
 
 
 class WorkerPolicy(unittest.TestCase):
+    def test_binary_exec_preserves_non_utf8_archive_bytes_and_ignores_stderr(self):
+        payload = gzip.compress(bytes(range(256)) * 20)
+        with tempfile.TemporaryDirectory() as directory:
+            engine = FakeEngine()
+            engine.api = Mock()
+            engine.api.exec_create.return_value = {'Id': 'exact-helper-exec'}
+            engine.api.exec_start.return_value = iter([(payload[:5], None), (None, b'non-secret warning'), (payload[5:], None)])
+            engine.api.exec_inspect.return_value = {'ExitCode': 0}
+            operator = worker.Operator(directory, 'tavern', engine)
+            output = io.BytesIO()
+            operator.stream_exec(Mock(id='created-helper'), ['python', '/app/state_archive.py', 'export'], output)
+            self.assertEqual(output.getvalue(), payload)
+            self.assertEqual(gzip.decompress(output.getvalue()), bytes(range(256)) * 20)
+            engine.api.exec_start.assert_called_once_with('exact-helper-exec', stream=True, demux=True)
+            operator.db.close()
+
     def test_failed_backup_always_restarts_paused_writers(self):
         with tempfile.TemporaryDirectory() as directory:
             operator = worker.Operator(directory, 'tavern', FakeEngine())
