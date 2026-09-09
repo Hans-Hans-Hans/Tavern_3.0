@@ -5,6 +5,7 @@ loaded only from the deployment's read-only module volume, or this repository in
 development. Parent relationships come from current reciprocal room state.
 """
 from dataclasses import dataclass
+import base64
 from importlib import import_module, util
 from pathlib import Path
 import re
@@ -42,7 +43,17 @@ def policy_model(service):
 
 
 def room_id(value):
-    if not isinstance(value, str) or not re.fullmatch(r'![^\s/\\?#]{1,254}:[^\s/\\?#]{1,254}', value):
+    if not isinstance(value, str) or re.search(r'[\x00-\x20\x7f]', value):
+        raise APIError(400, 'Choose a valid Matrix room.')
+    legacy = re.fullmatch(r'![^\s/\\?#]{1,254}:[^\s/\\?#]{1,254}', value)
+    # v12 identifies the create event by its unpadded URL-safe SHA-256 hash.
+    # Require its canonical encoding; actual existence/version and membership
+    # are still established by native state, never inferred from this shape.
+    hashed = False
+    if re.fullmatch(r'![A-Za-z0-9_-]{43}', value):
+        decoded = base64.urlsafe_b64decode(value[1:] + '=')
+        hashed = len(decoded) == 32 and base64.urlsafe_b64encode(decoded).decode('ascii').rstrip('=') == value[1:]
+    if not legacy and not hashed:
         raise APIError(400, 'Choose a valid Matrix room.')
     return value
 

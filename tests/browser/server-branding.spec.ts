@@ -59,7 +59,7 @@ test('invitation acceptance renders authenticated bounded artwork without a Matr
 });
 
 test('ineligible invitation preview does not fetch or show artwork', async ({ page }) => {
-  const requests = await fixture(page, 'invite=restricted-secret', '');
+  const requests = await fixture(page, 'invite=restricted-invitation-secret-for-browser-test', '');
   await expect(page.getByText('This invitation requires a verified email matching its restrictions.')).toBeVisible();
   await expect(page.getByRole('img', { name: 'Invitation artwork' })).toHaveCount(0);
   expect(requests).toHaveLength(0);

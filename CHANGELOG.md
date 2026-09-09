@@ -35,6 +35,7 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Explicit direct-message request review, acceptance and decline, with native recipient classification and recovery after partially completed acceptance.
 - Per-server invitation restrictions that intersect with global privacy and actual shared Space membership, including direct native Matrix invitations.
 - Separate unread mention/highlight badges and global mark-all-read with Alt+Shift+R, using private native receipts through the events already loaded when the action starts.
+- Optional readable invitation links with current server authority, permanent name reservations and shared expiry, use limits, verified-email restrictions and revocation.
 - Durable generic background contact-request notifications with current consent and access checks.
 - Parsed Markdown headings, lists, quotes and tables, nested formatting, exact code copying and accessible spoilers; link previews exclude hidden spoiler and code URLs.
 - Stable server-role mention selection with bounded current membership expansion into encrypted native mention metadata.

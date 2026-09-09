@@ -21,11 +21,15 @@ try:
     from .security import email_address, password_error
     from .invitation_roles import checked_roles, apply_roles, role_ids
     from .room_reports import verified_context, schema as report_schema
+    from .room_authority import state as native_room_state, content as state_content, power as native_power, room_id as validate_room_id
+    from . import invitation_links
 except ImportError:
     from server import APIError, body_json, text_value
     from security import email_address, password_error
     from invitation_roles import checked_roles, apply_roles, role_ids
     from room_reports import verified_context, schema as report_schema
+    from room_authority import state as native_room_state, content as state_content, power as native_power, room_id as validate_room_id
+    import invitation_links
 
 
 def schema(store):
@@ -47,12 +51,15 @@ def schema(store):
         store.db.execute("ALTER TABLE invitations ADD COLUMN default_roles TEXT NOT NULL DEFAULT '[]'")
     if 'splash_mxc' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
         store.db.execute("ALTER TABLE invitations ADD COLUMN splash_mxc TEXT NOT NULL DEFAULT ''")
+    if 'custom_slug' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
+        store.db.execute('ALTER TABLE invitations ADD COLUMN custom_slug TEXT')
+    invitation_links.schema(store)
     report_schema(store)
 
 
 def invite_view(row):
     return {"id": row["id"], "roomId": row["room_id"], "roomName": row["room_name"], "creator": row["creator"], "createdAt": int(row["created"] * 1000),
-            "expiresAt": int(row["expires"] * 1000), "maxUses": row["max_uses"], "uses": row["uses"], "revoked": bool(row["revoked"]), "email": row["email"], "domain": row["domain"], "defaultRoleIds": json.loads(row["default_roles"])}
+            "expiresAt": int(row["expires"] * 1000), "maxUses": row["max_uses"], "uses": row["uses"], "revoked": bool(row["revoked"]), "email": row["email"], "domain": row["domain"], "defaultRoleIds": json.loads(row["default_roles"]), 'customSlug': row['custom_slug']}
 
 
 def report_view(row, own=False):
@@ -64,9 +71,12 @@ def report_view(row, own=False):
 
 
 def active_invitation(service, token: object):
-    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{32,80}", token):
+    if isinstance(token, str) and token.startswith('v:'):
+        row = invitation_links.lookup(service.store, token)
+    elif isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9_-]{32,80}", token):
+        row = service.store.db.execute("SELECT * FROM invitations WHERE token_hash=?", (service.store.digest("invite:" + token),)).fetchone()
+    else:
         raise APIError(404, "This invitation is unavailable.", "INVITATION_UNAVAILABLE")
-    row = service.store.db.execute("SELECT * FROM invitations WHERE token_hash=?", (service.store.digest("invite:" + token),)).fetchone()
     if not row or row["revoked"] or row["expires"] <= time.time():
         raise APIError(404, "This invitation expired or was revoked.", "INVITATION_UNAVAILABLE")
     return dict(row)
@@ -110,25 +120,16 @@ async def issuer_authority(service, room_id: str, issuer: str, token=None):
     if token:
         prefix = "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/"
         membership = await service.matrix("GET", prefix + "m.room.member/" + quote(issuer, safe=""), token=token)
-        status, powers = await service.matrix("GET", prefix + "m.room.power_levels/", token=token, expected=False)
-        if status == 404:
-            powers = {}
-        elif status != 200:
-            raise APIError(403, "Room permissions could not be checked.", "FORBIDDEN")
         if membership.get("membership") != "join":
             raise APIError(403, "Join this room before creating invitations.", "FORBIDDEN")
-        level = powers.get("users", {}).get(issuer, powers.get("users_default", 0))
-        if not isinstance(level, int) or level < powers.get("invite", 0):
-            raise APIError(403, "You do not have permission to invite people to this room.", "FORBIDDEN")
-        return
-    # The issuer may have signed out. Read current room state using the account
-    # service without enrolling its device in this room or obtaining room keys.
-    value = await service.matrix("GET", "/_synapse/admin/v1/rooms/" + quote(room_id, safe="") + "/state", token=await service.service_token())
-    state = value.get("state", [])
-    membership = next((event.get("content", {}) for event in state if event.get("type") == "m.room.member" and event.get("state_key") == issuer), {})
-    powers = next((event.get("content", {}) for event in state if event.get("type") == "m.room.power_levels" and event.get("state_key") == ""), {})
-    level = powers.get("users", {}).get(issuer, powers.get("users_default", 0))
-    if membership.get("membership") != "join" or not isinstance(level, int) or level < powers.get("invite", 0):
+    # Read the actual create-event sender/version as well as current powers.
+    # A room-version-12 creator has inherent power even without a users entry.
+    # This read never joins the account service to the encrypted conversation.
+    current = await native_room_state(service, room_id)
+    membership = state_content(current, 'm.room.member', issuer)
+    minimum = state_content(current, 'm.room.power_levels').get('invite', 0)
+    if (service.store.account(issuer).get('access_blocked') or service.deactivations.unavailable(issuer)
+            or membership.get('membership') != 'join' or type(minimum) is not int or native_power(current, issuer) < minimum):
         raise APIError(403, "The invitation issuer no longer has permission to invite people.", "INVITATION_UNAVAILABLE")
 
 
@@ -138,6 +139,7 @@ async def invitations(request):
     if request.method == "GET":
         room_id = request.query.get("roomId")
         if room_id:
+            room_id = validate_room_id(room_id)
             await issuer_authority(service, room_id, session["user_id"], service.store.open(session["token"]))
             rows = service.store.db.execute("SELECT * FROM invitations WHERE room_id=? ORDER BY created DESC LIMIT 100", (room_id,)).fetchall()
         else:
@@ -145,9 +147,7 @@ async def invitations(request):
         return web.json_response({"invitations": [invite_view(row) for row in rows]})
     data = await body_json(request)
     service.store.rate("invite-create:" + session["user_id"], 20, 3600)
-    room_id = text_value(data.get("roomId"), 255)
-    if not room_id.startswith("!") or ":" not in room_id:
-        raise APIError(400, "Select a valid Matrix room.")
+    room_id = validate_room_id(data.get('roomId'))
     hours, uses = data.get("expiresInHours", 24), data.get("maxUses", 1)
     if type(hours) is not int or not 1 <= hours <= 720 or type(uses) is not int or not 1 <= uses <= 1000:
         raise APIError(400, "Choose an expiry between 1 and 720 hours, and 1 to 1000 uses.")
@@ -156,16 +156,21 @@ async def invitations(request):
     if domain and (not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", domain) or "." not in domain or ".." in domain):
         raise APIError(400, "Enter a valid email domain.")
     default_roles = role_ids(data.get("defaultRoleIds", []))
+    slug = invitation_links.custom_slug(data.get('customSlug'))
     send_email = data.get("sendEmail") is True
     if send_email and (not email or not service.smtp()["enabled"]):
         raise APIError(400, "Configure email delivery and enter a recipient email before sending an invitation.")
     if send_email: service.store.rate("invite-email:" + session["user_id"], 10, 3600)
     token = service.store.open(session["token"])
     await issuer_authority(service, room_id, session["user_id"], token)
+    if slug:
+        await invitation_links.require_custom_authority(service, session, room_id)
     await checked_roles(service, room_id, session["user_id"], default_roles)
     status, name = await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/m.room.name/", token=token, expected=False)
     splash = await snapshot_invitation_splash(service, room_id, token)
     await issuer_authority(service, room_id, session['user_id'], token)
+    if slug:
+        await invitation_links.require_custom_authority(service, session, room_id)
     now, secret, identity = time.time(), secrets.token_urlsafe(32), secrets.token_urlsafe(18)
     room_name = name.get("name", room_id) if status == 200 else room_id
     # Matrix room names are user-controlled, while SMTP subjects must be one
@@ -175,11 +180,23 @@ async def invitations(request):
         room_name = room_id
     room_name = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", room_name).strip()[:255] or room_id
     service.require_session(request)
-    service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles,splash_mxc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles), splash))
+    db = service.store.db
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        if slug:
+            invitation_links.reserve(service.store, slug, identity, room_id)
+        db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles,splash_mxc,custom_slug) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles), splash, slug))
+        db.execute('COMMIT')
+    except sqlite3.IntegrityError:
+        db.execute('ROLLBACK')
+        raise APIError(409, 'This invitation name has already been reserved. Choose a different name.', 'INVITATION_NAME_RESERVED') from None
+    except BaseException:
+        db.execute('ROLLBACK')
+        raise
     service.audit(session["user_id"], "invitation_created", room_id, identity)
     value = invite_view(service.store.db.execute("SELECT * FROM invitations WHERE id=?", (identity,)).fetchone())
-    value.update(token=secret, url=service.config.public_url + "/?invite=" + secret)
+    value.update(token=secret, url=service.config.public_url + ('/invite/' + slug if slug else "/?invite=" + secret))
     if send_email:
         try:
             await service.send_email(email, "You’re invited to " + room_name[:100], "You have been invited to " + room_name[:255] + ".\n\nOpen this invitation to sign in or create an eligible account:\n" + value['url'] + "\n\nThis link expires in " + str(hours) + " hours. Ignore it if you were not expecting an invitation.")
@@ -199,6 +216,9 @@ async def revoke_invitation(request):
         raise APIError(404, "This invitation is unavailable.")
     if row["creator"] != session["user_id"]:
         await issuer_authority(service, row["room_id"], session["user_id"], service.store.open(session["token"]))
+        if row['custom_slug']:
+            await invitation_links.require_custom_authority(service, session, row['room_id'])
+    service.require_session(request)
     service.store.db.execute("UPDATE invitations SET revoked=1 WHERE id=?", (row["id"],))
     service.audit(session["user_id"], "invitation_revoked", row["room_id"], row["id"])
     return web.json_response({"ok": True})
@@ -229,12 +249,19 @@ async def preview_invitation(request):
 async def redeem(request, secret):
     service = request.app['service']
     session = service.require_session(request)
+    value = None
     def authorize():
         # Registration has just issued request['session']; ordinary redemption
         # uses its existing session. Both must remain live through remote waits.
         service.require_session(request)
         if service.deactivations.unavailable(session['user_id']):
             raise APIError(403, 'This account is unavailable.', 'ACCOUNT_RESTRICTED')
+        if value is not None:
+            fresh = active_invitation(service, secret)
+            if fresh['id'] != value['id']:
+                raise APIError(404, 'This invitation is unavailable.', 'INVITATION_UNAVAILABLE')
+            account = service.store.account(session['user_id'])
+            invitation_email(fresh, account.get('email'), account.get('verified'))
     authorize()
     value = active_invitation(service, secret)
     account = service.store.account(session["user_id"])

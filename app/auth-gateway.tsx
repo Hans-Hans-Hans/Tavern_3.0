@@ -9,6 +9,7 @@ import { useInstanceStatus, InstanceNotices } from './instance-status';
 import { readInstanceConfig } from '@/lib/instance';
 import { pwaUpdateLocked, setPwaReloadAllowed } from '@/lib/pwa';
 import { ForcedPasswordChange } from './forced-password-change';
+import { invitationToken } from '@/lib/invitation-link';
 
 const Tavern = lazy(() => import('./tavern'));
 const AdminConsole = lazy(() => import('./admin-console'));
@@ -62,7 +63,7 @@ export function AuthGateway() {
     e.preventDefault(); if (pwaUpdateLocked()) { setError('An app update is being applied. Please wait.'); return; } setPwaReloadAllowed(false); setBusy(true); setError(''); setNotice('');
     try {
       if(mode==='register'){
-        const result=await requestApi('/auth/register/start',{inviteToken:new URLSearchParams(location.search).get('invite')||undefined,username,password:newPassword,confirmation,email,displayName});setChallenge(result.challengeId);setNewPassword('');setConfirmation('');setMode('register-code');setNotice('Check your email for the verification code.');
+        const result=await requestApi('/auth/register/start',{inviteToken:invitationToken(location)||undefined,username,password:newPassword,confirmation,email,displayName});setChallenge(result.challengeId);setNewPassword('');setConfirmation('');setMode('register-code');setNotice('Check your email for the verification code.');
       } else if(mode==='register-code'){
         const result=await requestApi('/auth/register/complete',{challengeId:challenge,code});await openSession(result);if(result.invitationRoomId)location.hash='room='+encodeURIComponent(result.invitationRoomId);
       } else if (mode === 'login') {
@@ -104,7 +105,7 @@ export function AuthGateway() {
       {verification && <Field label={method === 'recovery' && mode === 'mfa' ? 'Recovery code' : 'Verification code'}><input autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} required maxLength={64}/></Field>}
       {mode==='recovery-code'&&<><Field label='Authenticator or recovery code (if enabled)'><input autoComplete='one-time-code' value={recoveryMfa} onChange={e=>setRecoveryMfa(e.target.value)}/></Field><Field label='Second-factor type'><select value={method} onChange={e=>setMethod(e.target.value)}><option value='totp'>Authenticator app</option><option value='recovery'>Recovery code</option></select></Field></>}{setup && !config?.smtpConfigured && <p role="alert">Configure SMTP in your deployment environment before completing email verification.</p>}
       <button className="primary-button" disabled={busy || (setup && !config?.smtpConfigured)}>{busy ? 'Please wait…' : setup || register ? 'Send verification code' : verification ? 'Verify and continue' : mode === 'recovery' ? 'Send recovery code' : 'Sign in'}</button>
-      {mode==='login'&&config?.smtpConfigured&&(config.registrationMode==='open'||(config.registrationMode==='invite'&&new URLSearchParams(location.search).has('invite')))&&<button type='button' className='secondary-button' onClick={()=>{setMode('register');setError('');}}>Create an account</button>}{mode === 'login' && config?.smtpConfigured && <button type="button" className="text-button" onClick={() => { setMode('recovery'); setError(''); }}>Forgot password?</button>}
+      {mode==='login'&&config?.smtpConfigured&&(config.registrationMode==='open'||(config.registrationMode==='invite'&&!!invitationToken(location)))&&<button type='button' className='secondary-button' onClick={()=>{setMode('register');setError('');}}>Create an account</button>}{mode === 'login' && config?.smtpConfigured && <button type="button" className="text-button" onClick={() => { setMode('recovery'); setError(''); }}>Forgot password?</button>}
       {!setup && mode !== 'login' && <button type="button" className="text-button" disabled={busy} onClick={() => { setMode(config?.bootstrapRequired ? 'bootstrap' : 'login'); setCode(''); setError(''); }}>Back</button>}
     </form>}
     {error && <p className="connect-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
