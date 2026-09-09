@@ -46,7 +46,10 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
-      disable: true
+      test: [CMD, wget, --no-check-certificate, -q, -O, /dev/null, 'https://127.0.0.1:8443/health']
+      interval: 2s
+      timeout: 5s
+      retries: 20
     depends_on:
       tavern-web:
         condition: service_healthy
