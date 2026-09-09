@@ -4,7 +4,7 @@ export type SearchDocument = { id: string; roomId: string; roomName: string; aut
 export type SearchQuery = { terms: string[]; phrases: string[]; from: string[]; rooms: string[]; before?: number; after?: number; has: string[]; mentionsMe: boolean };
 type StoredDocument = { id: string; roomId: string; timestamp: number; revision: number; iv: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer; tags: string[]; postings: [string, number, string][] };
 type Keys = { encryption: CryptoKey; search: CryptoKey };
-type SearchSession = { client: MatrixClient; database: IDBDatabase; keys: Keys; stop: () => void; generation: number; queue: Promise<void>; history: Set<string>; error: string };
+type SearchSession = { client: MatrixClient; actor: string | null; device: string | null; database: IDBDatabase; keys: Keys; stop: () => void; generation: number; queue: Promise<void>; history: Set<string>; error: string };
 let active: SearchSession | null = null, generation = 0;
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 export const searchWords = (text: string) => [...new Set(text.normalize('NFKC').toLocaleLowerCase().match(/[\p{L}\p{N}_-]+/gu) || [])].filter(word => word.length <= 80).slice(0, 1000);
@@ -65,30 +65,48 @@ async function openDatabase(name: string) {
 }
 async function storageKeys(database: IDBDatabase) { const existing = await requestResult(database.transaction('keys').objectStore('keys').get('crypto')) as Keys | undefined; if (existing) return existing; const keys = await createSearchKeys(), tx = database.transaction('keys', 'readwrite'); tx.objectStore('keys').put(keys, 'crypto'); await transactionDone(tx); return keys; }
 function sessionRequired() { if (!active) throw new Error('Local search is still opening. Try again shortly.'); return active; }
-const isActive = (session: SearchSession) => active === session && session.generation === generation;
+const isActive = (session: SearchSession) => active === session && session.generation === generation && session.client.getUserId() === session.actor && session.client.getDeviceId() === session.device;
 function joined(session: SearchSession, roomId: string) { return isActive(session) && session.client.getRoom(roomId)?.getMyMembership() === 'join'; }
 async function removeDocument(session: SearchSession, id: string) { if (!isActive(session)) return; const tx = session.database.transaction('documents', 'readwrite'); tx.objectStore('documents').delete(id); await transactionDone(tx); }
-async function storeDocument(session: SearchSession, document: SearchDocument) { if (!joined(session, document.roomId)) return; const old = await requestResult(session.database.transaction('documents').objectStore('documents').get(document.id)) as StoredDocument | undefined; if (old && old.revision > document.editedAt) return; const record = await sealSearchDocument(document, session.keys); if (!joined(session, document.roomId)) return; const tx = session.database.transaction('documents', 'readwrite'), store = tx.objectStore('documents'), latest = store.get(document.id); latest.onsuccess = () => { if (!latest.result || latest.result.revision <= record.revision) store.put(record); }; await transactionDone(tx); }
-async function indexEvent(session: SearchSession, event: MatrixEvent, room?: Room, history = false) {
+async function storeDocument(session: SearchSession, document: SearchDocument, validate: () => void = () => {}) {
+  validate(); if (!joined(session, document.roomId)) return;
+  const old = await requestResult(session.database.transaction('documents').objectStore('documents').get(document.id)) as StoredDocument | undefined;
+  validate(); if (!joined(session, document.roomId) || old && old.revision > document.editedAt) return;
+  const record = await sealSearchDocument(document, session.keys);
+  validate(); if (!joined(session, document.roomId)) return;
+  const tx = session.database.transaction('documents', 'readwrite'), store = tx.objectStore('documents'), latest = store.get(document.id);
+  let validationError: unknown;
+  latest.onsuccess = () => {
+    try {
+      validate();
+      if (joined(session, document.roomId) && (!latest.result || latest.result.revision <= record.revision)) store.put(record);
+    } catch (error) { validationError = error; tx.abort(); }
+  };
+  try { await transactionDone(tx); } catch (error) { throw validationError ?? error; }
+}
+async function indexEvent(session: SearchSession, event: MatrixEvent, room?: Room, validate: () => void = () => {}) {
+  validate();
   room ||= session.client.getRoom(event.getRoomId()) || undefined; if (!room || !joined(session, room.roomId)) return;
   if (event.isRedaction()) { const id = event.event.redacts || event.getContent().redacts; if (typeof id === 'string') await removeDocument(session, id); return; }
   if (event.isEncrypted()) await session.client.decryptEventIfNeeded(event).catch(() => {});
+  validate();
   if (event.isDecryptionFailure()) return;
   const relation = event.getContent()['m.relates_to'];
   if (relation?.rel_type === 'm.replace' && typeof relation.event_id === 'string') {
     let original = room.findEventById(relation.event_id);
     if (!original) { try { original = session.client.getEventMapper()(await session.client.fetchRoomEvent(room.roomId, relation.event_id)); if (original.isEncrypted()) await session.client.decryptEventIfNeeded(original); } catch { return; } }
+    validate();
     if (original.getSender() !== event.getSender() || original.getRoomId() !== room.roomId || original.isRedacted()) return;
-    const doc = projectSearchDocument(original, room, event.getContent()['m.new_content']); if (doc) { doc.editedAt = event.getTs(); await storeDocument(session, doc); } return;
+    const doc = projectSearchDocument(original, room, event.getContent()['m.new_content']); if (doc) { doc.editedAt = event.getTs(); await storeDocument(session, doc, validate); } return;
   }
-  const doc = projectSearchDocument(event, room); if (doc) await storeDocument(session, doc); else if (event.isRedacted() && event.getId()) await removeDocument(session, event.getId()!);
+  const doc = projectSearchDocument(event, room); if (doc) await storeDocument(session, doc, validate); else if (event.isRedacted() && event.getId()) await removeDocument(session, event.getId()!);
 }
 function enqueue(session: SearchSession, fn: () => Promise<void>) { session.queue = session.queue.catch(() => {}).then(async () => { if (isActive(session)) await fn(); }).catch(e => { if (isActive(session)) session.error = (e as Error).message; }); return session.queue; }
 async function forgetRoom(session: SearchSession, roomId: string) { if (!isActive(session)) return; const tx = session.database.transaction('documents', 'readwrite'), index = tx.objectStore('documents').index('room'), cursor = index.openCursor(IDBKeyRange.only(roomId)); cursor.onsuccess = () => { if (cursor.result) { cursor.result.delete(); cursor.result.continue(); } }; await transactionDone(tx); }
 export async function initializeSearch(client: MatrixClient) {
-  resetSearch(); const current = generation, name = 'tavern-search-v1-' + encodeURIComponent(client.getUserId() || '') + '-' + encodeURIComponent(client.getDeviceId() || '');
-  const database = await openDatabase(name), keys = await storageKeys(database); if (current !== generation) { database.close(); return; }
-  const session: SearchSession = { client, database, keys, generation: current, stop: () => {}, queue: Promise.resolve(), history: new Set(), error: '' }; active = session;
+  resetSearch(); const current = generation, actor = client.getUserId(), device = client.getDeviceId(), name = 'tavern-search-v1-' + encodeURIComponent(actor || '') + '-' + encodeURIComponent(device || '');
+  const database = await openDatabase(name), keys = await storageKeys(database); if (current !== generation || client.getUserId() !== actor || client.getDeviceId() !== device) { database.close(); return; }
+  const session: SearchSession = { client, actor, device, database, keys, generation: current, stop: () => {}, queue: Promise.resolve(), history: new Set(), error: '' }; active = session;
   const timeline = (event: MatrixEvent, room?: Room) => { void enqueue(session, () => indexEvent(session, event, room)); };
   const decrypted = (event: MatrixEvent) => timeline(event);
   const membership = (room: Room) => { if (room.getMyMembership() !== 'join') void enqueue(session, () => forgetRoom(session, room.roomId)); };
@@ -121,11 +139,30 @@ export async function searchMessages(input: string, options: { limit?: number; c
 export async function indexRoomHistory(roomId: string, onProgress: (value: { roomId: string; indexed: number; complete: boolean }) => void = () => {}, signal?: AbortSignal) {
   const s = sessionRequired(), room = s.client.getRoom(roomId); if (!room || !joined(s, roomId)) throw new Error('Join this channel before indexing history.'); if (s.history.has(roomId)) throw new Error('This channel is already being indexed.'); s.history.add(roomId);
   let indexed = 0, token: string | null = room.getLiveTimeline().getPaginationToken(Direction.Backward), complete = false;
-  const cancelled = () => { if (signal?.aborted || !joined(s, roomId)) throw new Error(signal?.aborted ? 'History indexing cancelled. Indexed messages remain searchable.' : 'Channel membership changed. History indexing stopped.'); };
+  const actor = s.client.getUserId(), device = s.client.getDeviceId();
+  const cancelled = () => { if (signal?.aborted || !joined(s, roomId) || s.client.getRoom(roomId) !== room || s.client.getUserId() !== actor || s.client.getDeviceId() !== device) throw new Error(signal?.aborted ? 'History indexing cancelled. Indexed messages remain searchable.' : 'Your account or channel membership changed. History indexing stopped.'); };
   try {
-    for (const event of room.getLiveTimeline().getEvents()) { cancelled(); await indexEvent(s, event, room, true); indexed++; } onProgress({ roomId, indexed, complete: false });
+    for (const event of room.getLiveTimeline().getEvents()) { cancelled(); await indexEvent(s, event, room, cancelled); cancelled(); indexed++; } onProgress({ roomId, indexed, complete: false });
     const seen = new Set<string>();
-    while (token && !seen.has(token)) { cancelled(); seen.add(token); const page = await s.client.createMessagesRequest(roomId, token, 100, Direction.Backward); cancelled(); for (const raw of page.chunk) { cancelled(); const event = s.client.getEventMapper()(raw); await indexEvent(s, event, room, true); indexed++; } onProgress({ roomId, indexed, complete: false }); if (!page.end || page.end === token || !page.chunk.length) { token = null; break; } token = page.end; }
+    while (token) {
+      cancelled(); seen.add(token);
+      const page = await s.client.createMessagesRequest(roomId, token, 100, Direction.Backward); cancelled();
+      if (!Array.isArray(page.chunk) || page.chunk.length > 100) throw new Error('The homeserver returned an invalid history page.');
+      for (const raw of page.chunk) {
+        cancelled();
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.room_id !== undefined && raw.room_id !== roomId) throw new Error('The homeserver returned history for an unexpected conversation.');
+        // /messages events may omit room_id. Bind them to the requested room
+        // before mapping/decryption, without overwriting a conflicting identity.
+        const event = s.client.getEventMapper()({ ...raw, room_id: roomId });
+        await indexEvent(s, event, room, cancelled); cancelled(); indexed++;
+      }
+      onProgress({ roomId, indexed, complete: false }); cancelled();
+      // Empty filtered pages can still lead to accessible older events.
+      // Only an omitted end token establishes the end of this scan.
+      if (page.end === undefined) { token = null; break; }
+      if (typeof page.end !== 'string' || !page.end || seen.has(page.end)) throw new Error('History pagination stopped advancing. Indexed messages remain searchable; retry after checking your homeserver.');
+      token = page.end;
+    }
     cancelled(); complete = true; onProgress({ roomId, indexed, complete }); return { indexed, complete };
   } finally { s.history.delete(roomId); }
 }

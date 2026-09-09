@@ -6,9 +6,12 @@ import { chromium } from 'playwright';
 
 const source = await readFile(new URL('../lib/search-index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText.replace(/import\s+\{[^}]+\}\s+from\s+['"]matrix-js-sdk['"];?/, `const ClientEvent={},Direction={Backward:'b'},MatrixEventEvent={Decrypted:'decrypted'},RoomEvent={Timeline:'timeline',Redaction:'redaction',MyMembership:'membership'};`);
-export async function checkSearchStorage(page) {
+export async function prepareSearchStoragePage(page) {
   await page.route('http://localhost:4179/**', route => route.fulfill({ contentType: route.request().url().endsWith('.js') ? 'text/javascript' : 'text/html', body: route.request().url().endsWith('.js') ? compiled : '<!doctype html><title>Search storage test</title>' }));
   await page.goto('http://localhost:4179/');
+}
+export async function checkSearchStorage(page) {
+  await prepareSearchStoragePage(page);
   const result = await page.evaluate(async () => {
     const search = await import('/search-index.js');
     const listeners = new Map(), ignored = [], events = [], baseTime = Date.parse('2026-09-08'); let membership = 'join';
