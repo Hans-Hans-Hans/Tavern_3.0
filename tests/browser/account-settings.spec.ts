@@ -16,3 +16,23 @@ test('successful MFA enrollment still displays recovery codes when refreshing se
   await page.route('**/api/account/mfa/totp/complete', async r => { await page.unroute('**/api/account/security'); await page.route('**/api/account/security', r => r.fulfill({ status: 502, json: { error: 'Temporary refresh failure' } })); await r.fulfill({ json: { recoveryCodes: ['test-recovery-a', 'test-recovery-b'] } }); });
   await page.goto('/account-component-test'); await page.getByRole('button', { name: 'Set up authenticator' }).click(); let dialog = page.getByRole('dialog'); await dialog.getByLabel('Current password').fill('private-test-password'); await dialog.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect(dialog.getByText('JBSWY3DPEHPK3PXP', { exact: true })).toBeVisible(); await dialog.getByLabel('Verification code').fill('123456'); await dialog.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Save your recovery codes' })).toBeVisible(); await expect(page.getByText('test-recovery-a', { exact: true })).toBeVisible();
 });
+
+test('account owner can retry an administrator-sent email code and refresh verified status', async ({ page }) => {
+  const security = { email: 'alice@example.test', emailVerified: false, totpEnabled: false, emailMfaEnabled: false, recoveryCodesRemaining: 0 };
+  await fixture(page, security); const submissions: any[] = [];
+  await page.route('**/api/account/email/pending/complete', route => {
+    submissions.push(route.request().postDataJSON());
+    if (submissions.length === 1) return route.fulfill({ status: 503, json: { error: 'Temporary verification failure' } });
+    security.emailVerified = true; return route.fulfill({ json: { ok: true } });
+  });
+  await page.goto('/account-component-test');
+  await page.getByRole('button', { name: 'Enter administrator-sent email code' }).click();
+  await page.getByLabel('Administrator-sent email code', { exact: true }).fill('123456');
+  await page.getByRole('button', { name: 'Verify associated email', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Temporary verification failure');
+  await expect(page.getByLabel('Administrator-sent email code', { exact: true })).toHaveValue('123456');
+  await page.getByRole('button', { name: 'Verify associated email', exact: true }).click();
+  await expect(page.getByText('alice@example.test · Verified')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enter administrator-sent email code' })).toHaveCount(0);
+  expect(submissions).toEqual([{ code: '123456' }, { code: '123456' }]);
+});

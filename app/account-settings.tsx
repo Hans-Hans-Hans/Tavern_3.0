@@ -4,6 +4,7 @@ import { accountSignedOut, requestApi } from '@/lib/api';
 import { clearLocalMatrixSession, getMatrixClient } from '@/lib/matrix';
 import { Field } from './auth-gateway';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AssociatedEmailVerification } from './associated-email-verification';
 
 export function AccountSettings() {
   const [security, setSecurity] = useState<any>(null), [sessions, setSessions] = useState<any[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -29,6 +30,7 @@ export function AccountSettings() {
         <p>Your encryption recovery key stays the same. Other devices will need to sign in again.</p><button className="primary-button" disabled={busy}>Change password</button>
       </form>
       <hr className="product-divider"/><h3>Email</h3><p>{security.email || 'No email address added'} · {security.emailVerified ? 'Verified' : 'Not verified'}</p><button className="secondary-button" onClick={() => { setAction('email'); setError(''); }}>Change or verify email</button>
+      {security.email && !security.emailVerified && <AssociatedEmailVerification key={security.email} email={security.email} onVerified={refresh} />}
       <hr className="product-divider"/><h3>Two-step verification</h3><p>Authenticator app: {security.totpEnabled ? 'Enabled' : 'Disabled'}<br/>Email verification: {security.emailMfaEnabled ? 'Enabled' : 'Disabled'}<br/>Recovery codes remaining: {security.recoveryCodesRemaining}</p>
       <div className="product-actions">{!security.totpEnabled && <button className="secondary-button" onClick={() => setAction('totp')}>Set up authenticator</button>}{!security.emailMfaEnabled && security.emailVerified && <button className="secondary-button" onClick={() => setAction('email-mfa')}>Enable email verification</button>}{(security.totpEnabled || security.emailMfaEnabled) && <><button className="secondary-button" onClick={() => setAction('recovery-codes')}>Generate new recovery codes</button><button className="secondary-button" onClick={() => setAction('disable-mfa')}>Disable two-step verification</button></>}</div>
       <hr className="product-divider"/><h3>Devices & sessions</h3><p>Sessions use secure cookies. Revoking a session stops its access to this instance.</p>

@@ -65,3 +65,23 @@ test('self access actions are disabled, profile edits omit unchanged privileges,
   await expect.poll(() => created).toEqual({ username: 'newperson', displayName: 'New person', email: 'new@example.test', password: 'newperson-password', admin: false });
   expect(created.emailVerified).toBeUndefined(); expect(created.verified).toBeUndefined();
 });
+
+test('staff can resend verification only to the existing unverified address without receiving its code', async ({ page }) => {
+  const pending = { ...member, security: { ...member.security, emailVerified: false } }; let sent: any;
+  await page.route('**/api/admin/users?*', route => route.fulfill({ json: { users: [pending], next_token: null, total: 1 } }));
+  await page.route('**/api/admin/users/%40member%3Alocal?*', route => route.fulfill({ json: detail(pending) }));
+  await page.route('**/api/account/security', route => route.fulfill({ json: { totpEnabled: false, emailMfaEnabled: false } }));
+  await page.route('**/api/admin/users/%40member%3Alocal/actions', route => { sent = route.request().postDataJSON(); return route.fulfill({ json: { ok: true } }); });
+  await fixture(page); await page.getByRole('button', { name: 'Manage @member:local' }).click();
+  await page.getByRole('tab', { name: 'Security', exact: true }).click();
+  await page.getByRole('button', { name: 'Resend email verification…', exact: true }).click();
+  const dialog = page.getByRole('dialog').last();
+  await expect(dialog.getByText('Recipient: member@example.test')).toBeVisible();
+  await expect(dialog.getByRole('textbox', { name: 'Email', exact: true })).toHaveCount(0);
+  await dialog.getByLabel('Type @member:local to confirm', { exact: true }).fill('@member:local');
+  await dialog.getByLabel('Your administrator password').fill('operator-password');
+  await dialog.getByRole('button', { name: 'Resend email verification', exact: true }).click();
+  await expect.poll(() => sent?.action).toBe('resend_verification');
+  expect(sent.confirmation).toBe('@member:local'); expect(sent.email).toBeUndefined(); expect(sent.recipient).toBeUndefined();
+  await expect(page.getByRole('heading', { name: 'Resend email verification', exact: true })).toHaveCount(0);
+});

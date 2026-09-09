@@ -1,6 +1,6 @@
 import { getMatrixClient } from './matrix';
 export const rolesEvent = 'io.tavern.roles';
-export const rolePermissions = { send_messages: 'Send messages and encrypted content', add_reactions: 'Add reactions', pin_messages: 'Pin messages', manage_messages: 'Remove others’ messages', join_calls: 'Join calls and conferences', invite: 'Invite people', kick: 'Remove members', ban: 'Ban members', timeout: 'Temporarily restrict members', manage_channels: 'Manage channels', manage_roles: 'Manage lower roles', manage_server: 'Manage server details' } as const;
+export const rolePermissions = { send_messages: 'Send messages and encrypted content', add_reactions: 'Add reactions', pin_messages: 'Pin messages', manage_messages: 'Remove others’ messages', manage_reports: 'Review reports explicitly shared with room moderators', join_calls: 'Join calls and conferences', invite: 'Invite people', kick: 'Remove members', ban: 'Ban members', timeout: 'Temporarily restrict members', manage_channels: 'Manage channels', manage_roles: 'Manage lower roles', manage_server: 'Manage server details' } as const;
 export type RolePermission = keyof typeof rolePermissions;
 export type ServerRole = { id: string; name: string; color: string; icon: string; position: number; permissions: RolePermission[]; mentionable: boolean; separate: boolean };
 export type PermissionOverride = Partial<Record<RolePermission, -1 | 0 | 1>>;

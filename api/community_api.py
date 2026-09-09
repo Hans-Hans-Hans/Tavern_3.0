@@ -20,10 +20,12 @@ try:
     from .server import APIError, body_json, text_value
     from .security import email_address, password_error
     from .invitation_roles import checked_roles, apply_roles, role_ids
+    from .room_reports import verified_context, schema as report_schema
 except ImportError:
     from server import APIError, body_json, text_value
     from security import email_address, password_error
     from invitation_roles import checked_roles, apply_roles, role_ids
+    from room_reports import verified_context, schema as report_schema
 
 
 def schema(store):
@@ -43,6 +45,7 @@ def schema(store):
     """)
     if 'default_roles' not in {row[1] for row in store.db.execute('PRAGMA table_info(invitations)')}:
         store.db.execute("ALTER TABLE invitations ADD COLUMN default_roles TEXT NOT NULL DEFAULT '[]'")
+    report_schema(store)
 
 
 def invite_view(row):
@@ -52,7 +55,7 @@ def invite_view(row):
 
 def report_view(row, own=False):
     value = {"id": row["id"], "kind": row["kind"], "roomId": row["room_id"], "eventId": row["event_id"], "targetId": row["target_id"],
-             "reason": row["reason"], "evidence": row["evidence"], "status": row["status"], "createdAt": int(row["created"] * 1000), "updatedAt": int(row["updated"] * 1000)}
+             "reason": row["reason"], "evidence": row["evidence"], "status": row["status"], "audience": row["audience"], "createdAt": int(row["created"] * 1000), "updatedAt": int(row["updated"] * 1000)}
     if not own:
         value.update(reporter=row["reporter"], reviewer=row["reviewer"], note=row["note"])
     return value
@@ -247,12 +250,22 @@ async def reports(request):
     session = service.require_session(request)
     if request.method == "GET":
         rows = service.store.db.execute("SELECT * FROM reports WHERE reporter=? ORDER BY id DESC LIMIT 100", (session["user_id"],)).fetchall()
-        return web.json_response({"reports": [report_view(row, own=True) for row in rows]})
+        values = []
+        for row in rows:
+            value = report_view(row, own=True)
+            if row['audience'] == 'room':
+                review = service.store.db.execute('SELECT status,updated FROM room_report_reviews WHERE report_id=?', (row['id'],)).fetchone()
+                if review: value['roomReview'] = {'status': review['status'], 'updatedAt': int(review['updated'] * 1000)}
+            values.append(value)
+        return web.json_response({"reports": values})
     service.store.rate("report:" + session["user_id"], 5, 3600)
     data = await body_json(request)
     kind = data.get("kind")
-    if kind not in {"message", "file", "server", "user"}:
+    if not isinstance(kind, str) or kind not in {"message", "file", "server", "user"}:
         raise APIError(400, "Choose a valid report type.")
+    audience = data.get('audience', 'platform')
+    if audience not in ('platform', 'room'):
+        raise APIError(400, 'Choose who may read this report.')
     reason = text_value(data.get("reason"), 2000).strip()
     evidence = text_value(data.get("evidence", ""), 4000)
     if not reason:
@@ -261,7 +274,9 @@ async def reports(request):
     event = text_value(data.get("eventId", ""), 255)
     target = text_value(data.get("targetId", ""), 255)
     token = service.store.open(session["token"])
-    if kind in {"message", "file", "server"}:
+    if audience == 'room':
+        room, event, target = await verified_context(service, session, kind, room, event, target)
+    elif kind in {"message", "file", "server"}:
         if not room.startswith("!"):
             raise APIError(400, "Select the room containing the reported content.")
         membership = await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room, safe="") + "/state/m.room.member/" + quote(session["user_id"], safe=""), token=token)
@@ -273,10 +288,18 @@ async def reports(request):
             await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room, safe="") + "/event/" + quote(event, safe=""), token=token)
     elif not target.startswith("@") or ":" not in target:
         raise APIError(400, "Select a valid Matrix account.")
+    service.require_session(request)
     now = time.time()
-    cursor = service.store.db.execute("INSERT INTO reports(reporter,kind,room_id,event_id,target_id,reason,evidence,created,updated) VALUES(?,?,?,?,?,?,?,?,?)", (session["user_id"], kind, room, event, target, reason, evidence, now, now))
-    service.audit(session["user_id"], "report_submitted", str(cursor.lastrowid), kind)
-    return web.json_response({"id": cursor.lastrowid, "status": "open"}, status=201)
+    service.store.db.execute('BEGIN IMMEDIATE')
+    try:
+        cursor = service.store.db.execute("INSERT INTO reports(reporter,kind,room_id,event_id,target_id,reason,evidence,created,updated,audience,room_verified) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (session["user_id"], kind, room, event, target, reason, evidence, now, now, audience, int(audience == 'room')))
+        if audience == 'room': service.store.db.execute('INSERT INTO room_report_reviews(report_id,updated) VALUES(?,?)', (cursor.lastrowid, now))
+        service.store.db.execute('COMMIT')
+    except Exception:
+        service.store.db.execute('ROLLBACK')
+        raise
+    service.audit(session["user_id"], "report_submitted", str(cursor.lastrowid), kind + ' audience:' + audience)
+    return web.json_response({"id": cursor.lastrowid, "status": "open", "audience": audience}, status=201)
 
 
 async def admin_reports(request):

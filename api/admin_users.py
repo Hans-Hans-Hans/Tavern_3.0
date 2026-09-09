@@ -129,7 +129,7 @@ async def revoke_devices(service, target, token):
 async def actions(request):
     service = request.app['service']; target = identity(request.match_info['user_id']); data = await body_json(request)
     operation = data.get('action')
-    if operation not in ('revoke_sessions', 'reset_mfa', 'require_password_change', 'suspend', 'enable', 'deactivate', 'set_quota') or data.get('confirmation') != target:
+    if operation not in ('revoke_sessions', 'reset_mfa', 'require_password_change', 'suspend', 'enable', 'deactivate', 'set_quota', 'resend_verification') or data.get('confirmation') != target:
         raise APIError(400, 'Choose an account action and type the full Matrix user ID to confirm.')
     async with service.admin_lock:
         session = await active_admin(request)
@@ -145,7 +145,18 @@ async def actions(request):
             db = service.store.db
             db.execute('INSERT OR IGNORE INTO accounts(user_id,created) VALUES(?,?)', (target, time.time()))
             result = {'ok': True}
-            if operation == 'set_quota':
+            if operation == 'resend_verification':
+                try:
+                    from .associated_email import resend
+                except ImportError:
+                    from associated_email import resend
+                if any(key in data for key in ('email', 'newEmail', 'recipient')):
+                    raise APIError(400, 'Verification can only be sent to the email already associated with this account.')
+                await active_admin(request)
+                await resend(service, session['user_id'], target, user)
+                service.audit(session['user_id'], 'security_admin_resend_verification', target)
+                return web.json_response({'ok': True})
+            elif operation == 'set_quota':
                 quota = data.get('quotaBytes')
                 if quota is not None and (type(quota) is not int or not 1024 <= quota <= limits(service)['globalQuotaBytes']):
                     raise APIError(400, 'Choose a quota between 1024 bytes and the instance quota, or reset it to the default.')
@@ -215,3 +226,9 @@ def register_routes(app):
     for name, definition in (('password_change_required', 'INTEGER NOT NULL DEFAULT 0'), ('access_blocked', "TEXT NOT NULL DEFAULT ''"), ('credential_epoch', 'REAL NOT NULL DEFAULT 0'), ('upload_quota_bytes', 'INTEGER')):
         if name not in columns: service.store.db.execute('ALTER TABLE accounts ADD COLUMN ' + name + ' ' + definition)
     app.add_routes([web.get('/api/admin/users/{user_id}', detail), web.post('/api/admin/users/{user_id}/actions', actions)])
+    try:
+        from . import associated_email, profile_metadata
+    except ImportError:
+        import associated_email, profile_metadata
+    associated_email.register_routes(app)
+    profile_metadata.register_routes(app)

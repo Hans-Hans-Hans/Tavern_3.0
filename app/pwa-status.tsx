@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Download, RefreshCw, WifiOff, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { applyAppUpdate, initializePwa, installTavern, pwaSnapshot, reconnectTavern, subscribePwa } from '@/lib/pwa';
@@ -13,9 +13,15 @@ export function InstallTavern() {
 
 export function PwaStatus() {
   const state = useSyncExternalStore(subscribePwa, pwaSnapshot), [hidden, setHidden] = useState(false), [busy, setBusy] = useState(false);
+  const banner = useRef<HTMLElement>(null);
   useEffect(initializePwa, []);
   useEffect(() => setHidden(false), [state.online, state.updateAvailable, state.message]);
+  useLayoutEffect(() => {
+    const update = () => document.documentElement.style.setProperty('--tavern-status-height', Math.ceil(banner.current?.getBoundingClientRect().height || 0) + 'px');
+    update(); const observer = new ResizeObserver(update); if (banner.current) observer.observe(banner.current);
+    return () => { observer.disconnect(); document.documentElement.style.removeProperty('--tavern-status-height'); };
+  }, [hidden, state.applying, state.online, state.updateAvailable, state.message]);
   if (state.applying) return <div className="pwa-updating" role="alertdialog" aria-modal="true" aria-label="Applying Tavern update"><RefreshCw className="spin"/><strong>Preparing the app update</strong><p>Checking that every Tavern window can safely reload…</p></div>;
   if (hidden || (state.online && !state.updateAvailable && !state.message)) return null;
-  return <aside className="pwa-status" role="status"><div>{!state.online ? <WifiOff/> : <RefreshCw/>}<div><strong>{!state.online ? 'You’re offline' : state.updateAvailable ? 'An app update is ready' : 'App storage'}</strong><p>{state.message || (!state.online ? 'Your connection is unavailable. Loaded conversations stay open; sending resumes when connected.' : 'Sign out in all Tavern windows before reloading to keep encryption and calls safe.')}</p></div></div><div className="pwa-actions">{!state.online ? <button className="secondary-button" disabled={busy} onClick={() => { setBusy(true); void reconnectTavern().finally(() => setBusy(false)); }}>Try reconnecting</button> : state.updateAvailable && <button className="secondary-button" onClick={() => void applyAppUpdate()}>Apply update</button>}<button className="icon-button" aria-label="Dismiss app status" onClick={() => setHidden(true)}><X size={18}/></button></div></aside>;
+  return <aside ref={banner} className="pwa-status" role="status"><div>{!state.online ? <WifiOff/> : <RefreshCw/>}<div><strong>{!state.online ? 'You’re offline' : state.updateAvailable ? 'An app update is ready' : 'App storage'}</strong><p>{state.message || (!state.online ? 'Your connection is unavailable. Loaded conversations stay open; sending resumes when connected.' : 'Sign out in all Tavern windows before reloading to keep encryption and calls safe.')}</p></div></div><div className="pwa-actions">{!state.online ? <button className="secondary-button" disabled={busy} onClick={() => { setBusy(true); void reconnectTavern().finally(() => setBusy(false)); }}>Try reconnecting</button> : state.updateAvailable && <button className="secondary-button" onClick={() => void applyAppUpdate()}>Apply update</button>}<button className="icon-button" aria-label="Dismiss app status" onClick={() => setHidden(true)}><X size={18}/></button></div></aside>;
 }

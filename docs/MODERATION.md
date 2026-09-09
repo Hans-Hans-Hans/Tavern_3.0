@@ -25,3 +25,17 @@ Timeouts prevent posting and new call participation until expiry while retaining
 ## Verification
 
 `tests/test_temporary_bans.py` exercises server-clock expiry, hierarchy, canonical parent inheritance, direct-client admission and state-write restrictions, protected redaction, stale revisions, ordinary moderator token use and partial membership failure. Browser regressions cover typed confirmation, partial result display, lifting and stale-review recovery. Composer tests cover room and inherited restriction hints.
+
+## Report audiences and delegated review
+
+The report dialog defaults to **Instance administrators only**. These reports never appear in room moderator queues. Existing reports retain that audience after an upgrade, and there is no implicit migration that shares old evidence or administrator notes.
+
+For a managed server or canonical channel, the reporter can explicitly choose **Instance administrators and room moderators**. The dialog explains that current reviewers can see the reporter's identity, referenced IDs and all supplied reason/evidence text, including a moderator who is the subject of the report. Nothing is automatically decrypted or copied from the message into the evidence field. Changing to a new report resets the audience to administrators only.
+
+Opting in requires server-side verification of the report's room context. Message and file reports retrieve the referenced event through the reporter's own session and verify its room, event ID and sender. User reports require a current or invited member of that room; a former member can instead be reported through a message or to instance administrators. Server reports must reference the managed Space itself. Matrix's [event retrieval endpoint](https://spec.matrix.org/latest/client-server-api/#get_matrixclientv3roomsroomideventeventid) returns the room and sender with the event; opaque event IDs are encoded as path parameters.
+
+The **Review reports explicitly shared with room moderators** (`manage_reports`) role permission grants access to the dedicated queue only when the moderator also has native room redaction power. The gateway checks current room membership, native powers, every reciprocal canonical parent membership and applicable server/category/channel overrides on each queue read and review update. Existing non-owner roles do not receive this new permission automatically. A server queue lets the moderator select from authorized, joined canonical channels without granting platform administrator access.
+
+Room reviews have their own open/reviewing/resolved/dismissed status, reviewer, encrypted note and revision. They do not read or overwrite platform review notes or status. The reporter can retrieve the room review status through their own reports endpoint, but cannot read the moderator note. Concurrent edits require a fresh review before resubmission, and revoked access removes the loaded review from the interface on its next authority check. Review audit entries contain IDs and status rather than supplied evidence or note text.
+
+`tests/test_room_reports.py` covers private-report migration, platform-note isolation, current moderator authority, canonical category/channel restrictions, forged context, opaque event IDs, pagination, concurrent revisions, session revocation and temporary-ban enforcement. Browser tests cover audience disclosure/reset, scoped pagination, preserved drafts during conflicts and removal of loaded evidence after permission denial.

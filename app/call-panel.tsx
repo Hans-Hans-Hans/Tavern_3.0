@@ -7,6 +7,7 @@ import { answerCall, callSnapshot, callsConfigured, endCall, startCall, subscrib
 import { getMatrixClient } from '@/lib/matrix';
 import { requestPeerVerification } from '@/lib/security';
 import { ActionMenu, copyText } from './action-menu';
+import { navigateParticipant, onParticipantNavigation } from '@/lib/participant-navigation';
 import './calls.css';
 
 type OutputVideo = HTMLVideoElement & { setSinkId?: (deviceId: string) => Promise<void> };
@@ -29,10 +30,12 @@ function Feed({ feed, media, roomId, playback, setPlayback }: { feed: CallFeed; 
   }, [feed, media.audioOutput, media.outputVolume, media.deafened, playback.muted, playback.volume]);
   const name = feed.isLocal() ? 'You' : getMatrixClient()?.getRoom(roomId)?.getMember(feed.userId)?.name || feed.userId;
   return <ActionMenu actions={[
+    { label: 'View participant profile', run: () => navigateParticipant('profile', roomId, feed.userId) },
+    { label: 'Message participant', visible: !feed.isLocal(), run: () => navigateParticipant('message', roomId, feed.userId) },
     { label: playback.muted ? 'Hear participant again' : 'Mute participant for me', visible: !feed.isLocal(), run: () => setPlayback({ muted: !playback.muted }) },
     { label: 'Verify participant identity', visible: !feed.isLocal(), run: () => requestPeerVerification(feed.userId, roomId) },
     { label: 'Copy user ID', run: () => copyText(feed.userId) },
-  ]}><div className="call-feed"><video ref={ref} autoPlay playsInline muted={feed.isLocal() || media.deafened || playback.muted}/><div className="call-feed-header"><span>{name}{feed.isAudioMuted() ? ' · Muted' : ''}{playback.muted ? ' · Muted for you' : ''}</span></div>{!feed.isLocal() && <details className="participant-playback"><summary>Participant volume</summary><label>{Math.round(playback.volume * 100)}%<input aria-label={'Volume for ' + name} className="call-volume" type="range" min="0" max="100" value={Math.round(playback.volume * 100)} onChange={event => setPlayback({ volume: Number(event.target.value) / 100 })}/></label><button className="secondary-button" aria-pressed={playback.muted} onClick={() => setPlayback({ muted: !playback.muted })}>{playback.muted ? 'Hear participant again' : 'Mute for me'}</button></details>}{playBlocked && <button className="secondary-button" onClick={() => void ref.current?.play().then(() => setPlayBlocked(false)).catch(() => toast.error('Audio playback is blocked. Check browser sound permissions.'))}>Enable audio</button>}</div></ActionMenu>;
+  ]}><div className="call-feed"><video ref={ref} autoPlay playsInline muted={feed.isLocal() || media.deafened || playback.muted}/><div className="call-feed-header"><button type="button" onClick={() => { try { navigateParticipant('profile', roomId, feed.userId); } catch (error) { toast.error((error as Error).message); } }}>{name}{feed.isAudioMuted() ? ' · Muted' : ''}{playback.muted ? ' · Muted for you' : ''}</button></div>{!feed.isLocal() && <details className="participant-playback"><summary>Participant volume</summary><label>{Math.round(playback.volume * 100)}%<input aria-label={'Volume for ' + name} className="call-volume" type="range" min="0" max="100" value={Math.round(playback.volume * 100)} onChange={event => setPlayback({ volume: Number(event.target.value) / 100 })}/></label><button className="secondary-button" aria-pressed={playback.muted} onClick={() => setPlayback({ muted: !playback.muted })}>{playback.muted ? 'Hear participant again' : 'Mute for me'}</button></details>}{playBlocked && <button className="secondary-button" onClick={() => void ref.current?.play().then(() => setPlayBlocked(false)).catch(() => toast.error('Audio playback is blocked. Check browser sound permissions.'))}>Enable audio</button>}</div></ActionMenu>;
 }
 
 function MicrophoneTest({ device }: { device: string }) {
@@ -94,6 +97,7 @@ export function CallPanel() {
   const [{ call, error, media }, setSnapshot] = useState(callSnapshot), [busy, setBusy] = useState(false), [settings, setSettings] = useState(false), [minimized, setMinimized] = useState(false), [talking, setTalking] = useState(false);
   const [participantPlayback, setParticipantPlayback] = useState<Record<string, ParticipantPlayback>>({});
   useEffect(() => subscribeCalls(() => setSnapshot(callSnapshot())), []);
+  useEffect(() => onParticipantNavigation(() => setMinimized(true)), []);
   async function talk(value: boolean) { setTalking(value); try { await setCallTalking(value); } catch { setTalking(false); toast.error('The microphone state could not be changed.'); } }
   useEffect(() => {
     if (!call || !media.pushToTalk) { setTalking(false); return; }

@@ -19,7 +19,7 @@ except ImportError:
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
-PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
+PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
 CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server"}
 
 

@@ -1,1 +1,8 @@
 .pwa-status{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:75;width:min(620px,calc(100vw - 24px));padding:14px 16px;border:1px solid #63706b;border-radius:12px;background:#25342f;color:#f0f5ef;box-shadow:0 8px 32px #0005}.pwa-status>div:first-child{display:flex;gap:12px;align-items:flex-start}.pwa-status svg{flex-shrink:0}.pwa-status strong{font-size:14px}.pwa-status p{font-size:12px;line-height:1.55;margin:5px 0 0}.pwa-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:8px;align-items:center}.pwa-status button{color:#f3f5eb}.pwa-updating{position:fixed;inset:0;z-index:1000;background:#202a30f7;color:#edf2e8;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:15px;text-align:center;padding:30px}.pwa-updating p{font-size:14px}.pwa-installed{font-size:13px;color:var(--muted-foreground)}
+
+/* Reserve real layout space so connectivity/update notices never cover Send. */
+#root>.pwa-status{position:relative;left:auto;bottom:auto;transform:none;z-index:40;width:100%;border-radius:0;box-shadow:none;display:flex;align-items:center;justify-content:space-between;gap:16px}
+#root>.pwa-status>.pwa-actions{margin-top:0;flex-shrink:0}
+#root .tavern-root{height:calc(100dvh - var(--tavern-status-height,0px))}
+#root .auth-shell,#root .admin-layout{min-height:calc(100dvh - var(--tavern-status-height,0px))}
+@media(max-width:600px){#root>.pwa-status{padding:10px 12px;gap:8px}#root>.pwa-status>div:first-child>svg{display:none}#root>.pwa-status>.pwa-actions{flex-wrap:wrap;max-width:125px}}
