@@ -1,4 +1,5 @@
 "use client"
+import "./modal.css"
 
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"

@@ -1,0 +1,17 @@
+/* Modal grid tracks must be allowed to shrink below their content width. */
+[data-slot=dialog-content],[data-slot=alert-dialog-content]{width:calc(100% - 2rem);min-width:0;grid-template-columns:minmax(0,1fr);max-height:calc(100dvh - 2rem);overflow-y:auto;overscroll-behavior:contain}
+.tavern-dialog[data-slot=dialog-content]{max-height:min(90dvh,calc(100dvh - 2rem))}
+[data-slot=dialog-content]>*,[data-slot=alert-dialog-content]>*{min-width:0;max-width:100%}
+:is([data-slot=dialog-content],[data-slot=alert-dialog-content]) :where(form,fieldset,label,section,[data-slot=tabs],[data-slot=tabs-content],.dialog-form,.product-field){min-width:0;max-width:100%}
+:is([data-slot=dialog-content],[data-slot=alert-dialog-content]) :where(input,textarea,select){min-width:0;max-width:100%}
+:is([data-slot=dialog-content],[data-slot=alert-dialog-content]) :where(p,code,small,[data-slot=dialog-title],[data-slot=dialog-description],[data-slot=alert-dialog-title],[data-slot=alert-dialog-description]){min-width:0;max-width:100%;overflow-wrap:anywhere}
+[data-slot=alert-dialog-header]>*{min-width:0;max-width:100%}
+:is([data-slot=dialog-footer],[data-slot=alert-dialog-footer]){flex-wrap:wrap}
+:is([data-slot=dialog-footer],[data-slot=alert-dialog-footer])>button{min-width:0;max-width:100%;height:auto;min-height:2.25rem;white-space:normal;overflow-wrap:anywhere}
+.tavern-dialog .setting-row>span{min-width:0}
+.tavern-dialog .inline-actions{flex-wrap:wrap}
+.settings-dialog .settings-tabs>[data-slot=tabs-list]{height:auto;min-height:2.75rem;flex-wrap:wrap;justify-content:flex-start;gap:4px;overflow:visible}
+.settings-dialog .settings-tabs [data-slot=tabs-trigger]{flex:0 1 auto;height:auto;min-width:0;white-space:normal;padding:.5rem .65rem}
+.tavern-dialog .appearance-theme-options,.tavern-dialog .accent-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr))}
+.tavern-dialog .appearance-theme-options button,.tavern-dialog .accent-options button{min-width:0;white-space:normal}
+@media(max-width:480px){.tavern-dialog[data-slot=dialog-content]{padding:20px!important}.tavern-dialog [data-slot=dialog-header]{padding-right:12px}}
