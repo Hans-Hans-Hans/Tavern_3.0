@@ -1,7 +1,7 @@
 // Native AFK configuration acceptance only; this never starts a call or capture.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
+import { matrixSmokeJoin, matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 export async function afkSmoke({ admin, alice, adminSession, aliceSession, api }) {
   if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('AFK smoke requires the isolated CI stack.');
@@ -32,7 +32,9 @@ export async function afkSmoke({ admin, alice, adminSession, aliceSession, api }
     ],
   }), 200, 'Create encrypted AFK voice destination').room_id;
   checked(await native(admin, state(server, 'm.space.child', voice), { via: ['chat.example.test'] }, 'PUT'), 200, 'Link the AFK destination to its actual server');
-  for (const id of [server, voice]) checked(await native(alice, '/join/' + encodeURIComponent(id), {}), 200, 'Alice joins AFK fixture scopes');
+  for (const id of [server, voice]) checked(await matrixSmokeJoin(
+    () => native(alice, state(id, 'm.room.member', aliceSession.userId)),
+    () => native(alice, '/join/' + encodeURIComponent(id), {})), 200, 'Alice joins AFK fixture scopes');
   const initial = { version: 1, channelId: voice, timeoutSeconds: 300, 'io.tavern.previous_event': null };
   const saved = checked(await native(admin, state(server, afk), initial, 'PUT'), 200, 'Save valid AFK configuration');
   assert.ok(saved.event_id);
