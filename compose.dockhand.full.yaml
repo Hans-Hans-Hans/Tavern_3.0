@@ -350,7 +350,6 @@ services:
       LIVEKIT_KEY_FROM_FILE: /config/livekit_key
       LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
       LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
-      LIVEKIT_JWT_BIND: :8080
       LIVEKIT_LOG_LEVEL: error
     volumes:
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro

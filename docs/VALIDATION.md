@@ -4,6 +4,14 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Responsive modals and encrypted history recovery
 
+Checkpoint `081fd00` passed the separate SFU Linux workflow and started coturn
+successfully in [the assembled-stack run](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34406714380).
+That run passed 443 JavaScript and 241 browser tests, then stopped before native
+acceptance because the pinned token issuer's health probe interprets its bind
+address as a port. Compose now leaves `LIVEKIT_JWT_BIND` unset, allowing the
+server and probe to use their compatible defaults. Assembled-stack acceptance
+still requires a passing rerun.
+
 Checkpoint `8c87c52` passed the complete
 [SFU Linux workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34404769133),
 including the explicit loopback test configuration and nonroot runtime image.

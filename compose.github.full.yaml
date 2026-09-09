@@ -257,7 +257,8 @@ services:
       LIVEKIT_KEY_FROM_FILE: /config/livekit_key
       LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
       LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
-      LIVEKIT_JWT_BIND: :8080
+      # Leave the bind variable unset: v0.6.0 listens on :8080 by default,
+      # but its bundled health probe treats this variable as a bare port.
       LIVEKIT_LOG_LEVEL: error
     # The pinned issuer can include OpenID/delegation URLs in transport errors.
     # Its gateway reports sanitized failures; do not persist raw issuer logs.

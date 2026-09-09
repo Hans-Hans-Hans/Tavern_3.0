@@ -25,6 +25,11 @@ sets that file capability on `turnserver`; excluding it from the container's
 capability bounding set caused Linux to reject execution with `Operation not
 permitted`, even though the configured listening port is above 1024. The same
 service settings apply to production and this isolated test stack.
+The pinned token issuer leaves `LIVEKIT_JWT_BIND` unset. Its server defaults to
+`:8080`, while its bundled health probe defaults to port `8080`. Explicitly
+setting `:8080` makes the v0.6.0 probe construct `http://localhost::8080/healthz`.
+See the issuer's [configuration](https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/config.go)
+and [health probe](https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/healthcheck/main.go).
 The independent rollback project explicitly disables both call flags and uses
 the production init entrypoint. This setup adds no production validation exception.
 
