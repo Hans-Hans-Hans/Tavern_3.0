@@ -13,7 +13,7 @@ import uuid
 from types import SimpleNamespace
 from urllib.parse import quote
 
-from aiohttp import ClientTimeout, web
+from aiohttp import ClientError, ClientTimeout, web
 
 try:
     from .server import APIError, body_json
@@ -301,6 +301,19 @@ class SystemMessageManager:
 
 
 async def manage(request):
+    progress = {'stage': 'session'}
+    try:
+        return await _manage(request, progress)
+    except (APIError, ClientError, asyncio.TimeoutError, ValueError, web.HTTPException):
+        raise
+    except Exception as error:
+        # These are code-owned stage/type names only. Never log exception text,
+        # native responses, request bodies, Matrix tokens or bot configuration.
+        LOG.error('System notice settings failed at %s (%s).', progress['stage'], type(error).__name__)
+        raise APIError(500, 'System notice settings could not be loaded or saved. Reload or ask an administrator to check the system notice service logs.', 'SYSTEM_NOTICES_UNAVAILABLE') from None
+
+
+async def _manage(request, progress):
     service = request.app['service']; manager = service.system_messages
     session = service.require_session(request)
     if request.method == 'PUT': service.store.rate('system-notices-write:' + session['user_id'], 30, 60)
@@ -315,7 +328,9 @@ async def manage(request):
         if not model.SystemMessagesPolicy({}, None, model).may_configure(probe, authority.state): raise APIError(403, 'Your current server permissions do not allow system notice settings.')
         service.require_session(request)
         return authority
+    progress['stage'] = 'initial_authority'
     authority = await reauthorize()
+    progress['stage'] = 'request_validation'
     data = await body_json(request) if request.method == 'PUT' else None
     model = authority.model
     if data is not None:
@@ -325,37 +340,49 @@ async def manage(request):
             settings = data['settings']
             if settings['enabled']:
                 if not manager.enabled(): raise APIError(503, 'Enable and provision the encrypted bot before enabling system notices.')
+                progress['stage'] = 'write_configuration'
                 config, _ = manager.integration().read()
                 hook = config['hooks'].get(settings['hookId'])
                 if not hook or not hook.get('enabled', True) or hook.get('room_id') != settings['channelId']: raise APIError(400, 'Choose an enabled encrypted hook for this destination.')
+                progress['stage'] = 'write_destination'
                 child = await state(service, room_id(settings['channelId']))
                 if not model.SystemMessagesPolicy.destination(server, settings['channelId'], authority.state, child) or content(child, 'm.room.member', session['user_id']).get('membership') != 'join': raise APIError(403, 'Join the selected encrypted child channel.')
+                progress['stage'] = 'configure_bridge'
                 await manager.configure_bridge(reauthorize)
+            progress['stage'] = 'write_authority'
             authority = await reauthorize()
             service.require_session(request)
+            progress['stage'] = 'native_write'
             result = await service.matrix('PUT', '/_matrix/client/v3/rooms/' + quote(server, safe='') + '/state/' + SYSTEM_MESSAGES, settings, token=service.store.open(session['token']))
             if not identifier(result.get('event_id'), '$'): raise APIError(502, 'The homeserver did not confirm this setting. Reload before retrying.')
             service.require_session(request)
+            progress['stage'] = 'write_audit'
             service.audit(session['user_id'], 'server_system_messages_changed', server)
             return web.json_response({'eventId': result['event_id']})
     config, revision, ready = {'hooks': {}}, '', False
     if manager.enabled():
         try:
+            progress['stage'] = 'read_configuration'
             config, revision = manager.integration().read()
+            progress['stage'] = 'read_bot_identity'
             manager.bot_identity()
             ready = True
         except APIError as error:
             if error.status != 503: raise
     options = []
+    progress['stage'] = 'read_destinations'
     for hook_id, hook in list(config['hooks'].items())[:100]:
         destination = hook.get('room_id', '')
         if not hook.get('enabled', True) or not content(authority.state, 'm.space.child', destination).get('via'): continue
         child = await state(service, room_id(destination))
         if content(child, 'm.room.member', session['user_id']).get('membership') == 'join' and model.SystemMessagesPolicy.destination(server, destination, authority.state, child):
             options.append({'hookId': hook_id, 'roomId': destination, 'name': hook.get('name', hook_id)})
+    progress['stage'] = 'final_authority'
     authority = await reauthorize()
+    progress['stage'] = 'delivery_counts'
     counts = {row['status']: row['total'] for row in service.store.db.execute('SELECT status,count(*) AS total FROM system_message_deliveries WHERE server_id=? GROUP BY status', (server,))}
     current = authority.state.get((SYSTEM_MESSAGES, ''))
+    progress['stage'] = 'response'
     return web.json_response({'enabled': manager.enabled(), 'ready': ready, 'settings': dict(current.content) if current else None, 'eventId': current.event_id if current else None,
         'destinations': options, 'counts': counts, 'configurationRevision': revision}, headers={'Cache-Control': 'no-store'})
 

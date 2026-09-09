@@ -2,6 +2,36 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Responsive modals and encrypted history recovery
+
+The production build and all 404 JavaScript checks pass. The complete browser
+suite passes all 210 checks. Nine new modal checks cover 320–1280px viewports,
+short windows, live resizing, wrapped settings tabs, reachable controls and
+confirmation dialogs without horizontal overflow. Three new tests use real
+IndexedDB and the installed Matrix Rust/WASM SDK to recover an undecryptable
+event from a previous device store, retain the source keys and fingerprint,
+reject another account's keys, skip locked stores and stop after ownership
+changes. Two recovery UI tests cover a visible new-device recovery flow,
+full-history restore selected by default, wrong-key retry and clearing secrets
+when the session changes. Node checks also distinguish a usable backup key
+from an unrelated cached key and stop stale recovery operations.
+
+The new live recovery probe is mounted before the other feature probes. It
+exercises managed logout/relogin, retained browser keys, an actual native
+encrypted backup upload and recovery in a fresh browser without changing the
+backup or signing identity. Its six local scope/fixture/secret-cleanup tests
+pass; native execution of this newly added probe is pending CI.
+
+The previous `V3` checkpoint `e6d294b` passed build, JavaScript, browser, Python,
+PWA, Docker/gateway and native messaging stages through profile-policy checks.
+Its workflow failed when the mounted system-notice settings editor received a
+server error. A targeted diagnostic now records a code-owned stage and exception
+class without request contents or credentials, and the live probe checks that
+GET directly. The 33 affected Python and eight browser checks pass locally;
+the underlying production-only settings failure is not yet claimed fixed.
+
+User-facing recovery instructions are in [HISTORY_RECOVERY.md](HISTORY_RECOVERY.md).
+
 ## Local history, read-state and invitation checkpoint
 
 The combined development changes passed the production build and all 381

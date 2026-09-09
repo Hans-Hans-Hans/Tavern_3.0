@@ -237,7 +237,11 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     await startBot(identity);
     for (const page of [alice,bob]) { await page.goto(ORIGIN+'/#room='+encodeURIComponent(channel)); await ready(page); }
     // Save once through the actual mounted server editor, including typed ID.
-    await openSystemMessageSettings(alice, serverName);
+    const [loadedSettings] = await Promise.all([
+      alice.waitForResponse(response => response.request().method() === 'GET' && new URL(response.url()).pathname === settingsPath),
+      openSystemMessageSettings(alice, serverName),
+    ]);
+    assert.equal(loadedSettings.status(), 200, 'The mounted system notice editor settings GET must succeed. Check the sanitized system notice API stage log if it fails.');
     const editor=alice.locator('section.product-section').filter({has:alice.getByRole('heading',{name:'System notices',exact:true})});
     await expect(editor.getByText('System notices: Off',{exact:true})).toBeVisible();
     await editor.getByLabel('Post system notices',{exact:true}).check();

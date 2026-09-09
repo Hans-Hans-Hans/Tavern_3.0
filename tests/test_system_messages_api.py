@@ -108,6 +108,33 @@ class SystemMessagesAPITests(unittest.IsolatedAsyncioTestCase):
         self.add_state(SERVER,model.POLICY,{'version':999})
         self.assertEqual((await self.request('GET','/api/servers/'+SERVER+'/system-messages',cookie=self.owner)).status,403)
 
+    async def test_unexpected_inventory_failure_logs_stage_and_class_without_configuration_or_credentials(self):
+        secret = 'never-log-bot-token-or-private-configuration'
+        with patch.object(self.service.integrations, 'read', side_effect=TypeError(secret)):
+            with self.assertLogs('tavern.system_messages', level='ERROR') as logs:
+                response = await self.request('GET', '/api/servers/'+SERVER+'/system-messages', cookie=self.owner)
+            body = await response.json()
+            self.assertEqual(response.status, 500)
+            self.assertEqual(body['errcode'], 'SYSTEM_NOTICES_UNAVAILABLE')
+            self.assertEqual(logs.output, ['ERROR:tavern.system_messages:System notice settings failed at read_configuration (TypeError).'])
+            self.assertNotIn(secret, json.dumps(body) + '\n'.join(logs.output))
+            self.assertNotIn('never-return-bot-token', json.dumps(body) + '\n'.join(logs.output))
+        recovered = await self.request('GET', '/api/servers/'+SERVER+'/system-messages', cookie=self.owner)
+        self.assertEqual(recovered.status, 200)
+        self.assertTrue((await recovered.json())['ready'])
+        self.assertEqual(self.writes, [])
+
+    async def test_missing_initial_route_and_bridge_configuration_return_the_real_off_inventory(self):
+        self.extra[SERVER] = [item for item in self.extra[SERVER] if item['type'] != system.SYSTEM_MESSAGES]
+        self.config.pop('system_messages'); self.config.pop('retired_hooks')
+        self.service.integrations.write(self.config)
+        response = await self.request('GET', '/api/servers/'+SERVER+'/system-messages', cookie=self.owner)
+        self.assertEqual(response.status, 200, await response.text()); data = await response.json()
+        self.assertTrue(data['enabled']); self.assertTrue(data['ready'])
+        self.assertIsNone(data['settings']); self.assertIsNone(data['eventId'])
+        self.assertEqual(data['destinations'], [{'hookId':'notices','roomId':ROOM,'name':'Server notices'}])
+        self.assertEqual(data['counts'], {}); self.assertEqual(self.writes, [])
+
     async def test_configuration_put_is_native_cas_and_exact_confirmation(self):
         data={'settings':settings(**{'io.tavern.previous_event':'$config'}),'confirmation':SERVER}
         wrong=await self.request('PUT','/api/servers/'+SERVER+'/system-messages',{**data,'confirmation':'!wrong:test'},self.owner)
