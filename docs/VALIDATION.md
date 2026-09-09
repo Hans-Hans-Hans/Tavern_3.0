@@ -4,6 +4,23 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Observed continuous integration
 
+[Run 34378243058](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34378243058)
+at development commit `0a7c68b` passed build, 310 JavaScript tests, 154 browser
+tests, 538 Python checks, PWA/Compose/Docker and the expanded gateway fixture.
+The actual built gateway blocked all tested legacy/native upload aliases while
+preserving media reads. The live stack passed the preceding encrypted messaging,
+private-discussion, AFK, eligibility and profile probes, then room creation for
+the bot fixture returned HTTP 429. Both owning device fingerprints were read,
+but bot delivery, DM inbox and final restart acceptance were not reached.
+Independent failed-update rollback passed.
+
+The fixture now creates its empty private rooms separately from invitations.
+Only that restricted configuration retries confirmed rate limits, using the
+pre-persistence limits in pinned Synapse 1.160.0; known-target invitations check
+native membership before any retry. Ambiguous failures are never replayed.
+Fourteen local request-helper checks and six isolated DM/invitation guard checks
+pass. Live execution of the revised fixture remains pending.
+
 [Run 34376809528](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34376809528)
 at development commit `58a129c` passed build, 291 JavaScript tests, 141 browser
 tests, 497 Python checks, PWA/Compose/Docker/gateway validation and all preceding

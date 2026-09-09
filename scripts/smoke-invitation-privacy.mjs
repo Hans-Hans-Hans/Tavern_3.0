@@ -2,7 +2,7 @@
 // The extra owning sender has no prior shared Spaces or contact relationship.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { matrixSmokeRequest, matrixSmokeJoin, matrixSmokeLeave } from './matrix-smoke-request.mjs';
+import { matrixSmokeRequest, matrixSmokeJoin, matrixSmokeLeave, matrixSmokeCreateFixture } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test', ADMIN = '@ciadmin:chat.example.test';
 const BOB = '@cibob:chat.example.test', SENDER = '@ciinviter:chat.example.test';
@@ -99,7 +99,7 @@ export async function invitationPrivacySmoke({ admin, bob, adminSession, bobSess
       { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
     ];
     if (parent) initial.push({ type: 'm.space.parent', state_key: parent, content: { canonical: true, via: ['chat.example.test'] } });
-    const id = checked(await native(sender, '/createRoom', {
+    const id = checked(await matrixSmokeCreateFixture(body => native(sender, '/createRoom', body), {
       name, visibility: 'private', preset: 'private_chat',
       creation_content: { 'm.federate': false, 'io.tavern.ci_invitation_privacy': nonce, ...(space ? { type: 'm.space' } : {}) }, initial_state: initial,
     }), 'Create exactly one fresh CI room without invitation side effects').room_id;

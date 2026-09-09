@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
 import { expect } from '@playwright/test';
-import { matrixSmokeRequest, matrixSmokeJoin, matrixSmokeLeave } from './matrix-smoke-request.mjs';
+import { matrixSmokeRequest, matrixSmokeJoin, matrixSmokeLeave, matrixSmokeInvite, matrixSmokeCreateFixture } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test', BOT = '@cisystembot:chat.example.test';
 const OWNER = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test', ADMIN = '@ciadmin:chat.example.test';
@@ -104,10 +104,11 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     checked(await api(admin,'/api/admin/users',{username,displayName,password}),201,'Create only the dedicated isolated account');
   }
   const runId=randomBytes(12).toString('hex'), serverName='CI system notices '+runId+' server', channelName='CI system notices '+runId+' channel';
-  const server = checked(await native(alice,'/createRoom',{name:serverName,visibility:'private',preset:'private_chat',invite:[BOB,BOT],
+  const createFixture = config => matrixSmokeCreateFixture(body => native(alice,'/createRoom',body),config);
+  const server = checked(await createFixture({name:serverName,visibility:'private',preset:'private_chat',
     creation_content:{type:'m.space','m.federate':false,'io.tavern.ci_system':runId}}),200,'Create a fresh isolated native Space').room_id;
   assert.ok(roomId(server));
-  const channel = checked(await native(alice,'/createRoom',{name:channelName,visibility:'private',preset:'private_chat',invite:[BOB,BOT],
+  const channel = checked(await createFixture({name:channelName,visibility:'private',preset:'private_chat',
     creation_content:{'m.federate':false,'io.tavern.ci_system':runId},initial_state:[
       {type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},
       {type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}},
@@ -116,8 +117,14 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
   assert.ok(roomId(channel)); assert.notEqual(server,channel);
   checked(await native(alice,state(server,'m.space.child',channel),{via:['chat.example.test']},'PUT'),200,'Publish the reciprocal CI child link');
   const membership = (viewer,id,user) => native(viewer,state(id,'m.room.member',user));
+  const inviteRoom = async (id,user) => {
+    assert.ok([server,channel].includes(id) && [BOB,BOT,SUBJECT,ADMIN].includes(user));
+    checked(await matrixSmokeInvite(() => membership(alice,id,user),() => native(alice,room(id)+'/invite',{user_id:user})),200,'Invite only the known CI recipient');
+    assert.ok(['invite','join'].includes(checked(await membership(alice,id,user),200,'Confirm the native invitation').membership));
+  };
   const joinRoom = async (page,id,user) => checked(await matrixSmokeJoin(() => membership(alice,id,user),() => native(page,'/join/'+encodeURIComponent(id),{})),200,'Join an explicitly chosen CI room');
   const leaveRoom = async (page,id,user) => checked(await matrixSmokeLeave(() => membership(alice,id,user),() => native(page,room(id)+'/leave',{})),200,'Leave only the known CI fixture');
+  for (const id of [server,channel]) for (const user of [BOB,BOT]) await inviteRoom(id,user);
   await joinRoom(bob,server,BOB); await joinRoom(bob,channel,BOB);
   for (const [id,name,space] of [[server,serverName,true],[channel,channelName,false]]) {
     const all=checked(await native(alice,room(id)+'/state'),200,'Guard the newly created native fixture');
@@ -222,7 +229,7 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     await expect(editor.getByRole('status')).toContainText('System notice settings saved');
     await alice.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();
     subject=await createPage(); await login(subject,'cinoticesubject',subjectPassword);
-    checked(await native(alice,room(server)+'/invite',{user_id:SUBJECT}),200,'Invite only the CI notice subject');
+    await inviteRoom(server,SUBJECT);
     await joinRoom(subject,server,SUBJECT);
     const joined=await assertNotice(new Set(),'join',await sourceEvent());
     await waitFor('API confirmed sent receipt',async () => (await readSettings()).counts.sent>=1);
@@ -241,14 +248,14 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     console.log('PASS: verified recipient pins gate delivery; queue/store restart sends one actual m.notice and both SDK history exports confirm decrypted metadata.');
 
     await control('stop');
-    checked(await native(alice,room(server)+'/invite',{user_id:SUBJECT}),200,'Reinvite only the CI subject for cancellation');
+    await inviteRoom(server,SUBJECT);
     await joinRoom(subject,server,SUBJECT);
     await waitFor('API pending while the bot is offline',async () => (await readSettings()).counts.pending>=1);
     const cancelledBefore=(await readSettings()).counts.cancelled;
     await save(false);
     await waitFor('Disabled route cancels queued work',async () => (await readSettings()).counts.cancelled>cancelledBefore);
     await startBot(identity); await save(true);
-    checked(await native(alice,room(channel)+'/invite',{user_id:ADMIN}),200,'Invite the isolated destination-only outsider');
+    await inviteRoom(channel,ADMIN);
     await joinRoom(admin,channel,ADMIN); adminJoined=true;
     assert.ok([403,404].includes((await membership(alice,server,ADMIN)).status) || (await membership(alice,server,ADMIN)).data.membership!=='join');
     const beforeAudience=(await readSettings()).counts.cancelled;

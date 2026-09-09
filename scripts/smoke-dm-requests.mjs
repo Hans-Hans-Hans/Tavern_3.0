@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { expect } from '@playwright/test';
-import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
+import { matrixSmokeRequest, matrixSmokeCreateFixture, matrixSmokeInvite } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test', ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
 const ROOM_ID = /^![^\s/\\?#:]{1,200}:chat\.example\.test$/;
@@ -68,8 +68,8 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
   async function create(suffix) {
     await session(alice, aliceSession); await session(bob, bobSession);
     const name = 'CI DM request ' + suffix + ' ' + nonce;
-    const id = checked(await native(alice, '/createRoom', {
-      name, visibility: 'private', preset: 'private_chat', is_direct: true, invite: [BOB],
+    const id = checked(await matrixSmokeCreateFixture(body => native(alice, '/createRoom', body), {
+      name, visibility: 'private', preset: 'private_chat',
       creation_content: { 'm.federate': false, 'io.tavern.ci_dm': nonce },
       initial_state: [
         { type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } },
@@ -77,6 +77,10 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
       ],
     }), 'Create one fresh direct invitation').room_id;
     assert.ok(ROOM_ID.test(id)); assert.ok(!fixtures.has(id)); fixtures.set(id, name);
+    checked(await matrixSmokeInvite(
+      () => native(alice, state(id, 'm.room.member', BOB)),
+      () => api(alice, '/_matrix/client/v3' + state(id, 'm.room.member', BOB), { membership: 'invite', is_direct: true }, true, false, 'PUT'),
+    ), 'Persist the known native direct invitation');
     await inspect(id, 'invite'); return id;
   }
   async function openJoined(page, id) {
