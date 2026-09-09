@@ -158,6 +158,15 @@ guard tests validate the new isolated native DM smoke's scope; its real
 join/classification/reload/decryption/decline probe is mounted before deactivation
 and still requires CI execution.
 
+A subsequent isolated invitation probe adds a fresh owning sender with no prior
+shared Spaces. Native invite POSTs and direct membership state writes exercise
+global consent, pending versus accepted contacts, actual shared membership,
+intersecting server restrictions, source departure and ignored users. It restores
+the recipient's preferences and removes only the new contact relationship.
+Three guard checks and syntax validation pass; live execution is pending. The
+workflow's overall limit is 45 minutes to accommodate the additional bounded
+bot, inbox and invitation probes while retaining production rate limits.
+
 Contact push's 57 focused Python checks include an actual local TLS provider,
 encrypted payload decryption after worker restart, final shared-membership
 revocation, strict preferences, transaction rollback and ticket revocation.

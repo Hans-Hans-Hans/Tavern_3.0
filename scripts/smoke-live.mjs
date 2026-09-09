@@ -10,6 +10,7 @@ import { eligibilitySmoke } from './smoke-eligibility.mjs';
 import { profilePolicySmoke } from './smoke-profile-policy.mjs';
 import { systemMessagesSmoke } from './smoke-system-messages.mjs';
 import { dmRequestsSmoke } from './smoke-dm-requests.mjs';
+import { invitationPrivacySmoke } from './smoke-invitation-privacy.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
@@ -249,6 +250,7 @@ try {
   await profilePolicySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, origin, api });
   await systemMessagesSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, ready, createPage: page, login });
   await dmRequestsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent });
+  await invitationPrivacySmoke({ admin, bob, adminSession, bobSession, origin, api, createPage: page, login });
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
 } catch (error) {
   console.error('Live browser errors:', errors);
