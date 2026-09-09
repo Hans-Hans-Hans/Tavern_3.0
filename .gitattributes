@@ -8,6 +8,9 @@
 *.wasm binary
 *.zip binary
 *.gz binary
+# Unified-diff context includes significant leading spaces and empty lines.
+# Keep the pinned patch bytes intact; source formatting is verified after apply.
+docker/sfu/*.patch -whitespace
 .openai export-ignore
 .codex export-ignore
 releases export-ignore

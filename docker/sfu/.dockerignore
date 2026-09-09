@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!livekit-audio.patch
+!protocol-audio.patch
+!patches.sha256
+!patched-files.sha256
+!provenance.json
+!NOTICE
+!apply.go
+!apply_test.go
+!licenses/
+!licenses/**

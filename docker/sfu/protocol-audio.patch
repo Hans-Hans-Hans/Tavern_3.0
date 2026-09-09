@@ -1,0 +1,291 @@
+--- a/auth/grants.go
++++ b/auth/grants.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -256,9 +257,10 @@
+ 
+ 	// permissions within a room, if none of the permissions are set explicitly
+ 	// it will be granted with all publish and subscribe permissions
+-	CanPublish     *bool `json:"canPublish,omitempty"`
+-	CanSubscribe   *bool `json:"canSubscribe,omitempty"`
+-	CanPublishData *bool `json:"canPublishData,omitempty"`
++	CanPublish              *bool `json:"canPublish,omitempty"`
++	CanSubscribe            *bool `json:"canSubscribe,omitempty"`
++	TavernCanSubscribeAudio *bool `json:"tavernCanSubscribeAudio,omitempty"`
++	CanPublishData          *bool `json:"canPublishData,omitempty"`
+ 	// TrackSource types that a participant may publish.
+ 	// When set, it supersedes CanPublish. Only sources explicitly set here can be published
+ 	CanPublishSources []string `json:"canPublishSources,omitempty"` // keys keep track of each source
+@@ -293,6 +295,17 @@
+ 	v.CanPublishData = &val
+ }
+ 
++// SetTavernCanSubscribeAudio sets the additional server-owned audio restriction.
++func (v *VideoGrant) SetTavernCanSubscribeAudio(val bool) {
++	v.TavernCanSubscribeAudio = &val
++}
++
++// GetTavernCanSubscribeAudio defaults to the upstream behavior when absent.
++// Callers must also enforce the ordinary CanSubscribe permission.
++func (v *VideoGrant) GetTavernCanSubscribeAudio() bool {
++	return v.TavernCanSubscribeAudio == nil || *v.TavernCanSubscribeAudio
++}
++
+ func (v *VideoGrant) SetCanSubscribe(val bool) {
+ 	v.CanSubscribe = &val
+ }
+@@ -398,6 +411,9 @@
+ 	if v.GetCanPublishData() != permission.CanPublishData {
+ 		return false
+ 	}
++	if permission.TavernCanSubscribeAudio != nil && v.GetTavernCanSubscribeAudio() != *permission.TavernCanSubscribeAudio {
++		return false
++	}
+ 	if v.GetCanSubscribe() != permission.CanSubscribe {
+ 		return false
+ 	}
+@@ -434,6 +450,11 @@
+ 	v.SetCanPublish(permission.CanPublish)
+ 	v.SetCanPublishData(permission.CanPublishData)
+ 	v.SetCanPublishSources(permission.CanPublishSources)
++	// Old clients/servers omit the extension during unrelated permission updates.
++	// Do not convert omission to true and accidentally remove a restriction.
++	if permission.TavernCanSubscribeAudio != nil {
++		v.SetTavernCanSubscribeAudio(*permission.TavernCanSubscribeAudio)
++	}
+ 	v.SetCanSubscribe(permission.CanSubscribe)
+ 	v.SetCanUpdateOwnMetadata(permission.CanUpdateMetadata)
+ 	v.Hidden = permission.Hidden
+@@ -445,17 +466,26 @@
+ 
+ func (v *VideoGrant) ToPermission() *livekit.ParticipantPermission {
+ 	return &livekit.ParticipantPermission{
+-		CanPublish:          v.GetCanPublish(),
+-		CanPublishData:      v.GetCanPublishData(),
+-		CanSubscribe:        v.GetCanSubscribe(),
+-		CanPublishSources:   v.GetCanPublishSources(),
+-		CanUpdateMetadata:   v.GetCanUpdateOwnMetadata(),
+-		Hidden:              v.Hidden,
+-		Recorder:            v.Recorder,
+-		Agent:               v.Agent,
+-		CanSubscribeMetrics:   v.GetCanSubscribeMetrics(),
+-		CanManageAgentSession: v.GetCanManageAgentSession(),
+-	}
++		CanPublish:              v.GetCanPublish(),
++		CanPublishData:          v.GetCanPublishData(),
++		CanSubscribe:            v.GetCanSubscribe(),
++		TavernCanSubscribeAudio: cloneOptionalBool(v.TavernCanSubscribeAudio),
++		CanPublishSources:       v.GetCanPublishSources(),
++		CanUpdateMetadata:       v.GetCanUpdateOwnMetadata(),
++		Hidden:                  v.Hidden,
++		Recorder:                v.Recorder,
++		Agent:                   v.Agent,
++		CanSubscribeMetrics:     v.GetCanSubscribeMetrics(),
++		CanManageAgentSession:   v.GetCanManageAgentSession(),
++	}
++}
++
++func cloneOptionalBool(value *bool) *bool {
++	if value == nil {
++		return nil
++	}
++	copy := *value
++	return &copy
+ }
+ 
+ func (v *VideoGrant) Clone() *VideoGrant {
+@@ -464,6 +494,7 @@
+ 	}
+ 
+ 	clone := *v
++	clone.TavernCanSubscribeAudio = cloneOptionalBool(v.TavernCanSubscribeAudio)
+ 
+ 	if v.CanPublish != nil {
+ 		canPublish := *v.CanPublish
+@@ -526,6 +557,7 @@
+ 
+ 	logBoolPtr("CanPublish", v.CanPublish)
+ 	logBoolPtr("CanSubscribe", v.CanSubscribe)
++	logBoolPtr("TavernCanSubscribeAudio", v.TavernCanSubscribeAudio)
+ 	logBoolPtr("CanPublishData", v.CanPublishData)
+ 	e.AddArray("CanPublishSources", logger.StringSlice(v.CanPublishSources))
+ 	logBoolPtr("CanUpdateOwnMetadata", v.CanUpdateOwnMetadata)
+--- /dev/null
++++ b/auth/tavern_audio_grant_test.go
+@@ -0,0 +1,88 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package auth
++
++import (
++	"encoding/json"
++	"github.com/livekit/protocol/livekit"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/protobuf/encoding/protojson"
++	"google.golang.org/protobuf/proto"
++	"testing"
++)
++
++func TestTavernAudioGrantPreservesOmittedPermissionUpdates(t *testing.T) {
++	grant := &VideoGrant{}
++	require.True(t, grant.GetTavernCanSubscribeAudio())
++	require.Nil(t, grant.ToPermission().TavernCanSubscribeAudio)
++	denied := grant.ToPermission()
++	denied.TavernCanSubscribeAudio = proto.Bool(false)
++	require.False(t, grant.MatchesPermission(denied))
++	grant.UpdateFromPermission(denied)
++	require.False(t, grant.GetTavernCanSubscribeAudio())
++	require.True(t, grant.MatchesPermission(denied))
++
++	oldClientUpdate := grant.ToPermission()
++	oldClientUpdate.TavernCanSubscribeAudio = nil
++	oldClientUpdate.CanPublishData = false
++	grant.UpdateFromPermission(oldClientUpdate)
++	require.False(t, grant.GetTavernCanSubscribeAudio())
++	require.True(t, grant.MatchesPermission(oldClientUpdate))
++	restore := grant.ToPermission()
++	restore.TavernCanSubscribeAudio = proto.Bool(true)
++	grant.UpdateFromPermission(restore)
++	require.True(t, grant.GetTavernCanSubscribeAudio())
++}
++
++func TestTavernAudioGrantCloneAndWirePresence(t *testing.T) {
++	for _, value := range []*bool{nil, proto.Bool(false), proto.Bool(true)} {
++		grant := &VideoGrant{TavernCanSubscribeAudio: value}
++		cloned := grant.Clone()
++		require.Equal(t, grant, cloned)
++		if value != nil {
++			require.NotSame(t, value, cloned.TavernCanSubscribeAudio)
++		}
++		permission := grant.ToPermission()
++		if value != nil {
++			require.NotSame(t, value, permission.TavernCanSubscribeAudio)
++		}
++		encoded, err := protojson.Marshal(permission)
++		require.NoError(t, err)
++		decoded := &livekit.ParticipantPermission{}
++		require.NoError(t, protojson.Unmarshal(encoded, decoded))
++		require.Equal(t, value, decoded.TavernCanSubscribeAudio)
++		wire, err := proto.Marshal(permission)
++		require.NoError(t, err)
++		require.NoError(t, proto.Unmarshal(wire, decoded))
++		require.Equal(t, value, decoded.TavernCanSubscribeAudio)
++		jwtJSON, err := json.Marshal(grant)
++		require.NoError(t, err)
++		var roundtrip VideoGrant
++		require.NoError(t, json.Unmarshal(jwtJSON, &roundtrip))
++		require.Equal(t, value, roundtrip.TavernCanSubscribeAudio)
++	}
++}
++
++func TestTavernAudioGrantSurvivesSignedRefresh(t *testing.T) {
++	original := &VideoGrant{RoomJoin: true, Room: "audio-test"}
++	original.SetTavernCanSubscribeAudio(false)
++	token, err := NewAccessToken("test-api-key", "test-secret-long-enough-for-signed-test").
++		SetIdentity("test-participant").SetVideoGrant(original).ToJWT()
++	require.NoError(t, err)
++	verifier, err := ParseAPIToken(token)
++	require.NoError(t, err)
++	_, claims, err := verifier.Verify("test-secret-long-enough-for-signed-test")
++	require.NoError(t, err)
++	require.False(t, claims.Video.GetTavernCanSubscribeAudio())
++	// RoomManager.refreshToken passes the participant's current Video grant.
++	refreshed, err := NewAccessToken("test-api-key", "test-secret-long-enough-for-signed-test").
++		SetIdentity(claims.Identity).SetVideoGrant(claims.Video.Clone()).ToJWT()
++	require.NoError(t, err)
++	verifier, err = ParseAPIToken(refreshed)
++	require.NoError(t, err)
++	_, claims, err = verifier.Verify("test-secret-long-enough-for-signed-test")
++	require.NoError(t, err)
++	require.NotNil(t, claims.Video.TavernCanSubscribeAudio)
++	require.False(t, *claims.Video.TavernCanSubscribeAudio)
++}
+--- a/livekit/livekit_models.pb.go
++++ b/livekit/livekit_models.pb.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -2087,8 +2088,13 @@
+ 	CanSubscribeMetrics bool `protobuf:"varint,12,opt,name=can_subscribe_metrics,json=canSubscribeMetrics,proto3" json:"can_subscribe_metrics,omitempty"`
+ 	// if a participant can manage an agent session via RemoteSession (control and access state)
+ 	CanManageAgentSession bool `protobuf:"varint,13,opt,name=can_manage_agent_session,json=canManageAgentSession,proto3" json:"can_manage_agent_session,omitempty"`
+-	unknownFields         protoimpl.UnknownFields
+-	sizeCache             protoimpl.SizeCache
++	// Tavern pinned extension: additional server-owned audio subscribe restriction.
++	// Absent on initial grants means allowed. An omitted participant update keeps
++	// the previous restriction; only an explicit true restores audio permission.
++	// The ordinary can_subscribe permission still gates every media kind.
++	TavernCanSubscribeAudio *bool `protobuf:"varint,10001,opt,name=tavern_can_subscribe_audio,json=tavernCanSubscribeAudio,proto3,oneof" json:"tavern_can_subscribe_audio,omitempty"`
++	unknownFields           protoimpl.UnknownFields
++	sizeCache               protoimpl.SizeCache
+ }
+ 
+ func (x *ParticipantPermission) Reset() {
+@@ -2189,6 +2195,13 @@
+ func (x *ParticipantPermission) GetCanManageAgentSession() bool {
+ 	if x != nil {
+ 		return x.CanManageAgentSession
++	}
++	return false
++}
++
++func (x *ParticipantPermission) GetTavernCanSubscribeAudio() bool {
++	if x != nil && x.TavernCanSubscribeAudio != nil {
++		return *x.TavernCanSubscribeAudio
+ 	}
+ 	return false
+ }
+@@ -6838,7 +6851,7 @@
+ 	"\fPlayoutDelay\x12\x18\n" +
+ 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x10\n" +
+ 	"\x03min\x18\x02 \x01(\rR\x03min\x12\x10\n" +
+-	"\x03max\x18\x03 \x01(\rR\x03max\"\xbc\x03\n" +
++	"\x03max\x18\x03 \x01(\rR\x03max\"\x9e\x04\n" +
+ 	"\x15ParticipantPermission\x12#\n" +
+ 	"\rcan_subscribe\x18\x01 \x01(\bR\fcanSubscribe\x12\x1f\n" +
+ 	"\vcan_publish\x18\x02 \x01(\bR\n" +
+@@ -6851,7 +6864,9 @@
+ 	" \x01(\bR\x11canUpdateMetadata\x12\x18\n" +
+ 	"\x05agent\x18\v \x01(\bB\x02\x18\x01R\x05agent\x122\n" +
+ 	"\x15can_subscribe_metrics\x18\f \x01(\bR\x13canSubscribeMetrics\x127\n" +
+-	"\x18can_manage_agent_session\x18\r \x01(\bR\x15canManageAgentSession\"\x83\n" +
++	"\x18can_manage_agent_session\x18\r \x01(\bR\x15canManageAgentSession\x12A\n" +
++	"\x1atavern_can_subscribe_audio\x18\x91N \x01(\bH\x00R\x17tavernCanSubscribeAudio\x88\x01\x01B\x1d\n" +
++	"\x1b_tavern_can_subscribe_audio\"\x83\n" +
+ 	"\n" +
+ 	"\x0fParticipantInfo\x12\x10\n" +
+ 	"\x03sid\x18\x01 \x01(\tR\x03sid\x12\x1a\n" +
+@@ -7707,6 +7722,7 @@
+ 		return
+ 	}
+ 	file_livekit_metrics_proto_init()
++	file_livekit_models_proto_msgTypes[6].OneofWrappers = []any{}
+ 	file_livekit_models_proto_msgTypes[11].OneofWrappers = []any{}
+ 	file_livekit_models_proto_msgTypes[12].OneofWrappers = []any{
+ 		(*DataTrackFrameEncoding_WellKnown)(nil),
+--- a/protobufs/livekit_models.proto
++++ b/protobufs/livekit_models.proto
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -128,6 +129,12 @@
+   bool can_subscribe_metrics = 12;
+   // if a participant can manage an agent session via RemoteSession (control and access state)
+   bool can_manage_agent_session = 13;
++
++  // Tavern pinned extension: additional server-owned audio subscribe restriction.
++  // Absent on initial grants means allowed. An omitted participant update keeps
++  // the previous restriction; only an explicit true restores audio permission.
++  // The ordinary can_subscribe permission still gates every media kind.
++  optional bool tavern_can_subscribe_audio = 10001;
+ 
+   // NEXT_ID: 14
+ }

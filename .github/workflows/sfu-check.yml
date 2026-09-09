@@ -1,0 +1,26 @@
+name: Tavern SFU checks
+on:
+  push:
+    branches: [V3]
+    paths: ['docker/sfu/**', '.github/workflows/sfu-check.yml']
+  pull_request:
+    branches: [V3]
+    paths: ['docker/sfu/**', '.github/workflows/sfu-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tavern-sfu-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-media:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build pinned sources and run native audio enforcement tests
+        # The final target depends on auth, RTC and real loopback RTP tests.
+        # No test connects to Redis, Matrix, public STUN or a production SFU.
+        run: docker build --progress=plain --platform=linux/amd64 --tag=tavern-sfu-audio:check docker/sfu
+      - name: Check the built binary under runtime restrictions
+        run: docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 10001:10001 tavern-sfu-audio:check --version

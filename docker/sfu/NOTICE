@@ -1,0 +1,15 @@
+Tavern SFU audio-permission prototype
+
+This directory contains modifications to LiveKit and LiveKit Protocol under
+the Apache License, Version 2.0. It is not an official upstream release.
+
+The patches add Tavern's optional audio-subscription grant, preserve its
+presence during permission updates and token refresh, revoke active audio,
+validate declared and negotiated media kinds, and add isolated regression
+tests. Exact upstream revisions and changed files appear in provenance.json.
+
+Unmodified upstream licenses and notices are retained in licenses/. The SFU
+notice includes the upstream ion-sfu attribution. Dependencies remain pinned
+by the upstream Go module manifests and checksums. This build has not been
+published; a complete binary dependency license/SBOM review remains part of
+release preparation.

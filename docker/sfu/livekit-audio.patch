@@ -1,0 +1,1044 @@
+--- a/go.mod
++++ b/go.mod
+@@ -1,4 +1,7 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ module github.com/livekit/livekit-server
++
++replace github.com/livekit/protocol => ../protocol
+ 
+ go 1.26
+ 
+--- a/pkg/rtc/mediatrack.go
++++ b/pkg/rtc/mediatrack.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -275,6 +276,10 @@
+ // AddReceiver adds a new RTP receiver to the track, returns true when receiver represents a new codec
+ // and if a receiver was added successfully
+ func (t *MediaTrack) AddReceiver(receiver *webrtc.RTPReceiver, track sfu.TrackRemote, mid string) (bool, bool) {
++	// Last boundary before an actual negotiated receiver reaches forwarding.
++	if !validTrackRTPKind(t.Kind(), t.Source(), track.Kind(), track.Codec().MimeType) {
++		return false, false
++	}
+ 	var newCodec bool
+ 	ssrc := uint32(track.SSRC())
+ 	buff, rtcpReader := t.params.BufferFactory.GetBufferPair(ssrc)
+--- a/pkg/rtc/mediatracksubscriptions.go
++++ b/pkg/rtc/mediatracksubscriptions.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -92,6 +93,9 @@
+ 
+ // AddSubscriber subscribes sub to current mediaTrack
+ func (t *MediaTrackSubscriptions) AddSubscriber(sub types.LocalParticipant, wr *WrappedReceiver) (types.SubscribedTrack, error) {
++	if !canSubscribeToMedia(sub, t.params.MediaTrack.Kind()) {
++		return nil, ErrNoSubscribePermission
++	}
+ 	trackID := t.params.MediaTrack.ID()
+ 	subscriberID := sub.ID()
+ 
+@@ -133,6 +137,11 @@
+ 	downTrack.OnBinding(func(err error) {
+ 		if err != nil {
+ 			go subTrack.Bound(err)
++			return
++		}
++		// Binding can be delayed until after a server permission update.
++		if !canSubscribeToMedia(sub, t.params.MediaTrack.Kind()) {
++			go subTrack.Bound(ErrNoSubscribePermission)
+ 			return
+ 		}
+ 		if reusingTransceiver.Load() {
+--- a/pkg/rtc/participant.go
++++ b/pkg/rtc/participant.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -845,6 +846,10 @@
+ 	if permission == nil {
+ 		return false
+ 	}
++	// A subscribe admitted before a permission update must be present in the
++	// revocation census; one arriving afterward reads the new signed grant.
++	p.SubscriptionManager.permissionLock.Lock()
++	defer p.SubscriptionManager.permissionLock.Unlock()
+ 	p.lock.Lock()
+ 	grants := p.grants.Load()
+ 
+@@ -876,6 +881,13 @@
+ 		}
+ 	}
+ 
++	if canSubscribe && !grants.Video.GetTavernCanSubscribeAudio() {
++		for _, st := range p.SubscriptionManager.GetSubscribedTracks() {
++			if st.MediaTrack().Kind() == livekit.TrackType_AUDIO {
++				st.MediaTrack().RemoveSubscriber(p.ID(), false)
++			}
++		}
++	}
+ 	if canSubscribe {
+ 		// reconcile everything
+ 		p.SubscriptionManager.ReconcileAll()
+@@ -1367,7 +1379,7 @@
+ 		return
+ 	}
+ 
+-	if req.Type != livekit.TrackType_AUDIO && req.Type != livekit.TrackType_VIDEO {
++	if !validTrackSourceKind(req.Type, req.Source) {
+ 		p.pubLogger.Warnw("unsupported track type", nil, "trackID", req.Sid, "kind", req.Type)
+ 		p.sendRequestResponse(&livekit.RequestResponse{
+ 			Reason: livekit.RequestResponse_UNSUPPORTED_TYPE,
+@@ -2393,7 +2405,7 @@
+ 		return
+ 	}
+ 
+-	if !p.CanPublishSource(publishedTrack.Source()) {
++	if !validTrackRTPKind(publishedTrack.Kind(), publishedTrack.Source(), track.Kind(), track.Codec().MimeType) || !p.CanPublishSource(publishedTrack.Source()) {
+ 		p.pubLogger.Warnw("no permission to publish mediaTrack", nil,
+ 			"source", publishedTrack.Source(),
+ 		)
+@@ -2935,6 +2947,9 @@
+ }
+ 
+ func (p *ParticipantImpl) addPendingTrack(req *livekit.AddTrackRequest) *livekit.TrackInfo {
++	if !validTrackSourceKind(req.Type, req.Source) || !p.CanPublishSource(req.Source) {
++		return nil
++	}
+ 	p.pendingTracksLock.Lock()
+ 	if req.Sid != "" {
+ 		track := p.GetPublishedTrack(livekit.TrackID(req.Sid))
+@@ -2950,6 +2965,11 @@
+ 			return nil
+ 		}
+ 
++		// A new codec must describe the same source and media kind as its track.
++		if track.Kind() != req.Type || track.Source() != req.Source {
++			p.pendingTracksLock.Unlock()
++			return nil
++		}
+ 		track.(*MediaTrack).UpdateCodecInfo(req.SimulcastCodecs)
+ 		ti := track.ToProto()
+ 		p.pendingTracksLock.Unlock()
+@@ -3338,6 +3358,11 @@
+ 			return nil, false, false, ridsFromSdp
+ 		}
+ 
++		if !validTrackRTPKind(ti.Type, ti.Source, track.Kind(), track.Codec().MimeType) || !p.CanPublishSource(ti.Source) {
++			p.pendingTracksLock.Unlock()
++			return nil, false, false, ridsFromSdp
++		}
++
+ 		// check if the migrated track has correct codec
+ 		if isMigrated && len(ti.Codecs) > 0 {
+ 			parameters := rtpReceiver.GetParameters()
+@@ -3376,6 +3401,12 @@
+ 
+ 		mt = p.addMediaTrack(signalCid, ti)
+ 		newTrack = true
++	}
++
++	// Simulcast and already constructed migrated tracks bypass the pending path.
++	if !validTrackRTPKind(mt.Kind(), mt.Source(), track.Kind(), track.Codec().MimeType) || !p.CanPublishSource(mt.Source()) {
++		p.pendingTracksLock.Unlock()
++		return nil, false, false, ridsFromSdp
+ 	}
+ 
+ 	// a track might have been set up in migrate-in path and won't show up as a new track here,
+@@ -3445,6 +3476,9 @@
+ }
+ 
+ func (p *ParticipantImpl) addMigratedTrack(cid string, ti *livekit.TrackInfo) *MediaTrack {
++	if ti == nil || !validTrackSourceKind(ti.Type, ti.Source) || !p.CanPublishSource(ti.Source) {
++		return nil
++	}
+ 	p.pubLogger.Infow("add migrated track", "cid", cid, "trackID", ti.Sid, "track", logger.Proto(ti))
+ 	rtpReceiver := p.TransportManager.GetPublisherRTPReceiver(ti.Mid)
+ 	if rtpReceiver == nil {
+@@ -3668,8 +3702,10 @@
+ 		}
+ 	}
+ 
+-	// if still not found, we are done
+-	if pendingInfo == nil || (skipQueued && pendingInfo.queued) {
++	// Exact CID and secondary-codec matches must obey the negotiated RTP kind
++	// too; previously only the fallback search compared the declared kind.
++	if pendingInfo == nil || len(pendingInfo.trackInfos) == 0 || (skipQueued && pendingInfo.queued) ||
++		pendingInfo.trackInfos[0].Type != kind || !validTrackSourceKind(kind, pendingInfo.trackInfos[0].Source) {
+ 		return signalCid, nil, buffer.VideoLayersRid{}, false, time.Time{}
+ 	}
+ 
+@@ -4365,6 +4401,9 @@
+ 	trackLocal webrtc.TrackLocal,
+ 	params types.AddTrackParams,
+ ) (*webrtc.RTPSender, *webrtc.RTPTransceiver, error) {
++	if !canSubscribeToMedia(p, ToProtoTrackKind(trackLocal.Kind())) {
++		return nil, nil, ErrNoSubscribePermission
++	}
+ 	if p.params.UseSinglePeerConnection {
+ 		return p.TransportManager.AddTrackLocal(
+ 			trackLocal,
+@@ -4381,6 +4420,9 @@
+ 	trackLocal webrtc.TrackLocal,
+ 	params types.AddTrackParams,
+ ) (*webrtc.RTPSender, *webrtc.RTPTransceiver, error) {
++	if !canSubscribeToMedia(p, ToProtoTrackKind(trackLocal.Kind())) {
++		return nil, nil, ErrNoSubscribePermission
++	}
+ 	if p.params.UseSinglePeerConnection {
+ 		return p.TransportManager.AddTransceiverFromTrackLocal(
+ 			trackLocal,
+--- a/pkg/rtc/subscriptionmanager.go
++++ b/pkg/rtc/subscriptionmanager.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ /*
+  * Copyright 2023 LiveKit, Inc
+  *
+@@ -68,6 +69,7 @@
+ // SubscriptionManager manages a participant's subscriptions
+ type SubscriptionManager struct {
+ 	params              SubscriptionManagerParams
++	permissionLock      sync.RWMutex
+ 	lock                sync.RWMutex
+ 	subscriptions       map[livekit.TrackID]*mediaTrackSubscription
+ 	pendingUnsubscribes atomic.Int32
+@@ -787,6 +789,9 @@
+ 	if track == nil {
+ 		return ErrTrackNotFound
+ 	}
++	if !canSubscribeToMedia(m.params.Participant, track.Kind()) {
++		return ErrNoSubscribePermission
++	}
+ 	sub.trySetKind(track.Kind())
+ 	if !m.hasCapacityForSubscription(track.Kind()) {
+ 		return ErrSubscriptionLimitExceeded
+@@ -841,6 +846,12 @@
+ }
+ 
+ func (m *SubscriptionManager) addSubscriber(sub *mediaTrackSubscription, track types.MediaTrack, isSync bool) error {
++	// Shared by ordinary and synchronous (one-shot/migration) subscriptions.
++	m.permissionLock.RLock()
++	defer m.permissionLock.RUnlock()
++	if !canSubscribeToMedia(m.params.Participant, track.Kind()) {
++		return ErrNoSubscribePermission
++	}
+ 	trackID := track.ID()
+ 	subTrack, err := track.AddSubscriber(m.params.Participant)
+ 	if err != nil && !errors.Is(err, errAlreadySubscribed) {
+@@ -859,6 +870,16 @@
+ 		)
+ 	}
+ 	if err == nil && subTrack != nil { // subTrack could be nil if already subscribed
++		// Reused transceivers may invoke AddOnBind immediately. Publish the
++		// admission and counters before registering any lifecycle callbacks.
++		sub.setSubscribedTrack(subTrack)
++
++		switch track.Kind() {
++		case livekit.TrackType_VIDEO:
++			m.subscribedVideoCount.Inc()
++		case livekit.TrackType_AUDIO:
++			m.subscribedAudioCount.Inc()
++		}
+ 		subTrack.OnSubscribeStreamStarted(sub.recordStreamStartLatency)
+ 		subTrack.OnClose(func(isExpectedToResume bool) {
+ 			m.handleSubscribedTrackClose(sub, isExpectedToResume)
+@@ -873,6 +894,17 @@
+ 			if err != nil {
+ 				sub.logger.Infow("failed to bind track", "err", err)
+ 				sub.maybeRecordError(m.params.Participant.GetTelemetryListener(), err, true)
++				if errors.Is(err, ErrNoSubscribePermission) {
++					// A server restriction is temporary. Close this admission,
++					// preserving the user's existing desired/unsubscribed state.
++					// Close the captured downtrack, never an ID lookup which could
++					// resolve to a replacement after an asynchronous callback.
++					if dt := subTrack.DownTrack(); dt != nil {
++						go dt.CloseWithFlush(true, true)
++					}
++					m.queueReconcile(trackID)
++					return
++				}
+ 				m.UnsubscribeFromTrack(trackID)
+ 				m.params.OnSubscriptionError(trackID, false, err)
+ 				return
+@@ -880,14 +912,6 @@
+ 			sub.setBound()
+ 			sub.maybeRecordSuccess(m.params.Participant.GetTelemetryListener())
+ 		})
+-		sub.setSubscribedTrack(subTrack)
+-
+-		switch track.Kind() {
+-		case livekit.TrackType_VIDEO:
+-			m.subscribedVideoCount.Inc()
+-		case livekit.TrackType_AUDIO:
+-			m.subscribedAudioCount.Inc()
+-		}
+ 
+ 		if !isSync && subTrack.NeedsNegotiation() {
+ 			m.params.Participant.Negotiate(false)
+--- a/pkg/rtc/subscriptionmanager_test.go
++++ b/pkg/rtc/subscriptionmanager_test.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ /*
+  * Copyright 2023 LiveKit, Inc
+  *
+@@ -27,6 +28,7 @@
+ 	"github.com/livekit/livekit-server/pkg/rtc/types"
+ 	"github.com/livekit/livekit-server/pkg/rtc/types/typesfakes"
+ 	"github.com/livekit/livekit-server/pkg/utils"
++	"github.com/livekit/protocol/auth"
+ 	"github.com/livekit/protocol/livekit"
+ 	"github.com/livekit/protocol/logger"
+ )
+@@ -535,6 +537,7 @@
+ func newTestSubscriptionManagerWithParams(params testSubscriptionParams) *SubscriptionManager {
+ 	p := &typesfakes.FakeLocalParticipant{}
+ 	p.CanSubscribeReturns(true)
++	p.ClaimGrantsReturns(&auth.ClaimGrants{Video: &auth.VideoGrant{}})
+ 	p.IDReturns("subID")
+ 	p.IdentityReturns("sub")
+ 	p.KindReturns(livekit.ParticipantInfo_STANDARD)
+--- /dev/null
++++ b/pkg/rtc/tavern_media_permissions.go
+@@ -0,0 +1,54 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package rtc
++
++import (
++	"strings"
++
++	"github.com/livekit/livekit-server/pkg/rtc/types"
++	"github.com/livekit/protocol/livekit"
++	"github.com/pion/webrtc/v4"
++)
++
++// A source is signaled by the publisher. It is not evidence of the RTP kind.
++// UNKNOWN remains compatible with older clients, but does not pass a source
++// allowlist that contains only CAMERA and SCREEN_SHARE.
++func validTrackSourceKind(kind livekit.TrackType, source livekit.TrackSource) bool {
++	switch kind {
++	case livekit.TrackType_AUDIO:
++		return source == livekit.TrackSource_UNKNOWN || source == livekit.TrackSource_MICROPHONE || source == livekit.TrackSource_SCREEN_SHARE_AUDIO
++	case livekit.TrackType_VIDEO:
++		return source == livekit.TrackSource_UNKNOWN || source == livekit.TrackSource_CAMERA || source == livekit.TrackSource_SCREEN_SHARE
++	default:
++		return false
++	}
++}
++
++func validTrackRTPKind(kind livekit.TrackType, source livekit.TrackSource, negotiated webrtc.RTPCodecType, mimeType string) bool {
++	if !validTrackSourceKind(kind, source) {
++		return false
++	}
++	switch negotiated {
++	case webrtc.RTPCodecTypeAudio:
++		return kind == livekit.TrackType_AUDIO && strings.HasPrefix(strings.ToLower(mimeType), "audio/")
++	case webrtc.RTPCodecTypeVideo:
++		return kind == livekit.TrackType_VIDEO && strings.HasPrefix(strings.ToLower(mimeType), "video/")
++	default:
++		return false
++	}
++}
++
++func canSubscribeToMedia(participant types.LocalParticipant, kind livekit.TrackType) bool {
++	if !participant.CanSubscribe() {
++		return false
++	}
++	if kind == livekit.TrackType_VIDEO {
++		return true
++	}
++	if kind != livekit.TrackType_AUDIO {
++		return false
++	}
++	grants := participant.ClaimGrants()
++	return grants != nil && grants.Video != nil && grants.Video.GetTavernCanSubscribeAudio()
++}
+--- /dev/null
++++ b/pkg/rtc/tavern_media_permissions_test.go
+@@ -0,0 +1,262 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package rtc
++
++import (
++	"fmt"
++	"github.com/livekit/livekit-server/pkg/rtc/types"
++	"github.com/livekit/livekit-server/pkg/rtc/types/typesfakes"
++	"github.com/livekit/livekit-server/pkg/sfu"
++	"github.com/livekit/livekit-server/pkg/sfu/sfufakes"
++	"github.com/livekit/protocol/auth"
++	"github.com/livekit/protocol/livekit"
++	"github.com/livekit/protocol/logger"
++	"github.com/pion/webrtc/v4"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/protobuf/proto"
++	"testing"
++	"time"
++)
++
++func TestTavernTrackSourceKind(t *testing.T) {
++	for _, kind := range []livekit.TrackType{livekit.TrackType_AUDIO, livekit.TrackType_VIDEO, livekit.TrackType_DATA, livekit.TrackType(999)} {
++		for _, source := range []livekit.TrackSource{livekit.TrackSource_UNKNOWN, livekit.TrackSource_MICROPHONE, livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE, livekit.TrackSource_SCREEN_SHARE_AUDIO, livekit.TrackSource(999)} {
++			allowed := (kind == livekit.TrackType_AUDIO && (source == livekit.TrackSource_UNKNOWN || source == livekit.TrackSource_MICROPHONE || source == livekit.TrackSource_SCREEN_SHARE_AUDIO)) ||
++				(kind == livekit.TrackType_VIDEO && (source == livekit.TrackSource_UNKNOWN || source == livekit.TrackSource_CAMERA || source == livekit.TrackSource_SCREEN_SHARE))
++			require.Equal(t, allowed, validTrackSourceKind(kind, source), "kind=%s source=%s", kind, source)
++		}
++	}
++	grant := &auth.VideoGrant{}
++	grant.SetCanPublishSources([]livekit.TrackSource{livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE})
++	require.False(t, grant.GetCanPublishSource(livekit.TrackSource_UNKNOWN))
++}
++
++func TestTavernAddTrackCannotPublishAudioAsCamera(t *testing.T) {
++	p := newParticipantForTest("tavern-publish")
++	permission := p.ClaimGrants().Video.ToPermission()
++	permission.CanPublishSources = []livekit.TrackSource{livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE}
++	p.SetPermission(permission)
++	p.AddTrack(&livekit.AddTrackRequest{Cid: "forged-camera", Type: livekit.TrackType_AUDIO, Source: livekit.TrackSource_CAMERA})
++	p.AddTrack(&livekit.AddTrackRequest{Cid: "forged-screen", Type: livekit.TrackType_AUDIO, Source: livekit.TrackSource_SCREEN_SHARE})
++	require.Empty(t, p.pendingTracks)
++	p.AddTrack(&livekit.AddTrackRequest{Cid: "valid-camera", Type: livekit.TrackType_VIDEO, Source: livekit.TrackSource_CAMERA})
++	require.Contains(t, p.pendingTracks, "valid-camera")
++	_, mismatched, _, _, _ := p.getPendingTrack("valid-camera", livekit.TrackType_AUDIO, false)
++	require.Nil(t, mismatched, "an exact CID must not bypass negotiated kind")
++	_, valid, _, _, _ := p.getPendingTrack("valid-camera", livekit.TrackType_VIDEO, false)
++	require.NotNil(t, valid)
++	require.Nil(t, p.addMigratedTrack("forged-migration", &livekit.TrackInfo{Type: livekit.TrackType_AUDIO, Source: livekit.TrackSource_CAMERA}))
++}
++
++type tavernRemote struct {
++	sfu.TrackRemote
++	kind  webrtc.RTPCodecType
++	codec string
++}
++
++func (r tavernRemote) Kind() webrtc.RTPCodecType { return r.kind }
++func (r tavernRemote) Codec() webrtc.RTPCodecParameters {
++	return webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: r.codec}}
++}
++
++func TestTavernActualReceiverRejectsNegotiatedKindMismatch(t *testing.T) {
++	for _, c := range []struct {
++		declared livekit.TrackType
++		source   livekit.TrackSource
++		actual   webrtc.RTPCodecType
++		codec    string
++	}{
++		{livekit.TrackType_VIDEO, livekit.TrackSource_CAMERA, webrtc.RTPCodecTypeAudio, "audio/opus"},
++		{livekit.TrackType_AUDIO, livekit.TrackSource_CAMERA, webrtc.RTPCodecTypeAudio, "audio/opus"},
++		{livekit.TrackType_AUDIO, livekit.TrackSource_MICROPHONE, webrtc.RTPCodecTypeVideo, "video/VP8"},
++		{livekit.TrackType_VIDEO, livekit.TrackSource_CAMERA, webrtc.RTPCodecTypeVideo, "audio/opus"},
++		{livekit.TrackType_AUDIO, livekit.TrackSource_MICROPHONE, webrtc.RTPCodecTypeAudio, "video/VP8"},
++	} {
++		track := NewMediaTrack(MediaTrackParams{Logger: logger.GetLogger()}, &livekit.TrackInfo{Type: c.declared, Source: c.source})
++		// A nil buffer factory/receiver is deliberate: invalid transport must
++		// be rejected before any buffer or forwarding attachment is attempted.
++		codecAdded, receiverAdded := track.AddReceiver(nil, tavernRemote{kind: c.actual, codec: c.codec}, "test-mid")
++		require.False(t, codecAdded)
++		require.False(t, receiverAdded)
++	}
++	require.True(t, validTrackRTPKind(livekit.TrackType_AUDIO, livekit.TrackSource_MICROPHONE, webrtc.RTPCodecTypeAudio, "audio/opus"))
++	require.True(t, validTrackRTPKind(livekit.TrackType_VIDEO, livekit.TrackSource_CAMERA, webrtc.RTPCodecTypeVideo, "video/VP8"))
++}
++
++func TestTavernAudioSubscribeDeniesOrdinarySynchronousAndTransport(t *testing.T) {
++	sm := newTestSubscriptionManager()
++	defer sm.Close(false)
++	participant := sm.params.Participant.(*typesfakes.FakeLocalParticipant)
++	participant.ClaimGrantsReturns(&auth.ClaimGrants{Video: &auth.VideoGrant{TavernCanSubscribeAudio: proto.Bool(false)}})
++	track := &typesfakes.FakeMediaTrack{}
++	track.IDReturns("audio")
++	track.KindReturns(livekit.TrackType_AUDIO)
++	sm.params.TrackResolver = func(types.LocalParticipant, livekit.TrackID) types.MediaResolverResult {
++		return types.MediaResolverResult{Track: track, HasPermission: true}
++	}
++	sub := newMediaTrackSubscription("listener", "audio", logger.GetLogger())
++	require.ErrorIs(t, sm.subscribe(sub), ErrNoSubscribePermission)
++	require.ErrorIs(t, sm.subscribeSynchronous("audio"), ErrNoSubscribePermission)
++	require.Equal(t, 0, track.AddSubscriberCallCount())
++	require.True(t, canSubscribeToMedia(participant, livekit.TrackType_VIDEO))
++	participant.CanSubscribeReturns(false)
++	require.False(t, canSubscribeToMedia(participant, livekit.TrackType_VIDEO))
++
++	p := newParticipantForTest("tavern-subscribe")
++	permission := p.ClaimGrants().Video.ToPermission()
++	permission.TavernCanSubscribeAudio = proto.Bool(false)
++	p.SetPermission(permission)
++	audio, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "audio", "stream")
++	require.NoError(t, err)
++	_, _, err = p.AddTrackLocal(audio, types.AddTrackParams{})
++	require.ErrorIs(t, err, ErrNoSubscribePermission)
++	_, _, err = p.AddTransceiverFromTrackLocal(audio, types.AddTrackParams{})
++	require.ErrorIs(t, err, ErrNoSubscribePermission)
++}
++
++func TestTavernAudioRevocationRemovesExistingAudioAndPreservesVideo(t *testing.T) {
++	p := newParticipantForTest("tavern-listener")
++	sm := p.SubscriptionManager
++	audio, video := &typesfakes.FakeMediaTrack{}, &typesfakes.FakeMediaTrack{}
++	audio.KindReturns(livekit.TrackType_AUDIO)
++	video.KindReturns(livekit.TrackType_VIDEO)
++	for id, track := range map[livekit.TrackID]*typesfakes.FakeMediaTrack{"audio": audio, "video": video} {
++		st := &typesfakes.FakeSubscribedTrack{}
++		st.MediaTrackReturns(track)
++		sub := newMediaTrackSubscription(p.ID(), id, logger.GetLogger())
++		sub.setSubscribedTrack(st)
++		sm.subscriptions[id] = sub
++	}
++	permission := p.ClaimGrants().Video.ToPermission()
++	permission.TavernCanSubscribeAudio = proto.Bool(false)
++	require.True(t, p.SetPermission(permission))
++	require.Equal(t, 1, audio.RemoveSubscriberCallCount())
++	require.Equal(t, 0, video.RemoveSubscriberCallCount())
++	omitted := p.ClaimGrants().Video.ToPermission()
++	omitted.TavernCanSubscribeAudio = nil
++	omitted.CanPublishData = false
++	require.True(t, p.SetPermission(omitted))
++	require.False(t, p.ClaimGrants().Video.GetTavernCanSubscribeAudio())
++	require.False(t, canSubscribeToMedia(p, livekit.TrackType_AUDIO))
++	require.True(t, canSubscribeToMedia(p, livekit.TrackType_VIDEO))
++}
++
++func TestTavernAudioPermissionUpdateWaitsForInFlightSubscription(t *testing.T) {
++	p := newParticipantForTest("tavern-race")
++	sm := p.SubscriptionManager
++	sm.params.OnTrackSubscribed = func(types.SubscribedTrack) {}
++	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
++	track := &typesfakes.FakeMediaTrack{}
++	track.KindReturns(livekit.TrackType_AUDIO)
++	track.IDReturns("audio")
++	st := &typesfakes.FakeSubscribedTrack{}
++	st.MediaTrackReturns(track)
++	track.AddSubscriberCalls(func(types.LocalParticipant) (types.SubscribedTrack, error) { close(entered); <-release; return st, nil })
++	sub := newMediaTrackSubscription(p.ID(), "audio", logger.GetLogger())
++	sm.subscriptions["audio"] = sub
++	go func() { finished <- sm.addSubscriber(sub, track, false) }()
++	<-entered
++	permission := p.ClaimGrants().Video.ToPermission()
++	permission.TavernCanSubscribeAudio = proto.Bool(false)
++	revoked := make(chan bool, 1)
++	go func() { revoked <- p.SetPermission(permission) }()
++	select {
++	case <-revoked:
++		t.Fatal("permission update missed an in-flight admission")
++	case <-time.After(20 * time.Millisecond):
++	}
++	close(release)
++	require.NoError(t, <-finished)
++	require.True(t, <-revoked)
++	require.Equal(t, 1, track.RemoveSubscriberCallCount())
++	require.ErrorIs(t, sm.addSubscriber(sub, track, false), ErrNoSubscribePermission)
++	require.Equal(t, 1, track.AddSubscriberCallCount())
++}
++
++func TestTavernDelayedPermissionBindKeepsSubscriptionIntent(t *testing.T) {
++	for _, userUnsubscribed := range []bool{false, true} {
++		t.Run(fmt.Sprintf("userUnsubscribed=%v", userUnsubscribed), func(t *testing.T) {
++			sm := newTestSubscriptionManager()
++			defer sm.Close(false)
++			participant := sm.params.Participant.(*typesfakes.FakeLocalParticipant)
++			track := &typesfakes.FakeMediaTrack{}
++			track.KindReturns(livekit.TrackType_AUDIO)
++			track.IDReturns("audio")
++			sub := newMediaTrackSubscription("listener", "audio", logger.GetLogger())
++			sub.setDesired(true)
++			sm.subscriptions["audio"] = sub
++			track.AddSubscriberCalls(func(types.LocalParticipant) (types.SubscribedTrack, error) {
++				st := &typesfakes.FakeSubscribedTrack{}
++				st.MediaTrackReturns(track)
++				receiver := &sfufakes.FakeTrackReceiver{}
++				receiver.TrackIDReturns("audio")
++				listener := &sfufakes.FakeDownTrackListener{}
++				listener.OnDownTrackCloseCalls(func(resume bool) { setTestSubscribedTrackClosed(t, st, resume) })
++				dt, err := sfu.NewDownTrack(sfu.DownTrackParams{
++					Codecs:   []webrtc.RTPCodecParameters{{RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}}},
++					Receiver: receiver, Listener: listener, Logger: logger.GetLogger(), SubID: "listener",
++				})
++				require.NoError(t, err)
++				st.DownTrackReturns(dt)
++				t.Cleanup(func() { dt.CloseWithFlush(true, true) })
++				return st, nil
++			})
++			track.RemoveSubscriberCalls(func(livekit.ParticipantID, bool) {
++				if st := sub.getSubscribedTrack(); st != nil {
++					setTestSubscribedTrackClosed(t, st, false)
++				}
++			})
++			sm.params.TrackResolver = func(types.LocalParticipant, livekit.TrackID) types.MediaResolverResult {
++				return types.MediaResolverResult{Track: track, HasPermission: true}
++			}
++			require.NoError(t, sm.addSubscriber(sub, track, false))
++			first := sub.getSubscribedTrack().(*typesfakes.FakeSubscribedTrack)
++			participant.ClaimGrantsReturns(&auth.ClaimGrants{Video: &auth.VideoGrant{TavernCanSubscribeAudio: proto.Bool(false)}})
++			if userUnsubscribed {
++				sub.setDesired(false)
++			}
++			first.AddOnBindArgsForCall(0)(ErrNoSubscribePermission)
++			require.Eventually(t, func() bool { return sub.getSubscribedTrack() == nil }, time.Second, 10*time.Millisecond)
++			require.Equal(t, !userUnsubscribed, sub.isDesired(), "server permission denial must not replace the user's desired state")
++			participant.ClaimGrantsReturns(&auth.ClaimGrants{Video: &auth.VideoGrant{}})
++			if userUnsubscribed {
++				time.Sleep(80 * time.Millisecond)
++				require.Equal(t, 1, track.AddSubscriberCallCount())
++			} else {
++				sm.ReconcileAll()
++				require.Eventually(t, func() bool { return track.AddSubscriberCallCount() >= 2 }, time.Second, 10*time.Millisecond)
++				current := sub.getSubscribedTrack()
++				require.NotSame(t, first, current)
++				first.AddOnBindArgsForCall(0)(ErrNoSubscribePermission)
++				time.Sleep(40 * time.Millisecond)
++				require.Equal(t, 0, track.RemoveSubscriberCallCount(), "a late permission callback must never resolve a successor by participant ID")
++				require.Same(t, current, sub.getSubscribedTrack(), "an old bind callback must not close the replacement subscription")
++			}
++		})
++	}
++}
++
++func TestTavernImmediateReusedTrackBindingKeepsBoundState(t *testing.T) {
++	sm := newTestSubscriptionManager()
++	defer sm.Close(false)
++	track := &typesfakes.FakeMediaTrack{}
++	track.IDReturns("reused-audio")
++	track.KindReturns(livekit.TrackType_AUDIO)
++	st := &typesfakes.FakeSubscribedTrack{}
++	st.MediaTrackReturns(track)
++	st.SubscriberReturns(sm.params.Participant)
++	track.AddSubscriberReturns(st, nil)
++	sub := newMediaTrackSubscription("listener", track.ID(), logger.GetLogger())
++	// Force the already-bound AddOnBind callback to finish before registration
++	// returns, reproducing the fastest possible reused-transceiver scheduling.
++	st.AddOnBindCalls(func(callback func(error)) {
++		require.Same(t, st, sub.getSubscribedTrack())
++		require.EqualValues(t, 1, sm.subscribedAudioCount.Load())
++		callback(nil)
++	})
++	require.NoError(t, sm.addSubscriber(sub, track, false))
++	require.True(t, sub.isBound(), "installing a reused admission must not reset its completed bind callback")
++	setTestSubscribedTrackClosed(t, st, false)
++	require.EqualValues(t, 0, sm.subscribedAudioCount.Load())
++}
+--- a/pkg/service/server.go
++++ b/pkg/service/server.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -150,6 +151,7 @@
+ 	rtcService.SetupRoutes(mux)
+ 	whipService.SetupRoutes(mux)
+ 	mux.Handle("/agent", agentService)
++	mux.HandleFunc("/tavern/sfu/audio-permissions", tavernAudioPermissions)
+ 	mux.HandleFunc("/", s.defaultHandler)
+ 
+ 	s.httpServer = &http.Server{
+--- /dev/null
++++ b/pkg/service/tavern_audio_permissions.go
+@@ -0,0 +1,23 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package service
++
++import (
++	"io"
++	"net/http"
++)
++
++// This is capability evidence from the configured, trusted internal SFU. It is
++// not cryptographic attestation and must not be exposed through public routing.
++func tavernAudioPermissions(w http.ResponseWriter, r *http.Request) {
++	w.Header().Set("Cache-Control", "no-store")
++	if r.Method != http.MethodGet {
++		w.Header().Set("Allow", http.MethodGet)
++		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
++		return
++	}
++	w.Header().Set("Content-Type", "application/json")
++	w.Header().Set("X-Content-Type-Options", "nosniff")
++	_, _ = io.WriteString(w, `{"version":1}`)
++}
+--- a/test/client/client.go
++++ b/test/client/client.go
+@@ -1,3 +1,4 @@
++// Tavern audio-permission modifications; see docker/sfu/provenance.json and NOTICE.
+ // Copyright 2023 LiveKit, Inc.
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -23,6 +24,7 @@
+ 	"io"
+ 	"maps"
+ 	"math/rand/v2"
++	"net"
+ 	"net/http"
+ 	"net/url"
+ 	"path/filepath"
+@@ -99,10 +101,12 @@
+ 	OnDataReceived          func(data []byte, sid string)
+ 	OnDataUnlabeledReceived func(data []byte)
+ 	refreshToken            string
++	tavernLoopbackOnly      bool
+ 
+ 	// map of livekit.ParticipantID and last packet
+-	lastPackets   map[livekit.ParticipantID]*rtp.Packet
+-	bytesReceived map[livekit.ParticipantID]uint64
++	lastPackets       map[livekit.ParticipantID]*rtp.Packet
++	bytesReceived     map[livekit.ParticipantID]uint64
++	tavernBytesByKind map[livekit.ParticipantID]map[webrtc.RTPCodecType]uint64
+ 
+ 	subscriptionResponse atomic.Pointer[livekit.SubscriptionResponse]
+ 
+@@ -129,6 +133,7 @@
+ )
+ 
+ type Options struct {
++	TavernLoopbackOnly        bool
+ 	AutoSubscribe             bool
+ 	AutoSubscribeDataTrack    bool
+ 	Publish                   string
+@@ -276,6 +281,7 @@
+ 		c.signalRequestInterceptor = opts.SignalRequestInterceptor
+ 		c.signalResponseInterceptor = opts.SignalResponseInterceptor
+ 		c.forceRelay = opts.ForceRelay
++		c.tavernLoopbackOnly = opts.TavernLoopbackOnly
+ 	}
+ 
+ 	return c, nil
+@@ -283,6 +289,9 @@
+ 
+ func (c *RTCClient) createTransport(rtcconf webrtc.Configuration) error {
+ 	var err error
++	if c.tavernLoopbackOnly {
++		rtcconf.ICEServers = nil
++	}
+ 
+ 	conf := rtc.WebRTCConfig{
+ 		WebRTCConfig: rtcconfig.WebRTCConfig{
+@@ -290,6 +299,10 @@
+ 		},
+ 	}
+ 	conf.SettingEngine.SetLite(false)
++	if c.tavernLoopbackOnly {
++		conf.SettingEngine.SetIncludeLoopbackCandidate(true)
++		conf.SettingEngine.SetIPFilter(func(ip net.IP) bool { return ip.IsLoopback() })
++	}
+ 	conf.SettingEngine.SetAnsweringDTLSRole(webrtc.DTLSRoleClient)
+ 	ff := buffer.NewFactoryOfBufferFactory(500, 200)
+ 	conf.SetBufferFactory(ff.CreateBufferFactory())
+@@ -1319,6 +1332,13 @@
+ 		c.lock.Lock()
+ 		c.lastPackets[publisherID] = pkt
+ 		c.bytesReceived[publisherID] += uint64(pkt.MarshalSize())
++		if c.tavernBytesByKind == nil {
++			c.tavernBytesByKind = make(map[livekit.ParticipantID]map[webrtc.RTPCodecType]uint64)
++		}
++		if c.tavernBytesByKind[publisherID] == nil {
++			c.tavernBytesByKind[publisherID] = make(map[webrtc.RTPCodecType]uint64)
++		}
++		c.tavernBytesByKind[publisherID][track.Kind()] += uint64(pkt.MarshalSize())
+ 		c.lock.Unlock()
+ 		numBytes += pkt.MarshalSize()
+ 		if time.Since(lastUpdate) > 30*time.Second {
+--- /dev/null
++++ b/test/client/tavern_probe.go
+@@ -0,0 +1,22 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package client
++
++import (
++	"github.com/livekit/protocol/livekit"
++	"github.com/pion/webrtc/v4"
++)
++
++// Test instrumentation: count real received RTP bytes from a chosen publisher.
++func (c *RTCClient) TavernBytesFrom(publisher livekit.ParticipantID) uint64 {
++	c.lock.Lock()
++	defer c.lock.Unlock()
++	return c.bytesReceived[publisher]
++}
++
++func (c *RTCClient) TavernBytesFromKind(publisher livekit.ParticipantID, kind webrtc.RTPCodecType) uint64 {
++	c.lock.Lock()
++	defer c.lock.Unlock()
++	return c.tavernBytesByKind[publisher][kind]
++}
+--- /dev/null
++++ b/test/tavern_audio_test.go
+@@ -0,0 +1,264 @@
++// Copyright 2026 Tavern contributors.
++// SPDX-License-Identifier: Apache-2.0
++
++package test
++
++import (
++	"context"
++	"fmt"
++	"github.com/pion/webrtc/v4"
++	"io"
++	"net/http"
++	"testing"
++	"time"
++
++	"github.com/livekit/livekit-server/pkg/config"
++	"github.com/livekit/livekit-server/pkg/rtc"
++	testclient "github.com/livekit/livekit-server/test/client"
++	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
++	"github.com/livekit/protocol/auth"
++	"github.com/livekit/protocol/livekit"
++	"github.com/stretchr/testify/require"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestTavernRealAudioCannotMasqueradeAsVideo(t *testing.T) {
++	server, finish := setupSingleNodeTestWithConfig(t.Name(), func(c *config.Config) {
++		c.Port = tavernPort
++		c.BindAddresses = []string{"127.0.0.1"}
++		c.RTC.NodeIP = rtcconfig.NodeIP{V4: "127.0.0.1"}
++		c.RTC.EnableLoopbackCandidate = true
++		c.RTC.IPs.Includes = []string{"127.0.0.0/8"}
++		c.RTC.UseExternalIP = false
++		c.RTC.STUNServers = []string{}
++		c.RTC.TCPPort = 0
++		c.RTC.UDPPort = rtcconfig.PortRange{Start: tavernPort + 2}
++	})
++	defer finish()
++	assertTavernAudioCapability(t)
++	grant := &auth.VideoGrant{RoomJoin: true, Room: testRoom}
++	grant.SetCanPublishSources([]livekit.TrackSource{livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE})
++	publisher := createRTCClientWithToken(joinTokenWithGrant("tavern-kind", grant), tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true, SignalRequestInterceptor: func(message *livekit.SignalRequest, next testclient.SignalRequestHandler) error {
++		if request := message.GetAddTrack(); request != nil {
++			request.Source = livekit.TrackSource_CAMERA
++			if request.Cid == "mismatched-rtp" {
++				request.Type = livekit.TrackType_VIDEO
++				request.SimulcastCodecs = []*livekit.SimulcastCodec{{Cid: request.Cid, Codec: "video/vp8"}}
++			}
++		}
++		return next(message)
++	}})
++	defer publisher.Stop()
++	listener := createRTCClient("tavern-kind-listener", tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true})
++	defer listener.Stop()
++	waitUntilConnected(t, publisher, listener)
++	// A declaration that is itself inconsistent is rejected over real signaling.
++	writer, err := publisher.AddStaticTrack("audio/opus", "mislabelled-source", "camera")
++	require.Error(t, err)
++	require.Nil(t, writer)
++	room := server.RoomManager().GetRoom(context.Background(), testRoom)
++	require.NotNil(t, room)
++	native := room.GetParticipant("tavern-kind").(*rtc.ParticipantImpl)
++	require.Empty(t, native.GetPublishedTracks())
++	// Now announce a consistent VIDEO/CAMERA but negotiate a real Opus RTP track.
++	forged, err := publisher.AddStaticTrack("audio/opus", "mismatched-rtp", "camera")
++	require.NoError(t, err)
++	defer forged.Stop()
++	require.Eventually(t, native.TransportManager.IsPublisherEstablished, 5*time.Second, 20*time.Millisecond)
++	time.Sleep(500 * time.Millisecond)
++	require.Empty(t, native.GetPublishedTracks())
++	require.Zero(t, listener.TavernBytesFrom(publisher.ID()))
++	// A genuine VP8 camera from the same constrained publisher still forwards.
++	camera, err := publisher.AddStaticTrack("video/vp8", "genuine-camera", "camera")
++	require.NoError(t, err)
++	defer camera.Stop()
++	require.Eventually(t, func() bool { return listener.TavernBytesFrom(publisher.ID()) > 0 }, 5*time.Second, 20*time.Millisecond)
++	require.Len(t, native.GetPublishedTracks(), 1)
++	require.Equal(t, livekit.TrackType_VIDEO, native.GetPublishedTracks()[0].Kind())
++}
++
++const tavernPort = 17980
++
++func TestTavernRealActivePublishAudioRevocation(t *testing.T) {
++	server, finish := setupSingleNodeTestWithConfig(t.Name(), func(c *config.Config) {
++		c.Port = tavernPort
++		c.BindAddresses = []string{"127.0.0.1"}
++		c.RTC.NodeIP = rtcconfig.NodeIP{V4: "127.0.0.1"}
++		c.RTC.EnableLoopbackCandidate = true
++		c.RTC.IPs.Includes = []string{"127.0.0.0/8"}
++		c.RTC.UseExternalIP = false
++		c.RTC.STUNServers = []string{}
++		c.RTC.TCPPort = 0
++		c.RTC.UDPPort = rtcconfig.PortRange{Start: tavernPort + 2}
++	})
++	defer finish()
++	publisher := createRTCClient("tavern-active-publisher", tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true, SignalRequestInterceptor: func(message *livekit.SignalRequest, next testclient.SignalRequestHandler) error {
++		if request := message.GetAddTrack(); request != nil {
++			request.Source = livekit.TrackSource_CAMERA
++			if request.Type == livekit.TrackType_AUDIO {
++				request.Source = livekit.TrackSource_MICROPHONE
++			}
++		}
++		return next(message)
++	}})
++	defer publisher.Stop()
++	listener := createRTCClient("tavern-active-listener", tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true})
++	defer listener.Stop()
++	waitUntilConnected(t, publisher, listener)
++	microphone, err := publisher.AddStaticTrack("audio/opus", "microphone", "microphone")
++	require.NoError(t, err)
++	defer microphone.Stop()
++	camera, err := publisher.AddStaticTrack("video/vp8", "camera", "camera")
++	require.NoError(t, err)
++	defer camera.Stop()
++	require.Eventually(t, func() bool {
++		return listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeAudio) > 0 && listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeVideo) > 0
++	}, 5*time.Second, 20*time.Millisecond)
++	room := server.RoomManager().GetRoom(context.Background(), testRoom)
++	native := room.GetParticipant("tavern-active-publisher")
++	permission := native.ClaimGrants().Video.ToPermission()
++	permission.CanPublishSources = []livekit.TrackSource{livekit.TrackSource_CAMERA, livekit.TrackSource_SCREEN_SHARE}
++	rpc := livekit.NewRoomServiceJSONClient(fmt.Sprintf("http://127.0.0.1:%d", tavernPort), &http.Client{Timeout: 5 * time.Second})
++	_, err = rpc.UpdateParticipant(contextWithToken(adminRoomToken(testRoom)), &livekit.UpdateParticipantRequest{Room: testRoom, Identity: "tavern-active-publisher", Permission: permission})
++	require.NoError(t, err)
++	require.Eventually(t, func() bool {
++		for _, track := range listener.SubscribedTracks()[publisher.ID()] {
++			if track.Kind() == webrtc.RTPCodecTypeAudio {
++				return false
++			}
++		}
++		return len(native.GetPublishedTracks()) == 1
++	}, 5*time.Second, 20*time.Millisecond)
++	audioBefore, videoBefore := listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeAudio), listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeVideo)
++	time.Sleep(400 * time.Millisecond)
++	require.Equal(t, audioBefore, listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeAudio))
++	require.Greater(t, listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeVideo), videoBefore)
++	rejected, err := publisher.AddStaticTrack("audio/opus", "new-microphone", "microphone")
++	require.Error(t, err)
++	require.Nil(t, rejected)
++	require.Len(t, native.GetPublishedTracks(), 1)
++	require.Equal(t, livekit.TrackType_VIDEO, native.GetPublishedTracks()[0].Kind())
++	require.Equal(t, audioBefore, listener.TavernBytesFromKind(publisher.ID(), webrtc.RTPCodecTypeAudio))
++}
++
++func TestTavernRealAudioRestriction(t *testing.T) {
++	server, finish := setupSingleNodeTestWithConfig(t.Name(), func(c *config.Config) {
++		c.Port = tavernPort
++		c.BindAddresses = []string{"127.0.0.1"}
++		c.RTC.NodeIP = rtcconfig.NodeIP{V4: "127.0.0.1"}
++		c.RTC.EnableLoopbackCandidate = true
++		c.RTC.IPs.Includes = []string{"127.0.0.0/8"}
++		c.RTC.UseExternalIP = false
++		c.RTC.STUNServers = []string{}
++		c.RTC.TCPPort = 0
++		c.RTC.UDPPort = rtcconfig.PortRange{Start: tavernPort + 2}
++	})
++	defer finish()
++	client := func(identity string, grant *auth.VideoGrant) *testclient.RTCClient {
++		if grant == nil {
++			grant = &auth.VideoGrant{RoomJoin: true, Room: testRoom}
++		}
++		c := createRTCClientWithToken(joinTokenWithGrant(identity, grant), tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true})
++		t.Cleanup(c.Stop)
++		return c
++	}
++	microphone, camera, listener := client("tavern-audio", nil), client("tavern-video", nil), client("tavern-listener", nil)
++	waitUntilConnected(t, microphone, camera, listener)
++	audio, err := microphone.AddStaticTrack("audio/opus", "audio", "microphone")
++	require.NoError(t, err)
++	defer audio.Stop()
++	video, err := camera.AddStaticTrack("video/vp8", "video", "camera")
++	require.NoError(t, err)
++	defer video.Stop()
++	require.Eventually(t, func() bool {
++		return listener.TavernBytesFrom(microphone.ID()) > 0 && listener.TavernBytesFrom(camera.ID()) > 0
++	}, 5*time.Second, 20*time.Millisecond)
++	room := server.RoomManager().GetRoom(context.Background(), testRoom)
++	require.NotNil(t, room)
++	participant := room.GetParticipant("tavern-listener")
++	require.NotNil(t, participant)
++	permission := participant.ClaimGrants().Video.ToPermission()
++	permission.TavernCanSubscribeAudio = proto.Bool(false)
++	rpc := livekit.NewRoomServiceJSONClient(fmt.Sprintf("http://127.0.0.1:%d", tavernPort), &http.Client{Timeout: 5 * time.Second})
++	admin := contextWithToken(adminRoomToken(testRoom))
++	updated, err := rpc.UpdateParticipant(admin, &livekit.UpdateParticipantRequest{Room: testRoom, Identity: "tavern-listener", Permission: permission})
++	require.NoError(t, err)
++	require.NotNil(t, updated.Permission.TavernCanSubscribeAudio)
++	require.False(t, *updated.Permission.TavernCanSubscribeAudio)
++	require.Eventually(t, func() bool { return len(listener.SubscribedTracks()[microphone.ID()]) == 0 }, 5*time.Second, 20*time.Millisecond)
++	beforeAudio, beforeVideo := listener.TavernBytesFrom(microphone.ID()), listener.TavernBytesFrom(camera.ID())
++	time.Sleep(400 * time.Millisecond)
++	require.Equal(t, beforeAudio, listener.TavernBytesFrom(microphone.ID()), "revoked audio must stop actual RTP delivery")
++	require.Greater(t, listener.TavernBytesFrom(camera.ID()), beforeVideo, "video must continue delivering RTP")
++
++	// A malicious subscriber explicitly requests the audio track again.
++	audioTracks := room.GetParticipant("tavern-audio").GetPublishedTracks()
++	require.Len(t, audioTracks, 1)
++	require.NoError(t, listener.SendRequest(&livekit.SignalRequest{Message: &livekit.SignalRequest_Subscription{Subscription: &livekit.UpdateSubscription{TrackSids: []string{string(audioTracks[0].ID())}, Subscribe: true}}}))
++	secondAudio, err := microphone.AddStaticTrack("audio/opus", "second-audio", "screen-audio")
++	require.NoError(t, err)
++	defer secondAudio.Stop()
++	time.Sleep(400 * time.Millisecond)
++	require.Equal(t, beforeAudio, listener.TavernBytesFrom(microphone.ID()), "explicit resubscription and a newly published audio track remain denied")
++
++	// Older admin clients omit the extension on unrelated updates.
++	omitted := proto.Clone(updated.Permission).(*livekit.ParticipantPermission)
++	omitted.TavernCanSubscribeAudio = nil
++	omitted.CanPublishData = false
++	updated, err = rpc.UpdateParticipant(admin, &livekit.UpdateParticipantRequest{Room: testRoom, Identity: "tavern-listener", Permission: omitted})
++	require.NoError(t, err)
++	require.NotNil(t, updated.Permission.TavernCanSubscribeAudio)
++	require.False(t, *updated.Permission.TavernCanSubscribeAudio)
++	require.Eventually(t, func() bool {
++		verifier, e := auth.ParseAPIToken(listener.RefreshToken())
++		if e != nil {
++			return false
++		}
++		_, grant, e := verifier.Verify(testApiSecret)
++		return e == nil && grant.Video.TavernCanSubscribeAudio != nil && !*grant.Video.TavernCanSubscribeAudio
++	}, 5*time.Second, 20*time.Millisecond)
++	refreshed := listener.RefreshToken()
++	listener.Stop()
++	require.Eventually(t, func() bool { return room.GetParticipant("tavern-listener") == nil }, 5*time.Second, 20*time.Millisecond)
++	resumed := createRTCClientWithToken(refreshed, tavernPort, testRTCServicePathv0, &testclient.Options{AutoSubscribe: true, TavernLoopbackOnly: true})
++	defer resumed.Stop()
++	waitUntilConnected(t, resumed)
++	require.Eventually(t, func() bool { return resumed.TavernBytesFrom(camera.ID()) > 0 }, 5*time.Second, 20*time.Millisecond)
++	time.Sleep(400 * time.Millisecond)
++	require.Zero(t, resumed.TavernBytesFrom(microphone.ID()), "refreshed reconnect must keep the audio restriction")
++	restored := room.GetParticipant("tavern-listener").ClaimGrants().Video.ToPermission()
++	restored.TavernCanSubscribeAudio = proto.Bool(true)
++	_, err = rpc.UpdateParticipant(admin, &livekit.UpdateParticipantRequest{Room: testRoom, Identity: "tavern-listener", Permission: restored})
++	require.NoError(t, err)
++	require.Eventually(t, func() bool { return resumed.TavernBytesFrom(microphone.ID()) > 0 }, 5*time.Second, 20*time.Millisecond)
++}
++
++// The configured internal SFU must positively identify the extension before a
++// gateway relies on it. Stock LiveKit's catch-all health response is not proof.
++func assertTavernAudioCapability(t *testing.T) {
++	t.Helper()
++	client := &http.Client{Timeout: 5 * time.Second}
++	endpoint := fmt.Sprintf("http://127.0.0.1:%d/tavern/sfu/audio-permissions", tavernPort)
++	response, err := client.Get(endpoint)
++	require.NoError(t, err)
++	body, err := io.ReadAll(io.LimitReader(response.Body, 128))
++	response.Body.Close()
++	require.NoError(t, err)
++	require.Equal(t, http.StatusOK, response.StatusCode)
++	require.Equal(t, "application/json", response.Header.Get("Content-Type"))
++	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
++	require.Equal(t, `{"version":1}`, string(body))
++	request, err := http.NewRequest(http.MethodPost, endpoint, nil)
++	require.NoError(t, err)
++	response, err = client.Do(request)
++	require.NoError(t, err)
++	response.Body.Close()
++	require.Equal(t, http.StatusMethodNotAllowed, response.StatusCode)
++	require.Equal(t, "GET", response.Header.Get("Allow"))
++	response, err = client.Get(endpoint + "/not-the-capability")
++	require.NoError(t, err)
++	body, err = io.ReadAll(io.LimitReader(response.Body, 128))
++	response.Body.Close()
++	require.NoError(t, err)
++	require.NotEqual(t, `{"version":1}`, string(body))
++}

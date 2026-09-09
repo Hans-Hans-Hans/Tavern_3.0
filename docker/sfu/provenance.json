@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "purpose": "Reviewed audio-permission prototype build; not enabled in Compose",
+  "sources": {
+    "protocol": {
+      "repository": "https://github.com/livekit/protocol",
+      "commit": "17c16cf496fd20697ff862daf9768f9830ebe6fd",
+      "archive": "https://codeload.github.com/livekit/protocol/tar.gz/17c16cf496fd20697ff862daf9768f9830ebe6fd",
+      "sha256": "1c31abc85e6e8de32d940fdd16c9d78cad42618e0281f5928e4201b7369590d6",
+      "license": "Apache-2.0"
+    },
+    "livekit": {
+      "repository": "https://github.com/livekit/livekit",
+      "commit": "3cfbd1242618a61178f7a05b126d6c0c4cac3731",
+      "archive": "https://codeload.github.com/livekit/livekit/tar.gz/3cfbd1242618a61178f7a05b126d6c0c4cac3731",
+      "sha256": "e737e746e8f2f8d9ca7f23cbebf4b6e50526b6088831f86f0ef2e1c5a6b2ffd5",
+      "license": "Apache-2.0"
+    }
+  },
+  "toolchain": {
+    "go": "1.26.6",
+    "cgo_enabled": "0",
+    "protoc": "35.1 (generated header 7.35.1)",
+    "protoc_gen_go": "1.36.12",
+    "gotoolchain": "local",
+    "verified_local_tools": {
+      "go_windows_amd64_archive_sha256": "5b6c5b556525810463b5c897b50dc7a82d6a3dc0bfaf55d990a7e9f31d6b2318",
+      "protoc_windows_x64_archive_sha256": "5d3ff218d7d91eea95f7569bcb5a98f3030f8996d44151279d9772edcff76082",
+      "protoc_gen_go_module_sum": "h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc="
+    }
+  },
+  "images": {
+    "builder": "golang:1.26.6-alpine3.24@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df",
+    "runtime": "alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+  },
+  "patches": {
+    "protocol-audio.patch": {
+      "sha256": "c33211f62a8f0ac38bf8822090138b694e53bc42f277e25d4c198c24e9629d79",
+      "files": [
+        "auth/grants.go",
+        "auth/tavern_audio_grant_test.go",
+        "livekit/livekit_models.pb.go",
+        "protobufs/livekit_models.proto"
+      ]
+    },
+    "livekit-audio.patch": {
+      "sha256": "ab106f8429b374d8ca214f3b065a0d70d1a6d55819d686f9eb2ca9e06d66f94a",
+      "files": [
+        "go.mod",
+        "pkg/rtc/mediatrack.go",
+        "pkg/rtc/mediatracksubscriptions.go",
+        "pkg/rtc/participant.go",
+        "pkg/rtc/subscriptionmanager.go",
+        "pkg/rtc/subscriptionmanager_test.go",
+        "pkg/rtc/tavern_media_permissions.go",
+        "pkg/rtc/tavern_media_permissions_test.go",
+        "pkg/service/server.go",
+        "pkg/service/tavern_audio_permissions.go",
+        "test/client/client.go",
+        "test/client/tavern_probe.go",
+        "test/tavern_audio_test.go"
+      ]
+    }
+  },
+  "verification": {
+    "date": "2026-09-09",
+    "host": "Windows amd64; Go 1.26.6; CGO disabled",
+    "clean_source_patch_application": "Build Go exact-hunk applier matches all 17 modified-file SHA-256 values; original 15-file patch also independently matched git apply",
+    "protocol_auth": "pass, including 3 new permission tests",
+    "rtc_focused": "8 passed",
+    "loopback_rpc_rtp": "3 passed (17.337s), including actual internal capability GET, exact JSON/headers, POST405 and wrong-path rejection; prior three RTP cases independently passed (17.330s)",
+    "patch_applier": "3 passed; symlink test skipped on Windows, included in Linux Docker target",
+    "linux_amd64_cross_build": "passed from clean source processed by the build Go applier",
+    "linux_amd64_binary_sha256": "fb4c66222963a8832b5a89f63e8fdd7c5366014e46f7f95198a93fee66914338",
+    "docker_execution": "pending; no local Docker daemon",
+    "deployment": "not enabled or published",
+    "rtc_full": "73 top-level tests passed; TestUpdateSubscriptionPermission/update_versions fails on its immediate timestamp-order assertion, reproduced separately in pristine upstream with original protocol dependency"
+  },
+  "capability": {
+    "method": "GET",
+    "path": "/tavern/sfu/audio-permissions",
+    "response": {
+      "version": 1
+    },
+    "content_type": "application/json",
+    "cache_control": "no-store",
+    "trust": "Evidence from configured internal SFU; not cryptographic attestation; no public gateway route"
+  }
+}
