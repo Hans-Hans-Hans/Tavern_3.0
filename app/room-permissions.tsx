@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { canEditNativePermissions, conversationMemberLevel, saveNativePermissions } from '@/lib/channel-administration';
 import { NotificationSettings } from './notification-settings';
+import { ConversationNotificationDefaults } from './server-defaults';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export function RoomPermissions({ roomId }: { roomId: string }) {
@@ -13,7 +14,7 @@ export function RoomPermissions({ roomId }: { roomId: string }) {
   if (!client || !room || !me) return null;
   const allowed = canEditNativePermissions(roomId), level = conversationMemberLevel(roomId, me) ?? -Infinity;
   const select = (label: string, value: string, set: (value: string) => void, original: number) => <label>{label}<select value={value} disabled={original > level} onChange={event => set(event.target.value)}>{[0, 50, 100].map(option => <option key={option} value={option} disabled={option > level && String(option) !== value}>{option === 0 ? 'Members' : option === 50 ? 'Moderators' : 'Administrators'} ({option})</option>)}{!['0', '50', '100'].includes(value) && <option value={value}>Custom ({value})</option>}</select>{original > level && <small>This permission is above your native authority.</small>}</label>;
-  return <section className='channel-admin'><NotificationSettings roomId={roomId}/>
+  return <section className='channel-admin'><NotificationSettings roomId={roomId}/><ConversationNotificationDefaults roomId={roomId}/>
     {allowed && <><h3>Channel permissions</h3><form className='dialog-form' onSubmit={event => { event.preventDefault(); setConfirming(true); setConfirmation(''); setMessage(''); }}><fieldset disabled={busy}>
       {select('Send messages and encrypted events', post, setPost, Math.max(power.events?.['m.room.message'] ?? power.events_default ?? 0, power.events?.['m.room.encrypted'] ?? power.events_default ?? 0))}{select('Invite people', invite, setInvite, power.invite ?? 0)}{select('Pin messages', pin, setPin, power.events?.['m.room.pinned_events'] ?? power.state_default ?? 50)}{select('Join conferences', conference, setConference, power.events?.['org.matrix.msc3401.call.member'] ?? power.state_default ?? 50)}
       <p className='login-help'>These native room permissions set the minimum authority for each action. Server and category roles also apply. On servers with role policies, only the server owner can change native powers.</p><button className='secondary-button'>Review permission changes…</button>

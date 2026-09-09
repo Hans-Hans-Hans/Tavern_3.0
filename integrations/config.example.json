@@ -2,6 +2,9 @@
   "homeserver": "http://synapse:8008",
   "hooks": {
     "builds": {
+      "name": "Build notifications",
+      "avatar_url": "",
+      "enabled": true,
       "room_id": "!REPLACE:chat.example.com",
       "allowed_users": ["@tavern-bot:chat.example.com", "@alice:chat.example.com"],
       "secret_file": "/config/builds.hmac"

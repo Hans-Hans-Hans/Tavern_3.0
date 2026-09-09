@@ -174,8 +174,10 @@ try {
   await expect(alice.locator('.pending-files')).toContainText(fileName);
   const encryptedFile = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click());
   await encryptedEvent(alice, roomId, encryptedFile, fileName);
+  console.log('PASS: Synapse stores the uploaded file as ciphertext and the attachment event is encrypted.');
   const fileCard = bob.locator('.file-card').filter({ hasText: fileName });
   await fileCard.click();
+  await expect(bob.locator('.media-viewport')).toContainText('A preview is not available for this file.', { timeout: 15000 });
   const [download] = await Promise.all([bob.waitForEvent('download'), bob.getByRole('dialog').getByRole('button', { name: 'Download', exact: true }).click()]);
   assert.equal(download.suggestedFilename(), fileName);
   const stream = await download.createReadStream(), chunks = [];

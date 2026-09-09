@@ -2,8 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 let client;
-const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {} });
+const community = loadTs('../lib/community.ts', { './matrix': { getMatrixClient: () => client }, './roles': {}, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': loadTs('../lib/matrix-media.ts', {}), './response-image': loadTs('../lib/response-image.ts', {}) });
 const { normalizeProfile, normalizeServerLayout, moveChannel, normalizeChannelAppearance, cleanMxc } = community;
+
+test('profile thumbnails bound streaming bytes and cancel instead of buffering oversized bodies', async t => {
+  client = { getUserId: () => '@me:local', getHomeserverUrl: () => 'https://chat.local/api/matrix', getAccessToken: () => 'cookie-session:A', mxcUrlToHttp: () => 'https://chat.local/_matrix/client/v1/media/thumbnail/local/avatar' };
+  let reads = 0, cancelled = false;
+  t.mock.method(globalThis, 'fetch', async () => new Response(new ReadableStream({ pull(controller) { reads++; controller.enqueue(new Uint8Array(1024 * 1024)); }, cancel() { cancelled = true; } }, { highWaterMark: 0 }), { headers: { 'Content-Type': 'image/png' } }));
+  await assert.rejects(community.profileImageBlob('mxc://local/avatar', 128), /too large/);
+  assert.equal(reads, 6); assert.equal(cancelled, true); client = null;
+});
 test('profile links reject scripts, credentials, and non-web schemes', () => {
   const profile = normalizeProfile({ links: [{ url: 'javascript:alert(1)' }, { url: 'https://user:secret@example.com' }, { url: 'data:text/html,no' }, { url: 'https://example.com', label: 'Safe' }] });
   assert.deepEqual(profile.links, [{ url: 'https://example.com/', label: 'Safe' }]);

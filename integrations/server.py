@@ -18,7 +18,7 @@ from Crypto.Cipher import AES
 from nio import AsyncClient, AsyncClientConfig, ErrorResponse, RoomSendResponse, SyncResponse
 from nio.store import SqliteStore
 from protocol import authenticate, transaction
-from configuration import cancel_unconfigured, load_configuration, persist_destinations
+from configuration import cancel_unconfigured, load_configuration, message_content, persist_destinations
 
 DATA=Path('/data'); CONFIG=Path('/config/bot.json')
 
@@ -110,7 +110,7 @@ class Bridge:
             try:self.reload_configuration()
             except (OSError,ValueError,RuntimeError):raise web.HTTPServiceUnavailable(text='Integration configuration is unavailable')
         hook=request.match_info['hook']
-        if hook not in self.hooks:raise web.HTTPNotFound()
+        if hook not in self.hooks or not self.hooks[hook].get('enabled',True):raise web.HTTPNotFound()
         try:text=authenticate(hook,request.headers.get('X-Tavern-Timestamp',''),delivery,request.headers.get('X-Tavern-Signature',''),raw,self.secrets[hook])
         except (ValueError,TypeError):raise web.HTTPUnauthorized(text='Invalid signed request')
         previous=self.db.execute('SELECT status,event_id FROM deliveries WHERE hook=? AND delivery=?',(hook,delivery)).fetchone()
@@ -126,28 +126,35 @@ class Bridge:
         while True:
             row=self.db.execute("SELECT hook,delivery,payload,nonce,tag,attempts FROM deliveries WHERE status='pending' AND next_attempt<=? ORDER BY next_attempt LIMIT 1",(int(time.time()),)).fetchone()
             if not row:await asyncio.sleep(1);continue
-            hook,delivery,payload,nonce,tag,attempts=row
-            try:
-                if self.sync_task.done():raise RuntimeError('Matrix synchronization stopped')
-                async with self.matrix_lock:
-                    self.reload_configuration()
-                    if hook not in self.hooks:
-                        with self.db:self.db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND delivery=?",(hook,delivery))
-                        continue
-                    room,expected=await self.recipients(hook)
-                    # Per-message rotation keeps departed recipients out even when membership was refreshed outside /sync.
-                    self.client.invalidate_outbound_session(room)
-                    shared=await self.client.share_group_session(room,ignore_unverified_devices=False)
-                    if isinstance(shared,ErrorResponse) or not expected.issubset(shared.users_shared_with):raise RuntimeError('Some approved devices did not receive encryption keys')
-                    cipher=AES.new(self.queue_key,AES.MODE_GCM,nonce=nonce);cipher.update((hook+'\n'+delivery).encode());text=cipher.decrypt_and_verify(payload,tag).decode()
-                    result=await self.client.room_send(room,'m.room.message',{'msgtype':'m.notice','body':text},tx_id=transaction(hook,delivery),ignore_unverified_devices=False)
-                    if not isinstance(result,RoomSendResponse):raise RuntimeError('Homeserver did not accept the encrypted message')
-                with self.db:self.db.execute("UPDATE deliveries SET status='sent',payload=NULL,nonce=NULL,tag=NULL,event_id=? WHERE hook=? AND delivery=?",(result.event_id,hook,delivery))
-                self.last_error=''
-            except Exception as error:
-                # Log failure category, never payload, token, device keys or homeserver error bodies.
-                self.last_error=type(error).__name__;logging.warning('Delivery blocked (%s); inspect configured membership and fingerprint pins',self.last_error)
-                with self.db:self.db.execute('UPDATE deliveries SET attempts=attempts+1,next_attempt=? WHERE hook=? AND delivery=?',(int(time.time())+min(300,2**min(attempts+1,8)),hook,delivery))
+            await self.deliver_one(row)
+    async def deliver_one(self,row):
+        hook,delivery,payload,nonce,tag,attempts=row
+        try:
+            if self.sync_task.done():raise RuntimeError('Matrix synchronization stopped')
+            async with self.matrix_lock:
+                self.reload_configuration()
+                if hook not in self.hooks or not self.hooks[hook].get('enabled',True):
+                    with self.db:self.db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND delivery=? AND status='pending'",(hook,delivery))
+                    return
+                # A selected row may have been cancelled while this worker waited for the
+                # lock. Re-enabling a hook must never resurrect an old delivery.
+                pending=self.db.execute('SELECT status FROM deliveries WHERE hook=? AND delivery=?',(hook,delivery)).fetchone()
+                if not pending or pending[0]!='pending':return
+                room,expected=await self.recipients(hook)
+                # Per-message rotation keeps departed recipients out even when membership was refreshed outside /sync.
+                self.client.invalidate_outbound_session(room)
+                shared=await self.client.share_group_session(room,ignore_unverified_devices=False)
+                if isinstance(shared,ErrorResponse) or not expected.issubset(shared.users_shared_with):raise RuntimeError('Some approved devices did not receive encryption keys')
+                cipher=AES.new(self.queue_key,AES.MODE_GCM,nonce=nonce);cipher.update((hook+'\n'+delivery).encode());text=cipher.decrypt_and_verify(payload,tag).decode()
+                content=message_content(hook,self.hooks[hook],text)
+                result=await self.client.room_send(room,'m.room.message',content,tx_id=transaction(hook,delivery),ignore_unverified_devices=False)
+                if not isinstance(result,RoomSendResponse):raise RuntimeError('Homeserver did not accept the encrypted message')
+            with self.db:self.db.execute("UPDATE deliveries SET status='sent',payload=NULL,nonce=NULL,tag=NULL,event_id=? WHERE hook=? AND delivery=?",(result.event_id,hook,delivery))
+            self.last_error=''
+        except Exception as error:
+            # Log failure category, never payload, token, device keys or homeserver error bodies.
+            self.last_error=type(error).__name__;logging.warning('Delivery blocked (%s); inspect configured membership and fingerprint pins',self.last_error)
+            with self.db:self.db.execute("UPDATE deliveries SET attempts=attempts+1,next_attempt=? WHERE hook=? AND delivery=? AND status='pending'",(int(time.time())+min(300,2**min(attempts+1,8)),hook,delivery))
     async def health(self,request):
         healthy=self.ready and not self.sync_task.done() and not self.worker.done() and time.monotonic()-self.last_sync<60
         return web.json_response({'ready':healthy,'configuration':self.configuration},status=200 if healthy else 503)

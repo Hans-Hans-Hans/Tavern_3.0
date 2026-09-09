@@ -48,6 +48,18 @@ function permitted(scope: Scope, actor: string, roomId: string, permission: 'man
 export function canEditConversationDetails(roomId: string) {
   try { const { room, me, scopes } = context(roomId), level = nativeLevel(room, me); return level >= threshold(room, 'm.room.name') && level >= threshold(room, 'm.room.topic') && scopes.every(scope => permitted(scope, me, roomId, scope.room.roomId === roomId ? 'manage_server' : 'manage_channels')); } catch { return false; }
 }
+export function canEditConversationState(roomId: string, eventType: string) {
+  try {
+    const { room, me, scopes } = context(roomId), powers = content(room, 'm.room.power_levels'), minimum = powers.events?.[eventType] ?? powers.state_default ?? 50;
+    return Number.isSafeInteger(minimum) && nativeLevel(room, me) >= minimum && scopes.every(scope => permitted(scope, me, roomId, scope.room.roomId === roomId ? 'manage_server' : 'manage_channels'));
+  } catch { return false; }
+}
+export async function checkedConversationState(roomId: string, eventType: string) {
+  if (!canEditConversationState(roomId, eventType)) throw new Error('You cannot edit these conversation settings.');
+  const checked = await checkedContext(roomId);
+  if (!canEditConversationState(roomId, eventType)) throw new Error('Your permission to edit these settings changed.');
+  return checked.client;
+}
 export function canEditNativePermissions(roomId: string) {
   try { const { room, me, scopes } = context(roomId); return nativeLevel(room, me) >= threshold(room, 'm.room.power_levels') && scopes.every(scope => !scope.policy || scope.policy.owner === me); } catch { return false; }
 }

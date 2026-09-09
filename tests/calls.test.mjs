@@ -39,6 +39,15 @@ test('calls refuse an instance with call setup disabled and release media owners
   assert.equal(calls.callSnapshot().call, null); assert.equal(ownership.mediaOwner(), null);
 });
 
+test('ignored callers are rejected before occupying the direct call panel or media session', () => {
+  const { calls, client, call, ownership } = setup();
+  call.getOpponentMember = () => ({ userId: '@blocked:local' }); client.getIgnoredUsers = () => ['@blocked:local'];
+  let rejected = false; call.reject = () => { rejected = true; };
+  client.emit('incoming', call);
+  assert.equal(rejected, true); assert.equal(calls.callSnapshot().call, null); assert.equal(ownership.mediaOwner(), null);
+  assert.equal(calls.callSnapshot().client, client); calls.resetCalls(); assert.equal(calls.callSnapshot().client, null);
+});
+
 test('push to talk starts with disabled audio tracks before placing the call', async () => {
   const { calls, call, track } = setup();
   await calls.setCallMediaSettings({ pushToTalk: true }); await calls.startCall('!dm:local', false);

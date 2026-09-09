@@ -13,6 +13,12 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Administrative email, user, room, report, audit, quota, integration, maintenance, announcement, backup, and update workflows.
 - Validated instance artwork and security policy editors, invitation email/default roles, private warning inboxes, temporary bans, bulk message moderation, server audit and measured service logs/performance.
 - Optimistic reaction member popovers, configurable message entry, encrypted image thumbnails and streaming historical message export.
+- Authoritative account creation dates, staff-triggered verification of an already associated email, and room-moderator review of explicitly shared reports.
+- Forum pagination, history loading from empty results, separate discussion-status filters, reactions and retry-safe discussion creation; participant profile/message navigation in calls.
+- Server/channel notification defaults, creation-time welcome choices, designated welcome/rules links and privacy-aware friend-request/incoming-call alerts.
+- Webhook name/avatar/enabled/creator management and delegated channel access, with disabled queue cancellation and immutable destination bindings.
+- Server nickname moderation with protected native/custom hierarchy and preserved member-selected profiles.
+- Direct-call fullscreen/Picture-in-Picture, measured speaking and browser connection statistics with no extra capture.
 - Installable app shell, offline/reconnect behavior, guarded app updates, and automated browser/API/deployment coverage.
 
 ### Changed
@@ -26,6 +32,10 @@ This version is under development on `codex/tavern-completion`; a test checkpoin
 - Nginx startup configuration and gateway routing regressions.
 - Session/device races, sensitive-action reauthentication, role inheritance boundaries, and stale administration edits covered by regression tests.
 - Binary backup transfer and PostgreSQL readiness during isolated restore.
+- Authenticated Matrix media URLs retain the account gateway path for attachment, profile and conference downloads; webhook artwork uses the same device-bound gateway authentication.
+- Account changes dispose cached image URLs and reject stale uploads/downloads; streamed profile artwork stops at its byte limit.
+- Room deep links requested before Matrix sync, status banners overlapping the composer, and false app-update prompts during first installation.
+- Native channel/member administration now checks fresh Matrix and Tavern role authority, including native equal/higher members in manual role assignments.
 
 ### Security
 

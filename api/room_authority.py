@@ -59,9 +59,13 @@ def content(state, kind, key=''):
 
 
 def power(state, user):
+    creator = state.get(('m.room.create', ''))
+    creation = creator.content if creator else {}
+    version = creation.get('room_version', getattr(getattr(creator, 'room_version', None), 'identifier', '1'))
+    if version == '12' and (creator.sender == user or user in creation.get('additional_creators', ())):
+        return float('inf')
     values = content(state, 'm.room.power_levels')
-    if not values:
-        creator = state.get(('m.room.create', ''))
+    if ('m.room.power_levels', '') not in state:
         return 100 if creator and creator.sender == user else 0
     level = values.get('users', {}).get(user, values.get('users_default', 0))
     if type(level) is not int: raise APIError(403, 'Room power levels are invalid.')

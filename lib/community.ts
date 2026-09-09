@@ -1,6 +1,9 @@
 import type { Room } from 'matrix-js-sdk';
 import { getMatrixClient } from './matrix';
+import { authenticatedMatrixMediaUrl } from './matrix-media';
+import { readImageResponse } from './response-image';
 import { effectiveRolePermissions, mayEditCategoryLayout, readRolePolicy } from './roles';
+import { serverNicknameForRoom } from './server-nickname';
 
 export const communityEvents = { layout: 'io.tavern.server.layout', channel: 'io.tavern.channel', profile: 'io.tavern.profile', preferences: 'io.tavern.community.preferences' } as const;
 export type Category = { id: string; name: string; icon: string };
@@ -57,7 +60,7 @@ export function readOwnProfile(serverId?: string): Profile {
 export function readMemberProfile(roomId: string, userId: string, serverId?: string): Profile {
   const c = getMatrixClient(), r = c?.getRoom(roomId), own = state(r, 'm.room.member', userId), server = serverId ? state(c?.getRoom(serverId), 'm.room.member', userId) : {};
   const p = server[communityEvents.profile]?.serverOverride ? server : own;
-  return normalizeProfile({ ...p[communityEvents.profile], name: p.displayname || r?.getMember(userId)?.name || userId, avatar: p.avatar_url });
+  return normalizeProfile({ ...p[communityEvents.profile], name: serverNicknameForRoom(roomId, userId, serverId) ?? (p.displayname || r?.getMember(userId)?.name || userId), avatar: p.avatar_url });
 }
 async function publishOwnProfile(roomId: string, profile: Profile, override: string) {
   const { c, me } = context(roomId), old = await c.getStateEvent(roomId, 'm.room.member' as any, me);
@@ -89,8 +92,9 @@ export function setCollapsedCategory(serverId: string, categoryId: string, colla
 }
 export async function uploadProfileImage(blob: Blob) { const { c } = context(); if (!['image/webp', 'image/png', 'image/jpeg'].includes(blob.type) || blob.size > 2 * 1024 * 1024) throw new Error('Use an optimized PNG, JPEG, or WebP image under 2 MB.'); return (await c.uploadContent(blob, { includeFilename: false, type: blob.type })).content_uri; }
 export async function profileImageBlob(mxc: string, size = 128, signal?: AbortSignal, height = size): Promise<Blob> {
-  const { c } = context(); if (!cleanMxc(mxc)) throw new Error('Invalid profile image.'); const url = c.mxcUrlToHttp(mxc, size, height, 'crop', false, true, true); if (!url) throw new Error('Invalid profile image.');
-  const response = await fetch(url, { signal, headers: { Authorization: 'Bearer ' + c.getAccessToken() }, referrerPolicy: 'no-referrer' }); if (!response.ok) throw new Error('Could not load profile image.'); const blob = await response.blob(); if (!blob.type.startsWith('image/') || blob.size > 5 * 1024 * 1024) throw new Error('Profile image is invalid or too large.'); return blob;
+  const { c } = context(); if (!cleanMxc(mxc)) throw new Error('Invalid profile image.'); const url = authenticatedMatrixMediaUrl(c, mxc, { width: size, height });
+  const response = await fetch(url, { signal, cache: 'no-store', headers: { Authorization: 'Bearer ' + c.getAccessToken() }, referrerPolicy: 'no-referrer' });
+  return readImageResponse(response, 5 * 1024 * 1024, () => getMatrixClient() === c, signal, type => type.startsWith('image/'));
 }
 export async function cropProfileImage(file: File, zoom = 1, x = 0.5, y = 0.5, banner = false): Promise<Blob> {
   if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || !file.size || file.size > 10 * 1024 * 1024) throw new Error('Choose a PNG, JPEG, WebP, or GIF image under 10 MB.');

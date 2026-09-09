@@ -1,4 +1,5 @@
 import { claimMedia, releaseMedia } from './media-session';
+import { authenticatedMatrixMediaUrl } from './matrix-media';
 import { ClientEvent, EventType, MatrixEventEvent, RoomEvent, RoomStateEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
 import { ClientWidgetApi, Widget, WidgetDriver, WidgetEventCapability, EventDirection, MatrixCapabilities, OpenIDRequestState,
   type Capability, type IRoomEvent, type IOpenIDUpdate, type SimpleObservable } from 'matrix-widget-api';
@@ -53,7 +54,7 @@ export class TavernCallDriver extends WidgetDriver {
   getKnownRooms(){this.room();return[this.roomId];}
   askOpenID(observer:SimpleObservable<IOpenIDUpdate>){this.room();void this.client.getOpenIdToken().then(token=>{this.room();observer.update({state:OpenIDRequestState.Allowed,token});}).catch(()=>observer.update({state:OpenIDRequestState.Blocked}));}
   async getRtcTransports(){this.room();return{rtc_transports:await this.client._unstable_getRTCTransports()};}
-  async downloadFile(mxc:string){this.room();if(!mxc.startsWith('mxc://'))throw new Error('Invalid media URI.');const url=this.client.mxcUrlToHttp(mxc,undefined,undefined,undefined,false,true,true);if(!url||new URL(url).origin!==new URL(this.client.getHomeserverUrl()).origin)throw new Error('Invalid media origin.');const response=await fetch(url,{headers:{Authorization:`Bearer ${this.client.getAccessToken()}`},referrerPolicy:'no-referrer',signal:AbortSignal.timeout(15000)});if(!response.ok)throw new Error('Media download failed.');return{file:await response.blob()};}
+  async downloadFile(mxc:string){this.room();if(!mxc.startsWith('mxc://'))throw new Error('Invalid media URI.');const url=authenticatedMatrixMediaUrl(this.client,mxc);const response=await fetch(url,{headers:{Authorization:`Bearer ${this.client.getAccessToken()}`},credentials:'same-origin',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(15000)});if(!response.ok)throw new Error('Media download failed.');return{file:await response.blob()};}
   processError(error:unknown){const e=error as any;return typeof e?.asWidgetApiErrorData==='function'?{matrix_api_error:e.asWidgetApiErrorData()}:undefined;}
 }
 

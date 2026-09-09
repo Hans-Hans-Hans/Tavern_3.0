@@ -45,3 +45,17 @@ test('queued preference writes refresh account state and preserve sibling change
   ]);
   assert.deepEqual(Object.keys(stored.rooms), ['!a:local', '!b:local']);
 });
+
+test('community defaults apply beneath personal overrides and never clear inherited mutes', () => {
+  const defaults = { server: 'mentions', channel: 'nothing' }, prefs = normalize(null);
+  assert.equal(resolve(prefs, '!r:local', '!s:local', 1000, defaults).mode, 'nothing');
+  assert.equal(resolve(prefs, '!r:local', '!s:local', 1000, defaults).source, 'Channel default');
+  prefs.servers['!s:local'] = { mode: 'all', mutedUntil: 2000 };
+  let result = resolve(prefs, '!r:local', '!s:local', 1000, defaults);
+  assert.equal(result.mode, 'all'); assert.equal(result.muted, true);
+  prefs.rooms['!r:local'] = { mode: 'mentions', mutedUntil: 0 };
+  assert.equal(resolve(prefs, '!r:local', '!s:local', 1000, defaults).mode, 'mentions');
+  assert.equal(resolve(normalize({ global: { mode: 'nothing' } }), '!r:local', '!s:local', 1000, { server: 'all', channel: 'all' }).mode, 'nothing', 'Existing global choices remain personal overrides during migration');
+  const explicit = normalize({ global: { mode: 'all', useServerDefaults: false } });
+  assert.equal(resolve(explicit, '!r:local', '!s:local', 1000, defaults).mode, 'all');
+});

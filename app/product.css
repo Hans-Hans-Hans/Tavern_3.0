@@ -24,3 +24,5 @@
 .quick-profile{width:min(320px,calc(100vw - 24px));overflow-wrap:anywhere}.quick-profile h3{font-size:18px;margin:12px 0 4px}.quick-profile p{white-space:pre-wrap;font-size:13px}.quick-profile small{color:var(--muted)}.quick-profile .inline-actions{margin-top:14px}
 
 .forum-channel{min-height:0}.forum-channel>.product-actions{flex-wrap:wrap}.forum-open{display:block;width:100%;text-align:left;overflow-wrap:anywhere}.forum-post>p{overflow-wrap:anywhere}
+
+.webhook-message-label{display:flex;align-items:center;gap:8px;margin:6px 0;max-width:100%}.webhook-message-label>span{display:flex;flex-direction:column;min-width:0}.webhook-message-label small{font-size:11px;color:var(--muted-foreground)}.webhook-message-label strong{overflow-wrap:anywhere;font-size:13px}

@@ -20,7 +20,7 @@ const changed = () => listeners.forEach(fn => fn());
 let detach: (() => void) | null = null;
 const hasEnded = (call: MatrixCall) => call.state === CallState.Ended;
 export function subscribeCalls(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
-export function callSnapshot() { return { call: active, error, busy, media }; }
+export function callSnapshot() { return { call: active, error, busy, media, client }; }
 function attach(call: MatrixCall) {
   claimMedia('direct',true);detach?.(); active = call; error = '';
   const failure = (e: Error) => { error = e.message; changed(); };
@@ -33,6 +33,8 @@ function attach(call: MatrixCall) {
 }
 function incoming(call: MatrixCall) {
   if (call.groupCallId) return;
+  const sender = call.getOpponentMember()?.userId;
+  if (sender && client?.getIgnoredUsers().includes(sender)) { call.reject(); return; }
   const room = client?.getRoom(call.roomId);
   if (!room || room.getMyMembership() !== 'join' || !room.hasEncryptionStateEvent() || room.getJoinedMemberCount() !== 2 || busy || (active && active.state !== CallState.Ended) || mediaOwner()==='conference') { call.reject(); return; }
   attach(call);

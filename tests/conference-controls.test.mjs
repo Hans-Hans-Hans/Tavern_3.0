@@ -13,6 +13,7 @@ function setup() {
   }
   const enums = new Proxy({}, { get: (_target, key) => String(key) });
   const conference = loadTs('../lib/conference.ts', {
+    './matrix-media': loadTs('../lib/matrix-media.ts', {}),
     './media-session': { claimMedia() {}, releaseMedia() {} },
     'matrix-js-sdk': { ClientEvent: enums, EventType: enums, MatrixEventEvent: enums, RoomEvent: enums, RoomStateEvent: enums },
     'matrix-widget-api': { ClientWidgetApi: WidgetApi, Widget: class {}, WidgetDriver: class {}, WidgetEventCapability: {}, EventDirection: {}, MatrixCapabilities: {}, OpenIDRequestState: {} },

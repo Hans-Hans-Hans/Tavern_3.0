@@ -95,8 +95,8 @@ class LocalImages:
 
 
 class TrackedAPI:
-    def __init__(self, engine):
-        self.engine, self.created = engine, {}
+    def __init__(self, engine, pinned):
+        self.engine, self.pinned, self.created = engine, pinned, {}
 
     def create_container_from_config(self, config, name):
         labels = config.get('Labels', {})
@@ -110,6 +110,7 @@ class TrackedAPI:
             replacement_api = self.engine.containers.get(self.created['tavern-api'])
             replacement_api.reload()
             assert replacement_api.attrs['State']['Health']['Status'] == 'healthy'
+            assert replacement_api.attrs['Image'] == self.pinned[replacement_api.attrs['Config']['Image']]
         created = self.engine.api.create_container_from_config(config, name=name)
         self.created[service] = created['Id']
         return created
@@ -122,7 +123,7 @@ class FixtureEngine:
     def __init__(self, engine, pinned):
         self.real = engine
         self.images = LocalImages(engine.images, pinned)
-        self.api = TrackedAPI(engine)
+        self.api = TrackedAPI(engine, pinned)
 
     def __getattr__(self, name):
         return getattr(self.real, name)
@@ -144,6 +145,7 @@ async def exercise(engine, source, initial, directory, pinned, version, base_ver
         return {'tag_name': 'v' + version, 'draft': False, 'prerelease': True}
 
     try:
+        started_at = int(time.time())
         with patch.object(worker, 'read_json', side_effect=release), patch.dict(os.environ, {'TAVERN_VERSION': base_version}):
             identity = await operator.submit('update', {'version': version})
             await operator.task
@@ -153,6 +155,9 @@ async def exercise(engine, source, initial, directory, pinned, version, base_ver
         assert operator.get('installed_version') == base_version
         assert set(fixture_engine.images.pulled) == set(pinned)
         assert set(fixture_engine.api.created) == {'tavern-api', 'tavern-web'}
+        deaths = list(engine.events(since=started_at, until=int(time.time()) + 1,
+            filters={'container': fixture_engine.api.created['tavern-web'], 'event': 'die'}, decode=True))
+        assert any(event.get('Actor', {}).get('Attributes', {}).get('exitCode') == '78' for event in deaths), 'The deliberately broken nginx image must actually start and exit.'
         for service, replacement in fixture_engine.api.created.items():
             assert replacement != initial[service].id
             try:
@@ -168,6 +173,11 @@ async def exercise(engine, source, initial, directory, pinned, version, base_ver
             healthy(recovered[service])
         for service in ('postgres', 'synapse'):
             healthy(recovered[service])
+        # Static web health alone does not prove its restored network aliases
+        # reach the API and homeserver after both replacements are removed.
+        for path, required in (('/api/auth/config', 'bootstrapRequired'), ('/_matrix/client/versions', 'versions')):
+            response = json.loads(execute(recovered['tavern-web'], ['wget', '-q', '-O', '-', 'http://127.0.0.1:8080' + path]))
+            assert required in response
         assert execute(recovered['tavern-api'], ['python', '-c', 'import hashlib; from pathlib import Path; print(hashlib.sha256(Path("/data/tavern-ci-rollback-proof.bin").read_bytes()).hexdigest())']) == proof['file']
         assert execute(recovered['postgres'], ['psql', '-U', 'synapse', '-d', 'synapse', '-At', '-v', 'ON_ERROR_STOP=1', '-c', 'SELECT value FROM tavern_ci_rollback_proof']) == proof['value']
         assert execute(recovered['synapse'], ['python', '-c', 'import hashlib; from pathlib import Path; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())']) == proof['identity']

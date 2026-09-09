@@ -266,8 +266,11 @@ project name `tavern`, and Compose path `compose.yaml` for a Git checkout build.
 Enable image builds during deployment and enter `.env` values in the manager's
 private stack environment. Relative paths are resolved from the checkout.
 
-For a pasted stack without a checkout, use `compose.github.yaml`, which is a
-generated copy of the same complete stack with remote Git build contexts.
+For the V3 test checkpoint, select branch `V3`. For a pasted stack without a
+checkout, use `compose.github.yaml`, which is a
+generated copy of the same complete stack with remote Git build contexts. Set
+`TAVERN_GIT_REF` to the same branch or full commit SHA as the selected Compose
+revision; it defaults to `V3`. See [GitHub deployment](DEPLOY_GITHUB.md).
 `compose.github.full.yaml` is retained as an equivalent alias; profiles select
 optional services in either file. `compose.dockhand*.yaml` are image-only copies
 for installations that have already built or pulled every selected image.

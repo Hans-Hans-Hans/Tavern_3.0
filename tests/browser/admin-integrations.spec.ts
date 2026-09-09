@@ -50,3 +50,38 @@ test('unknown storage is never displayed as zero and reconciliation replaces it 
   await expect(page.locator('.admin-metric').filter({ hasText: 'Recorded instance usage' })).toContainText('Unavailable'); await expect(page.getByText(storage.scope)).toBeVisible(); await expect(page.getByText('Some uploads lost their final response.', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Reconcile storage usage' }).click(); await expect.poll(() => reconciled).toBe(true); await expect(page.locator('.admin-metric').filter({ hasText: 'Recorded instance usage' })).toContainText('2 MiB');
 });
+
+test('webhook editing uploads an optimized avatar and preserves its token, destination and creator', async ({ page }) => {
+  const current = { ...inventory, hooks: [{ ...inventory.hooks[0], name: 'Build alerts', avatarUrl: '', enabled: true, createdBy: '@owner:test', createdAt: 1700000000000 }] };
+  await fixture(page, current); let submitted: any, uploadedType = '';
+  await page.route('**/api/matrix/_matrix/media/v3/upload', route => { uploadedType = route.request().headers()['content-type']; expect(route.request().headers().authorization).toBe('Bearer cookie-session:FIXTURE'); return route.fulfill({ json: { content_uri: 'mxc://test/icon_123' } }); });
+  await page.route('**/api/matrix/_matrix/client/v1/media/thumbnail/**', route => route.fulfill({ status: 404 }));
+  await page.route('**/api/admin/integrations/hooks/builds', route => { submitted = route.request().postDataJSON(); expect(route.request().method()).toBe('PUT'); Object.assign(current.hooks[0], { name: submitted.name, enabled: submitted.enabled, avatarUrl: submitted.avatarUrl }); return route.fulfill({ json: { ok: true, revision: 'revision-two' } }); });
+  await page.goto('/admin-integrations-test'); await expect(page.getByText('@owner:test', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit webhook', exact: true }).click();
+  await expect(page.getByLabel('Encrypted destination room ID')).toHaveAttribute('readonly', '');
+  await page.getByLabel('Webhook name', { exact: true }).fill('Release alerts'); await page.getByLabel('Webhook enabled', { exact: true }).uncheck();
+  const png = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = canvas.height = 4; const context = canvas.getContext('2d')!; context.fillStyle = '#d9480f'; context.fillRect(0, 0, 4, 4); return canvas.toDataURL('image/png').split(',')[1]; });
+  await page.getByLabel('Choose webhook avatar', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+  await expect(page.getByRole('button', { name: 'Remove webhook avatar' })).toBeVisible();
+  await page.getByLabel('Type builds to confirm').fill('builds'); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect.poll(() => submitted?.avatarUrl).toBe('mxc://test/icon_123'); expect(uploadedType).toBe('image/webp');
+  expect(submitted).toEqual({ roomId: '!room:test', name: 'Release alerts', avatarUrl: 'mxc://test/icon_123', enabled: false, allowedUsers: ['@bot:test', '@alice:test'], confirmation: 'builds', revision: 'revision-one' });
+  await expect(page.getByRole('row').filter({ hasText: 'Release alerts' })).toContainText('Disabled'); await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByText('@owner:test', { exact: true })).toBeVisible();
+});
+
+test('channel delegates use scoped routes and never see global device approval controls', async ({ page }) => {
+  await fixture(page); let submitted: any;
+  await page.route('**/api/integrations?roomId=*', route => route.fulfill({ json: { ...inventory, pins: [] } }));
+  await page.route('**/api/integrations/hooks/builds/rotate', route => { submitted = route.request().postDataJSON(); return route.fulfill({ json: { revision: 'revision-two', secret: 'delegated-once-only' } }); });
+  await page.goto('/admin-integrations-test?room=' + encodeURIComponent('!room:test'));
+  await expect(page.getByRole('heading', { name: 'Channel webhooks', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve verified device' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Create webhook', exact: true }).click();
+  await expect(page.getByLabel('Encrypted destination room ID')).toHaveValue('!room:test'); await expect(page.getByLabel('Encrypted destination room ID')).toHaveAttribute('readonly', '');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Rotate secret', exact: true }).click(); await page.getByLabel('Type builds to confirm').fill('builds'); await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: 'Webhook signing secret', exact: true })).toHaveValue('delegated-once-only');
+  expect(submitted).toEqual({ confirmation: 'builds', revision: 'revision-one', roomId: '!room:test' });
+});

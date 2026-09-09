@@ -23,6 +23,52 @@ function fixture(managed = true) {
   return f;
 }
 
+function defaultsFixture() {
+  const f = fixture(), matrix = { getMatrixClient: () => f.active };
+  const preferences = loadTs('../lib/notification-preferences.ts', { './matrix': matrix });
+  f.defaults = loadTs('../lib/server-defaults.ts', { './matrix': matrix, './channel-administration': f.api, './notification-preferences': preferences, './roles': f.roles });
+  f.server.isSpaceRoom = () => true;
+  f.onboarding = loadTs('../lib/server-onboarding.ts', { './matrix': matrix, './channel-administration': f.api, './community': { serverChannelIds: () => ['!room:test'] } });
+  return f;
+}
+
+test('notification default writes use native custom event thresholds, category authority and current revisions', async () => {
+  const f = defaultsFixture();
+  assert.equal(f.defaults.canEditNotificationDefault('!server:test'), false);
+  assert.equal(f.defaults.canEditNotificationDefault('!room:test'), true);
+  f.room.currentState.getStateEvents('m.room.power_levels', '').content.events['io.tavern.notification.defaults'] = 100;
+  assert.equal(f.defaults.canEditNotificationDefault('!room:test'), false);
+  delete f.room.currentState.getStateEvents('m.room.power_levels', '').content.events['io.tavern.notification.defaults'];
+  const previous = { version: 1, mode: 'mentions' };
+  f.room.put('io.tavern.notification.defaults', previous);
+  const read = f.client.roomState;
+  f.client.roomState = async id => (await read(id)).map(event => ({ ...event, event_id: '$current' }));
+  await f.defaults.saveRoomNotificationDefault('!room:test', { version: 1, mode: 'nothing' }, previous);
+  assert.deepEqual(f.writes[0][2], { version: 1, mode: 'nothing', 'io.tavern.previous_event': '$current' });
+  await assert.rejects(f.defaults.saveRoomNotificationDefault('!room:test', previous, { version: 1, mode: 'all' }), /changed/);
+  assert.equal(f.writes.length, 1);
+});
+
+test('welcome and default saves abort when authorization is withdrawn during refresh', async () => {
+  const f = defaultsFixture(); f.actor = '@owner:test';
+  const before = f.onboarding.normalizeServerOnboarding(null), next = { ...before, enabled: true, rulesChannel: '!room:test' };
+  await assert.rejects(f.onboarding.saveServerOnboarding('!server:test', { ...next, rulesChannel: '!stranger:test' }, before), /still belong/);
+  f.beforeRead = () => { f.server.currentState.getStateEvents('m.room.power_levels', '').content.users['@owner:test'] = 0; f.beforeRead = null; };
+  await assert.rejects(f.onboarding.saveServerOnboarding('!server:test', next, before), /changed/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('server creation includes configured welcome and notification defaults and only available role policy', () => {
+  const f = defaultsFixture(), state = f.defaults.serverCreationState('@creator:test', { notificationMode: 'nothing', welcomeEnabled: true, welcome: ' Welcome! ' }, true);
+  assert.deepEqual(state.find(event => event.type === 'io.tavern.notification.defaults').content, { version: 1, mode: 'nothing' });
+  assert.equal(state.find(event => event.type === 'io.tavern.server.branding').content.welcome, 'Welcome!');
+  const roles = state.find(event => event.type === 'io.tavern.roles').content;
+  assert.equal(roles.owner, '@creator:test'); assert.deepEqual(roles.members, {});
+  assert.equal(roles.roles.length, 1); assert.equal(roles.roles[0].permissions.includes('manage_webhooks'), false);
+  assert.equal(state.find(event => event.type === 'io.tavern.server.onboarding').content.enabled, true);
+  assert.equal(f.defaults.serverCreationState('@creator:test', {}, false).some(event => event.type === 'io.tavern.roles'), false);
+});
+
 test('custom role manager can edit channel details but native power remains an owner action', () => {
   const f = fixture();
   assert.equal(f.api.canEditConversationDetails('!room:test'), true);

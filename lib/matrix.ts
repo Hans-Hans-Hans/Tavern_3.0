@@ -1,6 +1,10 @@
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
 import { readInstanceConfig } from './instance';
+import { authenticatedMatrixMediaUrl } from './matrix-media';
+import { disposeCachedImageOwner } from './image-cache';
+import { webhookMetadata } from './webhook-metadata';
+import { serverCreationState } from './server-defaults';
 import { HttpApiEvent } from 'matrix-js-sdk/lib/http-api/interface';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
 import { readServerEmoji, serverEmojiHtml } from './server-emoji';
@@ -76,7 +80,7 @@ async function performConnect(server:string,user:string,password:string,onStatus
  const s={baseUrl:base,accessToken:result.access_token,userId:result.user_id,deviceId:result.device_id};
  onStatus('Preparing encryption and syncing your rooms…');try{await attachSession(s);sessionStorage.setItem(sessionKey,JSON.stringify(s))}catch(e){const cleanup=sdk.createClient({baseUrl:base,accessToken:s.accessToken});await cleanup.logout().catch(()=>{});throw e}notify();
 }
-export function clearLocalMatrixSession(){const c=client;resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export function clearLocalMatrixSession(){const c=client;if(c)disposeCachedImageOwner(c);resetOutbox();resetAppearance();resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
 export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');if(isManagedAccount())await requestApi('/auth/logout',{});else if(client)await client.logout();clearLocalMatrixSession();if(isManagedAccount())accountSignedOut()}
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
@@ -95,7 +99,7 @@ function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Re
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
+ return {id,webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
@@ -155,7 +159,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  }
  if(action==='createServer'){
   const name=safeString(p.name).trim().slice(0,60);if(!name)throw new Error('A server name is required.');
-  const r=await c.createRoom({name,topic:safeString(p.description).slice(0,200),visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,creation_content:{type:'m.space','m.federate':false}});
+  const r=await c.createRoom({name,topic:safeString(p.description).slice(0,200),visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,creation_content:{type:'m.space','m.federate':false},initial_state:serverCreationState(me,p,(await readInstanceConfig()).serverRolePolicy===true)});
   await c.joinRoom(r.room_id);notify();return {id:r.room_id};
  }
  if(action==='roomSettings'){
@@ -217,7 +221,7 @@ export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:
 }
 export function discardMatrixFile(id:string){pendingFiles.delete(id);}
 export async function matrixFileBlob(a:any,signal?:AbortSignal,maxBytes=20*1024*1024){
- const c=requireClient();const url=c.mxcUrlToHttp(a.url,undefined,undefined,undefined,false,true,true);if(!url)throw new Error('Invalid Matrix file address.');
+ const c=requireClient();const url=authenticatedMatrixMediaUrl(c,a.url);
  const res=await fetch(url,{headers:{Authorization:'Bearer '+c.getAccessToken()},credentials:'same-origin',referrerPolicy:'no-referrer',signal});if(!res.ok)throw new Error('Could not download this attachment.');
  if(Number(res.headers.get('Content-Length'))>maxBytes)throw new Error('This attachment is too large to preview safely.');
  const reader=res.body?.getReader();if(!reader)throw new Error('This browser cannot stream attachments.');const chunks:Uint8Array[]= [];let size=0;

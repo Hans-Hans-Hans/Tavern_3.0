@@ -7,11 +7,15 @@ from collections.abc import Mapping
 import re
 from urllib.parse import urlsplit
 try:
+    from community_settings import check_settings, NOTIFICATIONS, ONBOARDING
+    from server_nickname import check_nickname, NICKNAME
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
+    from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING
+    from synapse_modules.server_nickname import check_nickname, NICKNAME
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
     from synapse_modules.invitation_policy import InvitationPolicy
@@ -19,8 +23,8 @@ except ImportError:
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
-PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
-CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server"}
+PERMISSIONS = frozenset({"send_messages", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
+CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server", "manage_nicknames"}
 
 
 def content(state, event_type, key=""):
@@ -272,10 +276,14 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        if not check_settings(event, state_events):
+            return False, None
         policies = await self._policies(event, state_events)
         if any(not valid_policy(policy) for _, policy, _ in policies):
             return False, None
         if not await self.temporary_bans.check(event, state_events, policies):
+            return False, None
+        if not check_nickname(event, state_events, policies, permissions, rank, native_member_power):
             return False, None
         # Native Matrix auth still applies to these teardown events. A restricted
         # member must be able to leave even if their former role was removed.
@@ -318,7 +326,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, LAYOUT, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, LAYOUT, NOTIFICATIONS, ONBOARDING, NICKNAME, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None
@@ -341,7 +349,7 @@ class TavernPolicy:
             elif kind == "m.room.power_levels":
                 return False, None  # Native authority remains an owner operation.
             else:
-                need = {"m.room.message": "send_messages", "m.room.encrypted": "send_messages", "m.reaction": "add_reactions", "m.room.pinned_events": "pin_messages", "org.matrix.msc3401.call.member": "join_calls", "m.call.invite": "join_calls", "m.call.answer": "join_calls", "io.tavern.server.layout": "manage_channels", TIMEOUT: "timeout", TEMPBAN: "ban"}.get(kind)
+                need = {"m.room.message": "send_messages", "m.room.encrypted": "send_messages", "m.reaction": "add_reactions", "m.room.pinned_events": "pin_messages", "org.matrix.msc3401.call.member": "join_calls", "m.call.invite": "join_calls", "m.call.answer": "join_calls", "io.tavern.server.layout": "manage_channels", TIMEOUT: "timeout", TEMPBAN: "ban", NICKNAME: "manage_nicknames"}.get(kind)
                 if need is None and key is not None and kind != THREAD:
                     need = "manage_server" if event.room_id == server_id else "manage_channels"
                 if need and need not in grants:
