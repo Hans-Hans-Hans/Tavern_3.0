@@ -206,6 +206,37 @@ def may_edit_policy(previous, proposed, actor):
     return permissions(proposed, actor) <= grants and rank(proposed, actor) <= actor_rank
 
 
+def native_member_power(state, user):
+    create = state.get(('m.room.create', ''))
+    creation = create.content if create else {}
+    version = creation.get('room_version', getattr(getattr(create, 'room_version', None), 'identifier', '1'))
+    if version == '12' and (create.sender == user or user in creation.get('additional_creators', ())):
+        return float('inf')
+    event = state.get(('m.room.power_levels', ''))
+    if not event:
+        return 100 if create and create.sender == user else 0
+    result = event.content.get('users', {}).get(user, event.content.get('users_default', 0))
+    return result if type(result) is int else None
+
+
+def may_assign_native_members(previous, proposed, state, actor):
+    """Member assignments cannot bypass the target's native room hierarchy.
+
+    Removing a deleted role from every member is definition cleanup, not a new
+    assignment. The existing role hierarchy still authorizes that deletion.
+    """
+    retained = {role['id'] for role in proposed['roles']}
+    before, after = previous.get('members', {}), proposed['members']
+    actor_power = native_member_power(state, actor)
+    for user in before.keys() | after.keys():
+        if set(before.get(user, ())) & retained == set(after.get(user, ())) or user == actor:
+            continue
+        target_power = native_member_power(state, user)
+        if actor_power is None or target_power is None or target_power >= actor_power:
+            return False
+    return True
+
+
 class TavernPolicy:
     def __init__(self, config, api):
         self.api = api
@@ -266,10 +297,10 @@ class TavernPolicy:
                     return False, None
             old = content(state_events, POLICY)
             if not old:
-                return bool(valid_policy(event.content) and event.sender == create.sender and event.content["owner"] == create.sender), None
+                return bool(valid_policy(event.content) and event.sender == create.sender and event.content["owner"] == create.sender and may_assign_native_members({}, event.content, state_events, event.sender)), None
             if not valid_policy(old):
                 return False, None
-            return may_edit_policy(old, event.content, event.sender), None
+            return may_edit_policy(old, event.content, event.sender) and may_assign_native_members(old, event.content, state_events, event.sender), None
         if event.type == LAYOUT and (getattr(event, 'state_key', None) != '' or not valid_layout(event.content)):
             return False, None
         for server_id, policy, server_state in policies:

@@ -7,3 +7,17 @@ test('member role checkboxes enforce grants and preserve concurrent assignments 
   await page.getByRole('button', { name: 'Save member roles' }).click(); await page.waitForFunction(() => (window as any).saves === 1); const policy = await page.evaluate(() => (window as any).policy);
   expect(policy.members['@target:local'].sort()).toEqual(['other', 'tag']); expect(policy.members['@unrelated:local']).toEqual(['tag']); expect(policy.categoryOverrides.cat.roles.everyone.send_messages).toBe(-1); expect(policy['io.tavern.previous_event']).toBe('$observed-policy'); await expect(page.getByRole('checkbox', { name: 'Other', exact: true })).toBeChecked();
 });
+
+test('manual assignments hide native peers and reject a native promotion during the fresh check', async ({ page }) => {
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};' }));
+  await page.route('**/member-roles-native-test*', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/member-roles.tsx')).mountFixture();</script></body></html>` }));
+  await page.goto('/member-roles-native-test?targetPower=50');
+  await expect(page.getByText('You can manage only members and roles below your authority.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save member roles' })).toHaveCount(0);
+  await page.goto('/member-roles-native-test');
+  await page.getByRole('checkbox', { name: 'Tag', exact: true }).check();
+  await page.evaluate(() => { (window as any).promoteTargetDuringCheck = true; });
+  await page.getByRole('button', { name: 'Save member roles' }).click();
+  await expect(page.getByRole('alert')).toContainText('equal or higher native room authority');
+  expect(await page.evaluate(() => (window as any).saves || 0)).toBe(0);
+});

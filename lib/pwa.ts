@@ -15,6 +15,12 @@ export function subscribePwa(listener: () => void) { listeners.add(listener); re
 export function setPwaReloadAllowed(allowed: boolean) { reloadAllowed = allowed; }
 export function pwaUpdateLocked() { return state.applying; }
 
+function refreshUpdateAvailability() {
+  // The first worker can briefly be waiting before becoming active. Only a
+  // distinct replacement of an existing active worker represents an update.
+  update({ updateAvailable: !!registration?.active && !!registration.waiting && registration.waiting !== registration.active });
+}
+
 async function safeToReload() {
   if (!reloadAllowed) return false;
   const [matrix, media] = await Promise.all([import('./matrix'), import('./media-session')]);
@@ -40,7 +46,7 @@ export function initializePwa() {
   window.addEventListener('appinstalled', () => { deferredInstall = null; update({ installed: true, installAvailable: false }); });
   // Vite's development modules are deliberately never cached.
   if (!import.meta.env.PROD || !('serviceWorker' in navigator) || !window.isSecureContext) return;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (state.applying) location.reload(); });
+  navigator.serviceWorker.addEventListener('controllerchange', () => { refreshUpdateAvailability(); if (state.applying) location.reload(); });
   navigator.serviceWorker.addEventListener('message', event => {
     const source = event.source as ServiceWorker | null;
     if (!source || source.scriptURL !== new URL('/sw.js', location.origin).href) return;
@@ -53,9 +59,15 @@ export function initializePwa() {
   });
   void navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).then(value => {
     registration = value;
-    const check = () => update({ updateAvailable: !!value.waiting });
-    check();
-    value.addEventListener('updatefound', () => { const worker = value.installing; worker?.addEventListener('statechange', () => { if (worker.state === 'installed') check(); }); });
+    const watched = new WeakSet<ServiceWorker>();
+    const watch = (worker: ServiceWorker | null) => {
+      if (!worker || watched.has(worker)) return;
+      watched.add(worker);
+      worker.addEventListener('statechange', refreshUpdateAvailability);
+    };
+    watch(value.installing); watch(value.waiting);
+    refreshUpdateAvailability();
+    value.addEventListener('updatefound', () => { watch(value.installing); refreshUpdateAvailability(); });
     let lastChecked = Date.now();
     document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastChecked > 60000) { lastChecked = Date.now(); void value.update().catch(() => {}); } });
   }).catch(() => update({ message: 'Offline app storage is unavailable. Tavern still works while connected.' }));
@@ -70,7 +82,7 @@ export async function installTavern() {
 }
 
 export async function applyAppUpdate() {
-  if (!registration?.waiting || state.applying) return;
+  if (!registration?.active || !registration.waiting || registration.waiting === registration.active || state.applying) return;
   try {
     if (!await safeToReload()) { update({ message: 'Sign out and finish calls in every Tavern window before updating.' }); return; }
     applying(); registration.waiting.postMessage({ type: 'TAVERN_UPDATE_REQUEST' });

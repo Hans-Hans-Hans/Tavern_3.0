@@ -1,5 +1,5 @@
 // Production-worker smoke test; API fixtures contain no real accounts or credentials.
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 const origin = 'http://127.0.0.1:4174';
@@ -25,6 +25,7 @@ try {
   await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.active, undefined, { timeout: 30000 });
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  await expect(page.getByText('An app update is ready', { exact: true })).toHaveCount(0);
   const stored = await page.evaluate(async () => {
     const result = [];
     for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) result.push(new URL(request.url).pathname);

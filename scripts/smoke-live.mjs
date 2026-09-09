@@ -43,6 +43,7 @@ async function ready(page) {
   await expect(page.getByRole('button', { name: 'Tavern home', exact: true })).toBeVisible();
   await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration('/'))?.active, undefined, { timeout: 15000 });
   await expect(page.getByText('Offline app storage is unavailable.', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('An app update is ready', { exact: true })).toHaveCount(0);
 }
 async function login(page, username, password) {
   await page.goto(origin);
