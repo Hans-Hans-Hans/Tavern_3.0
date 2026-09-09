@@ -22,11 +22,11 @@ test('temporary ban uses typed confirmation, shows partial removal and lifts wit
   await expect(page.getByRole('button', { name: 'Apply temporary ban', exact: true })).toBeDisabled();
   await page.getByLabel('Type @member:local to confirm the temporary ban change').fill('@member:local');
   await page.getByRole('button', { name: 'Apply temporary ban', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('member may still read');
+  await expect(page.getByRole('status').filter({ hasText: 'member may still read' })).toBeVisible();
   expect(actions[0]).toEqual({ action: 'apply', roomId: '!room:local', targetId: '@member:local', confirmation: '@member:local', previousEventId: null, reason: 'Repeated spam', durationSeconds: 3600 });
   await page.getByLabel('Type @member:local to confirm the temporary ban change').fill('@member:local');
   await page.getByRole('button', { name: 'Lift temporary ban', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('not automatically rejoined');
+  await expect(page.getByRole('status').filter({ hasText: 'not automatically rejoined' })).toBeVisible();
   expect(actions[1].previousEventId).toBe('$changed'); expect(actions[1].action).toBe('lift');
 });
 
