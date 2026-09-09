@@ -1,3 +1,5 @@
+> For Tavern 0.4 and the complete single Compose stack, use [Installation and operations](INSTALLATION.md). The manual recipes below describe earlier deployments; retain existing identity/data during migration.
+
 # Deploy Tavern with Dockhand, NPM, and Cloudflare
 
 For builds directly from GitHub `V3`, start with [the GitHub deployment guide](DEPLOY_GITHUB.md). This guide retains the local-image recipe and shared NPM/DNS configuration.

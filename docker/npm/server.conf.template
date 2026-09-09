@@ -6,6 +6,8 @@ server {
     client_max_body_size 12m;
     include /etc/nginx/tavern-headers.conf;
     set $matrix_upstream http://synapse:8008;
+    set $tavern_api http://tavern-api:8090;
+    set $managed_auth ${TAVERN_MANAGED_AUTH};
     proxy_http_version 1.1;
     proxy_read_timeout 90s;
     proxy_send_timeout 90s;
@@ -17,12 +19,6 @@ server {
     proxy_set_header X-Forwarded-For $remote_addr;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_hide_header Server;
-    set $integration_upstream http://integrations:8080;
-    location ~ "^/hooks/[a-zA-Z0-9_-]{1,64}$" {
-        client_max_body_size 16k;
-        limit_except POST { deny all; }
-        proxy_pass $integration_upstream$request_uri;
-    }
     set $integration_upstream http://integrations:8080;
     location ^~ /hooks/ {
         client_max_body_size 16k;
@@ -54,9 +50,20 @@ server {
         proxy_pass $rtc_sfu$uri$is_args$args;
     }
     location = /health { return 200 'ok'; }
+    location = /health/live { proxy_pass $tavern_api$request_uri; }
+    location = /health/ready { proxy_pass $tavern_api$request_uri; }
+    location ^~ /api/ {
+        # Keep the incoming proxy chain. The API trusts it only against the
+        # explicitly configured proxy CIDRs; bootstrap otherwise fails closed.
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Host ${TAVERN_DOMAIN};
+        proxy_read_timeout 120s;
+        proxy_pass $tavern_api$request_uri;
+    }
     location = /tavern-config.json {
         default_type application/json;
-        return 200 '{"homeserverUrl":"https://${TAVERN_DOMAIN}","lockHomeserver":true}';
+        return 200 '{"homeserverUrl":"https://${TAVERN_DOMAIN}","lockHomeserver":true,"managedAuth":${TAVERN_MANAGED_AUTH},"serverRolePolicy":${TAVERN_ROLE_POLICY},"callsEnabled":${CALLS_ENABLED}}';
     }
     location = /.well-known/matrix/client {
         default_type application/json;
@@ -65,8 +72,18 @@ server {
         return 200 '{"m.homeserver":{"base_url":"https://${TAVERN_DOMAIN}"},"org.matrix.msc4143.rtc_foci":[{"type":"livekit","livekit_service_url":"https://${TAVERN_DOMAIN}/livekit/jwt"}]}';
     }
     # Preserve the original encoded Matrix request URI.
-    location ^~ /_matrix/client/ { proxy_pass $matrix_upstream$request_uri; }
-    location ^~ /_matrix/media/ { proxy_pass $matrix_upstream$request_uri; }
+    # Managed authentication must not be bypassed through native credential,
+    # reset, or session-minting endpoints. Legacy static clients keep access.
+    location ~ "^/_matrix/client/(?:api/v1|[^/]+)/(?:login|register|refresh|account/password|account/deactivate|account/3pid)(?:/|$)" {
+        if ($managed_auth = true) { return 403; }
+        proxy_pass $matrix_upstream$request_uri;
+    }
+    location /_matrix/client/ { proxy_pass $matrix_upstream$request_uri; }
+    location ~ "^/_matrix/(?:media/(?:r0|v3)|client/[^/]+/media)/(?:upload|create)(?:/|$)" {
+        if ($managed_auth = true) { return 403; }
+        proxy_pass $matrix_upstream$request_uri;
+    }
+    location /_matrix/media/ { proxy_pass $matrix_upstream$request_uri; }
     location ^~ /_synapse/client/ { proxy_pass $matrix_upstream$request_uri; }
     location /_matrix { return 404; }
     location /_synapse { return 404; }

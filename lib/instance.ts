@@ -1,5 +1,5 @@
 /** Public, same-origin instance settings. Never place credentials in this file. */
-export async function readInstanceConfig(): Promise<{ homeserverUrl: string; lockHomeserver?: boolean }> {
+export async function readInstanceConfig(): Promise<{ homeserverUrl: string; lockHomeserver?: boolean; managedAuth?:boolean; serverRolePolicy?:boolean; callsEnabled?:boolean }> {
   try {
     const response = await fetch('/tavern-config.json', {
       credentials: 'omit',
@@ -12,7 +12,7 @@ export async function readInstanceConfig(): Promise<{ homeserverUrl: string; loc
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
       return { homeserverUrl: '' };
     }
-    return { homeserverUrl: url.href.replace(/\/$/, ''), lockHomeserver: config.lockHomeserver === true };
+    return { homeserverUrl: url.href.replace(/\/$/, ''), lockHomeserver: config.lockHomeserver === true, managedAuth:config.managedAuth===true, serverRolePolicy:config.serverRolePolicy===true, callsEnabled:config.callsEnabled===true };
   } catch {
     // A plain static deployment can leave this blank and enter its server at login.
     return { homeserverUrl: '' };

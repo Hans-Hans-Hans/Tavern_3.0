@@ -2,6 +2,7 @@
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -22,7 +23,7 @@ class RepositoryHygiene(unittest.TestCase):
                               cwd=self.root, capture_output=True, check=True)
 
     def check(self):
-        return subprocess.run(['python3', str(ROOT / 'scripts/check-repository.py')],
+        return subprocess.run([sys.executable, str(ROOT / 'scripts/check-repository.py')],
                               cwd=self.root, capture_output=True, text=True)
 
     def test_private_state_ignored_and_source_examples_kept(self):

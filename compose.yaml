@@ -1,39 +1,141 @@
+# Complete stack. Optional profiles require external media routing or a bot identity.
 name: tavern
+x-hardening: &hardening
+  restart: unless-stopped
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  labels:
+    io.tavern.managed: "true"
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
 services:
+  init:
+    image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.0}
+    build:
+      context: ${TAVERN_SOURCE_DIR:-.}
+      dockerfile: docker/init/Dockerfile
+    restart: "no"
+    network_mode: none
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    environment:
+      TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set TAVERN_DOMAIN to your public hostname}
+      TAVERN_PUBLIC_URL: ${TAVERN_PUBLIC_URL:-https://${TAVERN_DOMAIN}}
+      CALLS_ENABLED: ${CALLS_ENABLED:-false}
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+      TURN_DOMAIN: ${TURN_DOMAIN:-}
+      PUBLIC_IP: ${PUBLIC_IP:-}
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      OPERATIONS_ENABLED: ${OPERATIONS_ENABLED:-false}
+      INTEGRATIONS_ENABLED: ${INTEGRATIONS_ENABLED:-false}
+    volumes:
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}synapse:/state/synapse
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}secrets:/state/secrets
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/state/calls
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}api:/state/api
+      - ${TAVERN_INTEGRATIONS_CONFIG:-integrations_config}:/state/integrations-config
+      - ${TAVERN_INTEGRATIONS_DATA:-integrations_data}:/state/integrations-data
+      - postgres_data:/state/postgres:ro
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}operations:/state/operations
+      - operations_secret:/state/operations-secret
+    labels:
+      io.tavern.managed: "true"
   tavern-web:
-    image: tavern:0.3.0
-    pull_policy: never
+    <<: *hardening
+    image: ${TAVERN_WEB_IMAGE:-tavern:0.4.0}
     build:
       context: ${TAVERN_SOURCE_DIR:-.}
       dockerfile: Dockerfile
       target: npm
-    restart: unless-stopped
     environment:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
+      CALLS_ENABLED: ${CALLS_ENABLED:-false}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      TAVERN_MANAGED_AUTH: "true"
+      TAVERN_ROLE_POLICY: "true"
     read_only: true
     tmpfs: ["/tmp:size=128m,mode=1777"]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+    ports: ["${TAVERN_BIND_IP:-127.0.0.1}:${TAVERN_HTTP_PORT:-8080}:8080"]
     networks: [private, proxy]
     depends_on:
-      synapse:
-        condition: service_healthy
+      synapse: {condition: service_healthy}
+      tavern-api: {condition: service_healthy}
     labels:
       dockhand.prune: "false"
+      io.tavern.managed: "true"
+      io.tavern.component: web
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+  tavern-api:
+    <<: *hardening
+    image: ${TAVERN_API_IMAGE:-tavern-api:0.4.0}
+    build:
+      context: ${TAVERN_API_SOURCE_DIR:-./api}
+      dockerfile: Dockerfile
+    user: "10001:10001"
+    group_add: ["991"]
+    environment:
+      TAVERN_PUBLIC_URL: ${TAVERN_PUBLIC_URL:-https://${TAVERN_DOMAIN}}
+      SYNAPSE_URL: http://synapse:8008
+      SYNAPSE_CONFIG_PATH: /synapse/homeserver.yaml
+      TAVERN_BOOTSTRAP_MARKER: /synapse/tavern-bootstrap-allowed
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      BOOTSTRAP_ALLOWED_CIDRS: ${BOOTSTRAP_ALLOWED_CIDRS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128}
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Tavern}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      CALLS_ENABLED: ${CALLS_ENABLED:-false}
+      OPERATIONS_ENABLED: ${OPERATIONS_ENABLED:-false}
+      OPERATIONS_URL: http://operations:8091
+      OPERATIONS_TOKEN_FILE: /run/tavern-operations/token
+      INTEGRATIONS_ENABLED: ${INTEGRATIONS_ENABLED:-false}
+      INTEGRATIONS_CONFIG_DIR: /integrations-config
+    volumes:
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}api:/data
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}synapse:/synapse:ro
+      - operations_secret:/run/tavern-operations:ro
+      - ${TAVERN_INTEGRATIONS_CONFIG:-integrations_config}:/integrations-config
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    networks: [private, egress]
+    depends_on:
+      init: {condition: service_completed_successfully}
+      synapse: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    labels:
+      io.tavern.managed: "true"
+      io.tavern.component: api
   synapse:
-    image: ${SYNAPSE_IMAGE:?Select a pinned official Synapse image}
-    restart: unless-stopped
+    <<: *hardening
+    image: ${SYNAPSE_IMAGE:-matrixdotorg/synapse:v1.160.0}
     user: "991:991"
     environment:
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+      PYTHONPATH: /data/tavern_modules
     volumes:
-      - ${TAVERN_DATA_DIR:?Run docker/prepare-npm.py first}/synapse:/data
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}synapse:/data
     depends_on:
-      postgres:
-        condition: service_healthy
+      init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
     networks: [private]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health',timeout=3)"]
       interval: 30s
@@ -41,8 +143,10 @@ services:
       retries: 5
       start_period: 60s
   postgres:
-    image: postgres:17-alpine
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
+    labels:
+      io.tavern.managed: "true"
     environment:
       POSTGRES_USER: synapse
       POSTGRES_DB: synapse
@@ -50,18 +154,128 @@ services:
       POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ${TAVERN_DATA_DIR:?Run docker/prepare-npm.py first}/secrets/db_password:/run/secrets/db_password:ro
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}secrets:/run/secrets:ro
     networks: [private]
+    depends_on:
+      init: {condition: service_completed_successfully}
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U synapse -d synapse"]
       interval: 10s
       timeout: 5s
       retries: 10
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  operations:
+    <<: *hardening
+    profiles: [operations]
+    image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.0}
+    build:
+      context: ${TAVERN_SOURCE_DIR:-.}
+      dockerfile: ops/Dockerfile
+    user: "0:0"
+    environment:
+      TAVERN_PROJECT: ${COMPOSE_PROJECT_NAME:-tavern}
+      OPERATIONS_TOKEN_FILE: /config/token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}operations:/data
+      - operations_secret:/config:ro
+    networks: [private, egress]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+  coturn:
+    <<: *hardening
+    profiles: [calls]
+    image: ${COTURN_IMAGE:-coturn/coturn:4.17.2-r0}
+    user: "0:0"
+    command: ["-c", "/config/turnserver.conf"]
+    volumes: ["${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro"]
+    ports: ["3478:3478/tcp", "3478:3478/udp", "49160-49200:49160-49200/udp"]
+    networks: [media]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, turnutils_stunclient, -p, "3478", 127.0.0.1]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+  livekit:
+    <<: *hardening
+    profiles: [calls]
+    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:v1.13.6}
+    command: ["--config", "/config/livekit.yaml"]
+    volumes: ["${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro"]
+    ports: ["7881:7881/tcp", "7882:7882/udp"]
+    networks: [private, media]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:7880/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+  rtc-auth:
+    <<: *hardening
+    profiles: [calls]
+    image: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
+    environment:
+      LIVEKIT_URL: wss://${TAVERN_DOMAIN}/livekit/sfu
+      LIVEKIT_KEY_FROM_FILE: /config/livekit_key
+      LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
+      LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
+      LIVEKIT_JWT_BIND: :8080
+    volumes: ["${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/config:ro"]
+    networks: [private, media]
+    read_only: true
+    depends_on:
+      init: {condition: service_completed_successfully}
+      livekit: {condition: service_started}
+  integrations:
+    <<: *hardening
+    profiles: [integrations]
+    image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.0}
+    build:
+      context: ${TAVERN_INTEGRATIONS_SOURCE_DIR:-./integrations}
+    volumes:
+      - ${TAVERN_INTEGRATIONS_CONFIG:-integrations_config}:/config:ro
+      - ${TAVERN_INTEGRATIONS_DATA:-integrations_data}:/data
+    networks: [private]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    depends_on:
+      init: {condition: service_completed_successfully}
+      synapse: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 networks:
-  private:
-    internal: true
+  private: {internal: true}
   proxy:
-    external: true
-    name: ${NPM_PROXY_NETWORK:-npm_proxy}
+    external: ${NPM_PROXY_EXTERNAL:-false}
+    name: ${NPM_PROXY_NETWORK:-tavern_proxy}
+  egress: {}
+  media: {}
 volumes:
   postgres_data:
+  synapse:
+  secrets:
+  calls:
+  api:
+  integrations_config:
+  integrations_data:
+  operations:
+  operations_secret:

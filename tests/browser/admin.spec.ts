@@ -1,0 +1,24 @@
+import { test, expect } from '@playwright/test';
+async function admin(page: any, administrator = true) {
+  await page.route('**/api/auth/config', (r: any) => r.fulfill({ json: { bootstrapRequired: false, smtpConfigured: true, instance: { name: 'Test Tavern' } } }));
+  await page.route('**/api/auth/session', (r: any) => r.fulfill({ json: { userId: '@owner:local', deviceId: 'BROWSER', baseUrl: '/api/matrix', admin: administrator } }));
+  await page.route('**/api/system/status', (r: any) => r.fulfill({ json: { maintenance: { enabled: false }, announcements: [] } }));
+  await page.route('**/api/system/events', (r: any) => r.fulfill({ contentType: 'text/event-stream', body: ': test\n\n' }));
+  await page.route('**/api/admin/overview', (r: any) => r.fulfill({ json: { users: 3, rooms: 2, sessions: 1, version: '0.4.0', emailConfigured: true } }));
+}
+test('administrator console shows real counts and blocks ordinary user UI', async ({ page }) => {
+  await admin(page); await page.goto('/admin'); await expect(page.getByText('Active sessions', { exact: true })).toBeVisible(); await expect(page.locator('.admin-metric').first()).toContainText('3');
+  await page.unroute('**/api/auth/session'); await page.route('**/api/auth/session', r => r.fulfill({ json: { userId: '@member:local', deviceId: 'MEMBER', baseUrl: '/api/matrix', admin: false } })); await page.reload(); await expect(page.getByRole('heading', { name: 'Administrator access required' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Create user' })).toHaveCount(0);
+});
+test('SMTP keeps saved secrets private and omits a blank replacement', async ({ page }) => {
+  await admin(page); let saved: any; await page.route('**/api/admin/settings', r => { if (r.request().method() === 'PUT') saved = r.request().postDataJSON(); return r.fulfill({ json: { smtp: { enabled: true, host: 'smtp.gmail.com', port: 587, secure: false, username: 'mailer@example.test', fromName: 'Tavern', fromAddress: 'mailer@example.test', passwordConfigured: true }, instance: { name: 'Tavern' }, policy: { registrationMode: 'admin' } } }); });
+  await page.goto('/admin'); await page.getByRole('button', { name: 'Email', exact: true }).click(); await expect(page.getByLabel('Replace saved password (leave blank to keep)')).toHaveValue(''); await page.getByRole('button', { name: 'Save email settings' }).click(); await expect.poll(() => saved).toBeTruthy(); expect(saved.smtp.password).toBeUndefined();
+});
+test('report review sends its selected status and private note', async ({ page }) => {
+  await admin(page); let update: any; await page.route('**/api/admin/reports?*', r => r.fulfill({ json: { reports: [{ id: 7, kind: 'message', status: 'open', reason: 'Reported harassment', reporter: '@reporter:local', createdAt: 1700000000000, roomId: '!room:local', eventId: '$event', note: '' }] } })); await page.route('**/api/admin/reports/7', r => { update = r.request().postDataJSON(); return r.fulfill({ json: { ok: true } }); });
+  await page.goto('/admin'); await page.getByRole('button', { name: 'Reports', exact: true }).click(); await page.getByRole('button', { name: '#7 · message · open' }).click(); await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('reviewing'); await page.getByLabel('Private review note').fill('Reviewing supplied evidence'); await page.getByRole('button', { name: 'Save review' }).click(); await expect.poll(() => update).toEqual({ status: 'reviewing', note: 'Reviewing supplied evidence' });
+});
+test('backup restoration requires the exact confirmation before submitting', async ({ page }) => {
+  await admin(page); const id = 'tavern-' + 'a'.repeat(32); let submitted: any; await page.route('**/api/admin/backups', r => r.fulfill({ json: { available: true, backups: [{ id, createdAt: 1700000000000, sizeBytes: 4096 }], jobs: [], settings: { backupEnabled: false, backupTime: '03:00', retention: 14, autoUpdateEnabled: false, updateTime: '04:00', channel: 'stable' } } })); await page.route('**/api/admin/backups/' + id + '/restore', r => { submitted = r.request().postDataJSON(); return r.fulfill({ json: { jobId: 'b'.repeat(32) } }); }); await page.route('**/api/admin/operations/jobs/*', r => r.fulfill({ json: { state: 'complete', result: { message: 'Restored a stopped copy' } } }));
+  await page.goto('/admin'); await page.getByRole('button', { name: 'Backups', exact: true }).click(); await page.getByRole('button', { name: 'Restore a copy' }).click(); await expect(page.getByRole('button', { name: 'Confirm', exact: true })).toBeDisabled(); await page.getByLabel('Type RESTORE TO ISOLATED COPY').fill('RESTORE TO ISOLATED COPY'); await page.getByRole('button', { name: 'Confirm', exact: true }).click(); await expect.poll(() => submitted).toEqual({ confirmation: 'RESTORE TO ISOLATED COPY' });
+});

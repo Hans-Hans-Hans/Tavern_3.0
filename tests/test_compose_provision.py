@@ -1,0 +1,117 @@
+"""Exercise persistent provisioning against fresh and migrated state."""
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location('compose_provision', ROOT / 'docker/init/provision.py')
+provision = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(provision)
+
+
+class ProvisionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.env = {'TAVERN_DOMAIN': 'chat.example.test'}
+
+    def run_init(self, **changes):
+        return provision.provision(self.root, {**self.env, **changes})
+
+    def config(self):
+        return yaml.safe_load((self.root / 'synapse/homeserver.yaml').read_text())
+
+    def test_fresh_state_and_restart_preserve_all_credentials(self):
+        self.run_init()
+        before = self.config()
+        self.assertFalse(before['enable_registration'])
+        self.assertEqual(before['federation_domain_whitelist'], [])
+        self.assertTrue((self.root / 'synapse/tavern-bootstrap-allowed').is_file())
+        self.assertEqual(before['database']['args']['password'], (self.root / 'secrets/db_password').read_text().strip())
+        self.assertGreater(len(before['registration_shared_secret']), 40)
+        (self.root / 'synapse/server.signing.key').write_text('existing signing identity')
+        self.run_init()
+        self.assertEqual(before, self.config())
+        self.assertEqual((self.root / 'synapse/server.signing.key').read_text(), 'existing signing identity')
+
+    def test_existing_deployment_never_enables_bootstrap(self):
+        self.run_init()
+        (self.root / 'synapse/tavern-bootstrap-allowed').unlink()
+        (self.root / 'synapse/homeserver.yaml').write_text(yaml.safe_dump(self.config()))
+        self.run_init()
+        self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
+
+    def test_existing_database_without_identity_is_rejected(self):
+        (self.root / 'postgres').mkdir()
+        (self.root / 'postgres/PG_VERSION').write_text('17')
+        with self.assertRaisesRegex(provision.ConfigurationError, 'PostgreSQL data exists'):
+            self.run_init()
+        self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
+
+    def test_invalid_input_does_not_create_config(self):
+        for changes in ({'TAVERN_DOMAIN': 'https://chat.example.test'}, {'TAVERN_DOMAIN': 'bad;host'},
+                        {'TAVERN_PUBLIC_URL': 'http://chat.example.test'}, {'CALLS_ENABLED': 'yes'},
+                        {'CALLS_ENABLED': 'true'}, {'COMPOSE_PROFILES': 'calls'},
+                        {'INTEGRATIONS_ENABLED': 'yes'}, {'COMPOSE_PROFILES': 'integrations'}, {'INTEGRATIONS_ENABLED': 'true'},
+                        {'CALLS_ENABLED': 'true', 'COMPOSE_PROFILES': 'calls', 'TURN_DOMAIN': 'turn.example.test', 'PUBLIC_IP': '192.168.1.1'}):
+            with self.subTest(changes=changes), self.assertRaises(provision.ConfigurationError):
+                self.run_init(**changes)
+        self.assertFalse((self.root / 'synapse/homeserver.yaml').exists())
+
+    def test_hostname_change_and_password_mismatch_are_rejected(self):
+        self.run_init()
+        before = (self.root / 'synapse/homeserver.yaml').read_bytes()
+        with self.assertRaisesRegex(provision.ConfigurationError, 'existing Synapse server_name'):
+            self.run_init(TAVERN_DOMAIN='changed.example.test')
+        secret = self.root / 'secrets/db_password'
+        secret.chmod(0o600)
+        secret.write_text('different password')
+        with self.assertRaisesRegex(provision.ConfigurationError, 'password file'):
+            self.run_init()
+        self.assertEqual(before, (self.root / 'synapse/homeserver.yaml').read_bytes())
+
+    def test_calls_generate_shared_credentials_and_are_idempotent(self):
+        self.run_init()
+        before = self.config()
+        settings = {'CALLS_ENABLED': 'true', 'COMPOSE_PROFILES': 'calls', 'TURN_DOMAIN': 'turn.example.test', 'PUBLIC_IP': '8.8.8.8'}
+        self.run_init(**settings)
+        config = self.config()
+        livekit = json.loads((self.root / 'calls/livekit.yaml').read_text())
+        self.assertEqual(before['registration_shared_secret'], config['registration_shared_secret'])
+        self.assertEqual(config['turn_shared_secret'], livekit['rtc']['turn_servers'][0]['secret'])
+        self.assertIn('static-auth-secret=' + config['turn_shared_secret'], (self.root / 'calls/turnserver.conf').read_text())
+        self.assertFalse(config['turn_allow_guests'])
+        self.assertFalse(livekit['room']['auto_create'])
+        self.assertEqual(livekit['keys'][(self.root / 'calls/livekit_key').read_text().strip()], (self.root / 'calls/livekit_secret').read_text().strip())
+        snapshot = {p.name: p.read_bytes() for p in (self.root / 'calls').iterdir()}
+        self.run_init(**settings)
+        self.assertEqual(snapshot, {p.name: p.read_bytes() for p in (self.root / 'calls').iterdir()})
+        with self.assertRaisesRegex(provision.ConfigurationError, 'PUBLIC_IP differs'):
+            self.run_init(**{**settings, 'PUBLIC_IP': '1.1.1.1'})
+        self.assertEqual(snapshot, {p.name: p.read_bytes() for p in (self.root / 'calls').iterdir()})
+
+
+class ComposeStructure(unittest.TestCase):
+    def test_single_file_contains_stack_and_preserves_existing_volume_name(self):
+        config = yaml.safe_load((ROOT / 'compose.yaml').read_text())
+        services = config['services']
+        for service in ('init', 'tavern-web', 'tavern-api', 'synapse', 'postgres', 'coturn', 'livekit', 'rtc-auth', 'integrations'):
+            self.assertIn(service, services)
+        self.assertIn('postgres_data', config['volumes'])
+        for service in ('synapse', 'tavern-api', 'postgres', 'rtc-auth'):
+            self.assertNotIn('ports', services[service])
+        self.assertTrue(config['networks']['private']['internal'])
+        self.assertEqual(services['coturn']['profiles'], ['calls'])
+        socket_services = [name for name, service in services.items() if any('/var/run/docker.sock' in item for item in service.get('volumes', []))]
+        self.assertEqual(socket_services, ['operations'])
+        self.assertEqual(services['operations']['profiles'], ['operations'])
+        self.assertIn('991', services['tavern-api']['group_add'])
+
+
+if __name__ == '__main__':
+    unittest.main()

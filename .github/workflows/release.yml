@@ -1,0 +1,77 @@
+name: Publish Tavern release
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+permissions:
+  contents: read
+concurrency:
+  group: tavern-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    uses: ./.github/workflows/check.yml
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate release tag and create metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import datetime,json,os,pathlib,re
+          tag=os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?',tag):
+              raise SystemExit('Release tag must be a semantic version.')
+          package=json.loads(pathlib.Path('package.json').read_text())
+          if package['version'] != tag[1:]:
+              raise SystemExit('Release tag and package.json version differ.')
+          metadata={'version':tag[1:],'commit':os.environ['RELEASE_COMMIT'],'buildDate':datetime.datetime.now(datetime.timezone.utc).isoformat(),'channel':'prerelease' if '-' in tag else 'stable'}
+          pathlib.Path('version.json').write_text(json.dumps(metadata,indent=2)+'\n')
+          PY
+      - name: Build every release image before publishing any
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          version="${RELEASE_TAG#v}"
+          build_date="$(python3 -c 'import json;print(json.load(open("version.json"))["buildDate"])')"
+          channel="$(python3 -c 'import json;print(json.load(open("version.json"))["channel"])')"
+          docker build --target npm --label "org.opencontainers.image.version=$version" --label "org.opencontainers.image.revision=$RELEASE_COMMIT" -t "ghcr.io/$owner/tavern:$version" .
+          docker build --build-arg "TAVERN_VERSION=$version" --build-arg "TAVERN_COMMIT=$RELEASE_COMMIT" --build-arg "TAVERN_BUILD_DATE=$build_date" --build-arg "TAVERN_CHANNEL=$channel" --build-arg "TAVERN_IMAGE_TAG=$version" -t "ghcr.io/$owner/tavern-api:$version" api
+          docker build -f docker/init/Dockerfile -t "ghcr.io/$owner/tavern-init:$version" .
+          docker build -t "ghcr.io/$owner/tavern-integrations:$version" integrations
+          docker build -f ops/Dockerfile --build-arg "TAVERN_VERSION=$version" -t "ghcr.io/$owner/tavern-operations:$version" .
+      - name: Publish verified images to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          version="${RELEASE_TAG#v}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in tavern tavern-api tavern-init tavern-integrations tavern-operations; do
+            image="ghcr.io/$owner/$component"
+            docker push "$image:$version"
+            if [[ "$version" != *-* ]]; then
+              docker tag "$image:$version" "$image:latest"
+              docker tag "$image:$version" "$image:${version%%.*}"
+              docker push "$image:latest"
+              docker push "$image:${version%%.*}"
+            fi
+          done
+      - name: Publish release notes and metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" version.json --verify-tag --title "Tavern $RELEASE_TAG" --notes-file CHANGELOG.md "${flags[@]}"

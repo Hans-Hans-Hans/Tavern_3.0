@@ -1,0 +1,12 @@
+{
+  "name": "Tavern",
+  "short_name": "Tavern",
+  "description": "Your self-hosted conversations and communities",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#242a31",
+  "theme_color": "#303843",
+  "icons": [{ "src": "/tavern-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

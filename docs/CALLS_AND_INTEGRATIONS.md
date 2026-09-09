@@ -1,3 +1,5 @@
+> For Tavern 0.4 and the complete single Compose stack, use [Installation and operations](INSTALLATION.md). The manual recipes below describe earlier deployments; retain existing identity/data during migration.
+
 # Tavern 0.3: deploy calls and integrations
 
 Using GitHub `V3` builds? Apply the image-tag and Compose substitutions in [the GitHub guide](DEPLOY_GITHUB.md#add-calls-and-integrations) while following the configuration and acceptance steps here.

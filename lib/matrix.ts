@@ -1,9 +1,15 @@
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
+import { HttpApiEvent } from 'matrix-js-sdk/lib/http-api/interface';
 import type { MatrixClient, MatrixEvent, Room } from 'matrix-js-sdk';
+import { readServerEmoji, serverEmojiHtml } from './server-emoji';
+import { indexReactions, type Reaction } from './message-projection';
+import { applyPresenceMode } from './presence';
+import { initializeSearch, resetSearch, searchMessages } from './search-index';
 import { initializeNotifications, resetNotifications } from './notifications';
 import { initializeCalls, resetCalls } from './calls';
 import { cryptoCallbacks, initializeSecurity, resetSecurity, securityOperationInProgress } from './security';
+import { requestApi, isManagedAccount, accountSignedOut, type AccountSession } from './api';
 let client:MatrixClient|null=null;
 let sessionPromise:Promise<boolean>|null=null;
 let releaseLock:(()=>void)|null=null;
@@ -35,18 +41,21 @@ async function attachSession(s:any){
  let unlock!:()=>void;
  const held=new Promise<void>(r=>unlock=r);
  await new Promise<void>((resolve,reject)=>{navigator.locks.request('harbor-matrix-'+s.userId+'-'+s.deviceId,{ifAvailable:true},async lock=>{if(!lock){reject(new Error('This Matrix session is already open in another tab. Use that tab to protect your encryption keys.'));return;}releaseLock=unlock;resolve();await held;}).catch(reject)});
- const c=sdk.createClient({baseUrl:baseUrl(s.baseUrl),accessToken:s.accessToken,userId:s.userId,deviceId:s.deviceId,timelineSupport:true,verificationMethods:['m.sas.v1'],cryptoCallbacks:cryptoCallbacks(()=>c),forceTURN:true,fallbackICEServerAllowed:false});
+ const c=sdk.createClient({baseUrl:baseUrl(s.baseUrl),accessToken:s.accessToken,userId:s.userId,deviceId:s.deviceId,timelineSupport:true,verificationMethods:['m.sas.v1'],cryptoCallbacks:cryptoCallbacks(()=>c),forceTURN:true,fallbackICEServerAllowed:false,...(s.managed?{fetchFn:((url:any,options:any)=>{const target=new URL(String(url),location.origin);if(target.origin!==location.origin)throw new Error('Account requests must stay on this Tavern instance.');return fetch(url,{...options,credentials:'same-origin'});}) as typeof fetch}:{})});
  try{
   syncState='Initializing encryption';notify();
   await c.initRustCrypto({cryptoDatabasePrefix:'harbor-crypto-'+s.userId+'-'+s.deviceId});
-  client=c;initializeSecurity(c);initializeCalls(c);initializeNotifications(c);
+  client=c;c.on(HttpApiEvent.SessionLoggedOut,()=>{clearLocalMatrixSession();if(s.managed)accountSignedOut();});initializeSecurity(c);initializeCalls(c);initializeNotifications(c);
   c.on(sdk.ClientEvent.Sync,state=>{syncState=state==='PREPARED'||state==='SYNCING'?'Connected':state==='ERROR'?'Reconnecting':state;notify()});
-  c.on(sdk.RoomEvent.Timeline,notify);c.on(sdk.RoomEvent.Receipt,notify);c.on(sdk.RoomEvent.MyMembership,notify);c.on(sdk.MatrixEventEvent.Decrypted,notify);c.on(sdk.RoomEvent.LocalEchoUpdated,notify);c.on(sdk.RoomMemberEvent.Typing,notify);c.on(sdk.ClientEvent.AccountData,notify);
+  c.on(sdk.RoomEvent.Timeline,notify);c.on(sdk.RoomEvent.Receipt,notify);c.on(sdk.RoomEvent.MyMembership,notify);c.on(sdk.MatrixEventEvent.Decrypted,notify);c.on(sdk.RoomEvent.LocalEchoUpdated,notify);c.on(sdk.RoomMemberEvent.Typing,notify);c.on(sdk.RoomStateEvent.Events,notify);c.on(sdk.RoomMemberEvent.Name,notify);c.on(sdk.UserEvent.Presence,notify);c.on(sdk.ClientEvent.AccountData,notify);
   await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>{c.off(sdk.ClientEvent.Sync,onSync);reject(new Error('The homeserver did not complete the initial sync. Please reconnect.'))},45000);const onSync=(state:string,_prev?:string|null,data?:any)=>{if(state==='ERROR'&&data?.error?.errcode==='M_UNKNOWN_TOKEN'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(data.error);}if(state==='PREPARED'){clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);resolve()}};c.on(sdk.ClientEvent.Sync,onSync);c.startClient({initialSyncLimit:60,lazyLoadMembers:true,threadSupport:true,pollTimeout:30000}).catch(e=>{clearTimeout(timeout);c.off(sdk.ClientEvent.Sync,onSync);reject(e)})});
+  await applyPresenceMode(c).catch(()=>{});
+  void initializeSearch(c).catch(error=>console.warn('Local search unavailable:',error.message));
   return true;
- }catch(e){resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
+ }catch(e){resetSearch();resetNotifications();resetCalls();resetSecurity();c.stopClient();client=null;syncState='Not connected';releaseLock?.();releaseLock=null;throw e}
 }
 export async function restoreMatrixSession(){if(client)return true;if(sessionPromise)return sessionPromise;const raw=sessionStorage.getItem(sessionKey);if(!raw)return false;sessionPromise=(async()=>{try{return await attachSession(JSON.parse(raw))}catch(e){if((e as any)?.errcode==='M_UNKNOWN_TOKEN')sessionStorage.removeItem(sessionKey);throw e}finally{sessionPromise=null}})();return sessionPromise}
+export async function attachManagedMatrixSession(s:AccountSession){if(client)return true;if(sessionPromise)return sessionPromise;const url=new URL(s.baseUrl,location.origin);if(url.origin!==location.origin)throw new Error('Invalid account gateway.');sessionPromise=attachSession({...s,baseUrl:url.href,accessToken:'cookie-session:'+s.deviceId,managed:true});try{return await sessionPromise}finally{sessionPromise=null}}
 export async function connectMatrix(server:string,user:string,password:string,onStatus:(s:string)=>void){
  if(sessionPromise)throw new Error('A connection is already in progress. Please wait.');
  if(sessionStorage.getItem(sessionKey)){onStatus('Reconnecting your existing encrypted session…');await restoreMatrixSession();return;}
@@ -60,7 +69,8 @@ async function performConnect(server:string,user:string,password:string,onStatus
  const s={baseUrl:base,accessToken:result.access_token,userId:result.user_id,deviceId:result.device_id};
  onStatus('Preparing encryption and syncing your rooms…');try{await attachSession(s);sessionStorage.setItem(sessionKey,JSON.stringify(s))}catch(e){const cleanup=sdk.createClient({baseUrl:base,accessToken:s.accessToken});await cleanup.logout().catch(()=>{});throw e}notify();
 }
-export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');const c=client;if(c){await c.logout();resetNotifications();resetCalls();resetSecurity();c.stopClient();c.removeAllListeners();client=null;}sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export function clearLocalMatrixSession(){const c=client;resetSearch();resetNotifications();resetCalls();resetSecurity();c?.stopClient();c?.removeAllListeners();client=null;sessionStorage.removeItem(sessionKey);sessionPromise=null;pendingFiles.clear();eventCache.clear();lastReceipts.clear();accountQueues.clear();releaseLock?.();releaseLock=null;syncState='Not connected';notify()}
+export async function disconnectMatrix(){if(securityOperationInProgress())throw new Error('Wait for the encryption operation to finish before signing out.');if(sessionPromise)throw new Error('Wait for the current connection attempt to finish.');if(isManagedAccount())await requestApi('/auth/logout',{});else if(client)await client.logout();clearLocalMatrixSession();if(isManagedAccount())accountSignedOut()}
 function requireClient(){if(!client)throw new Error('Connect your Matrix homeserver to start messaging.');return client}
 const writeAccount=(key:string,value:any)=>(requireClient() as any).setAccountData(key,value);
 const account=(key:string)=>client?.getAccountData(key as any)?.getContent()||{};
@@ -70,27 +80,26 @@ function allEvents(room:Room){return [...new Map([...room.getLiveTimeline().getE
 const joined=()=>client?.getRooms().filter(r=>r.getMyMembership()==='join'&&!r.isSpaceRoom())||[];
 function roomRequired(id:string){const r=requireClient().getRoom(id);if(!r||r.getMyMembership()!=='join')throw new Error('Join this conversation before opening it.');return r}
 function directIds(){return new Set(Object.values(account('m.direct')).flatMap(safeStrings))}
-function normalize(room:Room,event:MatrixEvent){
+function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Reaction[]>;pinned:Set<string>;saved:Set<string>}){
  const c=event.getContent()||{},me=client?.getUserId(),id=event.getId()!,sender=event.getSender()!;
- const raw=event.getOriginalContent()||{};eventCache.set(id,event);
- const events=allEvents(room);
- const reacts=events.filter(e=>e.getType()==='m.reaction'&&!e.isRedacted()&&e.getContent()['m.relates_to']?.event_id===id);
- const reactions=Array.from(new Set(reacts.map(e=>safeString(e.getContent()['m.relates_to']?.key)).filter(k=>k&&k.length<30))).map(emoji=>({emoji,count:reacts.filter(e=>e.getContent()['m.relates_to']?.key===emoji).length,mine:Number(reacts.some(e=>e.getContent()['m.relates_to']?.key===emoji&&e.getSender()===me))}));
- const pinned=safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned);
+ const raw=event.getOriginalContent()||{};eventCache.set(id,event);if(eventCache.size>5000)eventCache.delete(eventCache.keys().next().value!);
+ const reactions=(context?.reactions||indexReactions(allEvents(room),me)).get(id)||[];
+ const pinned=context?.pinned||new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned));
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id:null,pinned:Number(pinned.includes(id)),saved:Number(savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted}]:[],encrypted,sending:!!event.status};
+ return {id,forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Import your encryption keys in Privacy settings.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:raw['m.relates_to']?.rel_type==='m.thread'?raw['m.relates_to'].event_id:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype)}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
  let events=includeThreads?allEvents(room):room.getLiveTimeline().getEvents();
  if(parent){let t=room.getThread(parent);if(!t){const root=room.findEventById(parent);if(root)t=room.createThread(parent,root,[],true);}if(t){if(t.events.length<2)await requireClient().getLatestTimeline(t.timelineSet);events=t.events;}else{const r=await requireClient().relations(room.roomId,parent,'m.thread','m.room.message',{limit:100});events=r.events;}}
  await Promise.all(events.filter(e=>e.isEncrypted()).map(e=>requireClient().decryptEventIfNeeded(e).catch(()=>{})));
- return events.filter(e=>(e.getType()==='m.room.message'||e.isDecryptionFailure())&&!e.isRedacted()&&e.getContent()['m.relates_to']?.rel_type!=='m.replace').map(e=>normalize(room,e)).filter(m=>parent?m.parent_id===parent:includeThreads||!m.parent_id);
+ const context={reactions:indexReactions(allEvents(room),client?.getUserId()),pinned:new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned)),saved:new Set<string>(savedEvents().map((e:any)=>e.id))};
+ return events.filter(e=>(e.getType()==='m.room.message'||e.isDecryptionFailure())&&!e.isRedacted()&&e.getContent()['m.relates_to']?.rel_type!=='m.replace').map(e=>normalize(room,e,context)).filter(m=>parent?m.parent_id===parent:includeThreads||!m.parent_id);
 }
 export async function matrixApi(action:string,p?:any,params:Record<string,string>={}):Promise<any>{
  if(action==='bootstrap'){
-  if(!client){let preferences={};try{preferences=JSON.parse(localStorage.getItem('harbor.appearance')||'{}')}catch{}return {me:{id:'preview',name:'You',role:'member'},workspace:{name:'Tavern'},members:[{id:'preview',name:'You',role:'member'}],conversations:[{id:'general',name:'general',description:'The home for team updates, good questions, and everyday conversation.',kind:'channel',unread:0},{id:'introductions',name:'introductions',description:'A little hello goes a long way. Introduce yourself here.',kind:'channel',unread:0},{id:'phase-1',name:'phase-1',description:'Work in progress, small wins, and things worth sharing.',kind:'channel',unread:0},{id:'random',name:'random',description:'A place for everything outside the usual conversations.',kind:'channel',unread:0}],memberships:[],preferences:safePrefs(preferences),preview:true,servers:[],invitations:[]}}
+  if(!client){let preferences={};try{preferences=JSON.parse(localStorage.getItem('harbor.appearance')||'{}')}catch{}return {me:{id:'preview',name:'You',role:'member'},workspace:{name:'Tavern'},members:[{id:'preview',name:'You',role:'member'}],conversations:[],memberships:[],preferences:safePrefs(preferences),preview:true,servers:[],invitations:[]}}
   const c=client,me=c.getUserId()!,rooms=joined(),dms=directIds(),members=new Map<string,any>(),memberships:any[]=[];
   for(const r of rooms)for(const m of r.getJoinedMembers()){members.set(m.userId,{id:m.userId,name:safeString(m.name,m.userId),role:'member'});memberships.push({conversation_id:r.roomId,user_id:m.userId});}
   const profile=c.getUser(me);members.set(me,{id:me,name:safeString(profile?.displayName,me),role:'member'});
@@ -99,6 +108,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='preferences'){p=safePrefs(p);localStorage.setItem('harbor.appearance',JSON.stringify(p));if(client)await writeAccount(prefsKey,p);return {preferences:p}}
  if(!client&&['messages','search','saved','threads','mentions','files'].includes(action))return {messages:[],hasMore:false};
  const c=requireClient(),me=c.getUserId()!;
+ if(action==='search'){const result=await searchMessages(params.q||'',{cursor:params.cursor});return {...result,messages:result.hits.map(m=>({id:m.id,body:m.body,author_id:m.authorId,author_name:m.authorName,conversation_id:m.roomId,conversation_name:m.roomName,created_at:m.timestamp,parent_id:null,replies:0,reactions:[],attachments:[]}))};}
  if(['messages','search','saved','threads','mentions','files'].includes(action)){
   const rooms=params.conversation?[roomRequired(params.conversation)]:joined();
   if(params.before)await c.scrollback(rooms[0],100);
@@ -116,9 +126,11 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='send'){
   const room=roomRequired(p.conversation);if(p.parent){const root=room.findEventById(p.parent);if(root&&root.getRoomId()!==room.roomId)throw new Error('Thread belongs to another room.');}
   const content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:room.getJoinedMembers().filter(m=>p.body.includes('@'+m.name)||p.body.includes(m.userId)).map(m=>m.userId)}};
+  const formatted=serverEmojiHtml(p.body,readServerEmoji(p.serverId));if(formatted){content.format='org.matrix.custom.html';content.formatted_body=formatted;}
+  if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
   if(p.body.includes('@everyone'))content['m.mentions'].room=true;
   const attachments=(p.attachments||[]).map((id:string)=>{const f=pendingFiles.get(id);if(!f||f.roomId!==room.roomId)throw new Error('Reattach this file before sending.');return f});
-  if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
+  if(attachments.length){for(let i=0;i<attachments.length;i++){const f=attachments[i];const fc={msgtype:f.type.startsWith('image/')?'m.image':f.type.startsWith('video/')?'m.video':f.type.startsWith('audio/')?'m.audio':'m.file',body:f.name,filename:f.name,info:{size:f.size,mimetype:f.type},...(f.file?{file:f.file}:{url:f.url})};if(p.parent)await c.sendMessage(room.roomId,p.parent,fc as any,p.nonce+'-f'+i);else await c.sendMessage(room.roomId,fc as any,p.nonce+'-f'+i);} }
   if(p.body.trim()){if(p.parent)await c.sendMessage(room.roomId,p.parent,content,p.nonce);else await c.sendMessage(room.roomId,content,p.nonce);}
   for(const id of p.attachments||[])pendingFiles.delete(id);notify();return {ok:true};
  }
@@ -131,7 +143,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   }
   if(action==='save'){await mutateAccount(savedKey,old=>{const saved=Array.isArray(old.events)?old.events:[];if(saved.length>=500&&!saved.some((x:any)=>x.id===p.id))throw new Error('Your saved list is full. Remove a bookmark first.');return {events:saved.some((x:any)=>x.id===p.id)?saved.filter((x:any)=>x.id!==p.id):[...saved,{id:p.id,roomId:room.roomId}]}});}
   if(action==='pin'){const old=room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned||[];await c.sendStateEvent(room.roomId,'m.room.pinned_events' as any,{pinned:old.includes(p.id)?old.filter((id:string)=>id!==p.id):[...old,p.id]},'')}
-  if(action==='delete'||action==='edit'){if(e.getSender()!==me)throw new Error('You can only change your own messages.');if(action==='delete')await c.redactEvent(room.roomId,p.id);else await c.sendEvent(room.roomId,'m.room.message' as any,{msgtype:'m.text',body:'* '+p.body,'m.new_content':{msgtype:'m.text',body:p.body},'m.relates_to':{rel_type:'m.replace',event_id:p.id}});}
+  if(action==='delete'||action==='edit'){if(action==='edit'&&e.getSender()!==me)throw new Error('You can only edit your own messages.');if(action==='delete'&&e.getSender()!==me&&!room.currentState.hasSufficientPowerLevelFor('redact',room.getMember(me)?.powerLevel||0))throw new Error('You cannot remove this message.');if(action==='delete')await c.redactEvent(room.roomId,p.id);else await c.sendEvent(room.roomId,'m.room.message' as any,{msgtype:'m.text',body:'* '+p.body,'m.new_content':{msgtype:'m.text',body:p.body},'m.relates_to':{rel_type:'m.replace',event_id:p.id}});}
   notify();return {ok:true};
  }
  if(action==='createServer'){
@@ -161,9 +173,9 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   const parent=!direct&&p.serverId?roomRequired(p.serverId):null;
   if(parent&&(!parent.isSpaceRoom()||!parent.currentState.maySendStateEvent('m.space.child',me)))throw new Error('You cannot add channels to this server.');
   const via=[me.slice(me.indexOf(':')+1)];
-  if(direct){const dm=Object.entries(account('m.direct')).find(([peer])=>peer===(invite[0]||me));const existing=(dm?.[1] as string[]|undefined)?.find(id=>c.getRoom(id)?.getMyMembership()==='join');if(existing)return {id:existing};}
-  const r=await c.createRoom({name:direct?(invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
-  if(direct){const peer=invite[0]||me;await mutateAccount('m.direct',map=>({...map,[peer]:[...safeStrings(map[peer]),r.room_id]}));}
+  if(direct&&!p.group&&invite.length<=1){const dm=Object.entries(account('m.direct')).find(([peer])=>peer===(invite[0]||me));const existing=(dm?.[1] as string[]|undefined)?.find(id=>c.getRoom(id)?.getMyMembership()==='join');if(existing)return {id:existing};}
+  const r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
+  if(direct){await mutateAccount('m.direct',map=>{const next={...map};for(const peer of invite.length?invite:[me])next[peer]=[...safeStrings(next[peer]),r.room_id];return next;});}
   if(parent){try{await c.sendStateEvent(parent.roomId,'m.space.child' as any,{via},r.room_id)}catch{await c.joinRoom(r.room_id);notify();throw new Error('Channel created, but adding it to the server failed. It is available in All conversations.');}}
   // /sync supplies authoritative state; joinRoom makes the new room locally available.
   await c.joinRoom(r.room_id);notify();return {id:r.room_id};
@@ -175,19 +187,29 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='decline'){await c.leave(p.id);notify();return {ok:true}}
  throw new Error('That action is not available.');
 }
-export async function uploadMatrixFile(file:File,roomId:string){
+export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:AbortSignal;onProgress?:(loaded:number,total:number)=>void}={}){
  const c=requireClient(),room=roomRequired(roomId);if(file.size>10*1024*1024)throw new Error('Files can be up to 10 MB.');if(!file.size)throw new Error('This file is empty.');
+ options.signal?.throwIfAborted();
  let descriptor:any=null,data:Blob=file;
  if(room.hasEncryptionStateEvent()){const {encryptAttachment}=await import('matrix-encrypt-attachment');const encrypted=await encryptAttachment(await file.arrayBuffer());descriptor=encrypted.info;data=new Blob([encrypted.data],{type:'application/octet-stream'});}
- const uploaded=await c.uploadContent(data,{includeFilename:false,type:descriptor?'application/octet-stream':file.type||'application/octet-stream'});
+ options.signal?.throwIfAborted();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});
+ let uploaded;try{uploaded=await c.uploadContent(data,{includeFilename:false,type:descriptor?'application/octet-stream':file.type||'application/octet-stream',abortController,progressHandler:p=>options.onProgress?.(p.loaded,p.total||data.size)});}finally{options.signal?.removeEventListener('abort',abort);}
+ options.signal?.throwIfAborted();if(client!==c)throw new Error('Your account changed during upload. Sign in and attach the file again.');
  const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,record);return record;
 }
-export async function downloadMatrixFile(a:any){
+export function discardMatrixFile(id:string){pendingFiles.delete(id);}
+export async function matrixFileBlob(a:any,signal?:AbortSignal){
  const c=requireClient();const url=c.mxcUrlToHttp(a.url,undefined,undefined,undefined,false,true,true);if(!url)throw new Error('Invalid Matrix file address.');
- const res=await fetch(url,{headers:{Authorization:'Bearer '+c.getAccessToken()},referrerPolicy:'no-referrer'});if(!res.ok)throw new Error('Could not download this attachment.');
- const bytes=await res.arrayBuffer();let payload=bytes;if(a.file){const {decryptAttachment}=await import('matrix-encrypt-attachment');payload=await decryptAttachment(bytes,a.file);}
- const blob=new Blob([payload],{type:'application/octet-stream'});downloadBlob(blob,a.name);
+ const res=await fetch(url,{headers:{Authorization:'Bearer '+c.getAccessToken()},credentials:'same-origin',referrerPolicy:'no-referrer',signal});if(!res.ok)throw new Error('Could not download this attachment.');
+ if(Number(res.headers.get('Content-Length'))>20*1024*1024)throw new Error('This attachment is too large to preview safely.');
+ const reader=res.body?.getReader();if(!reader)throw new Error('This browser cannot stream attachments.');const chunks:Uint8Array[]= [];let size=0;
+ try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;if(size>20*1024*1024){await reader.cancel();throw new Error('This attachment is too large to preview safely.');}chunks.push(next.value);}}finally{reader.releaseLock();}
+ const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}let payload=bytes.buffer;if(a.file){const {decryptAttachment}=await import('matrix-encrypt-attachment');payload=await decryptAttachment(bytes.buffer,a.file);}
+ if(payload.byteLength>20*1024*1024)throw new Error('This attachment is too large to preview safely.');
+ const mime=typeof a.type==='string'&&/^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|ogg)|audio\/(mpeg|mp4|ogg|webm|wav|flac))$/.test(a.type)?a.type:'application/octet-stream';
+ return new Blob([payload],{type:mime});
 }
+export async function downloadMatrixFile(a:any){downloadBlob(await matrixFileBlob(a),a.name)}
 function downloadBlob(blob:Blob,name:string){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000)}
 export async function exportMatrixMessages(){const c=requireClient();const messages=(await Promise.all(joined().map(r=>getRoomMessages(r)))).flat().filter(m=>m.author_id===c.getUserId());downloadBlob(new Blob([JSON.stringify({exportedAt:new Date().toISOString(),scope:'Your messages currently loaded on this device',messages},null,2)],{type:'application/json'}),'tavern-messages.json')}
 export async function exportEncryptionKeys(password:string){if(password.length<12)throw new Error('Use a passphrase of at least 12 characters.');const c=requireClient(),keys=await c.getCrypto()!.exportRoomKeys();const {OlmMachine,initAsync}=await import('@matrix-org/matrix-sdk-crypto-wasm');await initAsync();const encrypted=OlmMachine.encryptExportedRoomKeys(JSON.stringify(keys),password,500000);downloadBlob(new Blob([encrypted],{type:'text/plain'}),'tavern-encrypted-keys.txt')}

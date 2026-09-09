@@ -30,6 +30,13 @@ try:
     status, _, body = fetch('/tavern-config.json')
     config = json.loads(body)
     assert status == 200 and config['homeserverUrl'] == origin and config['lockHomeserver'] is True, 'Incorrect instance configuration.'
+    if config.get('managedAuth'):
+        status, _, body = fetch('/api/system/version')
+        assert status == 200 and json.loads(body).get('version'), 'Managed account API version endpoint failed.'
+        status, _, body = fetch('/health/ready')
+        assert status == 200 and json.loads(body).get('status') == 'ready', 'Account API or messaging homeserver is not ready.'
+        status, _, _ = fetch('/api/admin/backups')
+        assert status == 401, 'Administrator backups must require authentication.'
     status, _, body = fetch('/_matrix/client/versions')
     assert status == 200 and json.loads(body).get('versions'), 'Matrix version discovery failed.'
     for path in ['/_synapse/admin/v1/server_version', '/_matrix/federation/v1/version', '/_matrix/key/v2/server']:

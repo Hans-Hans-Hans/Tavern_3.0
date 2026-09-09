@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import Tavern from './tavern';
+import { AuthGateway } from './auth-gateway';
 import './globals.css';
 
-createRoot(document.getElementById('root')!).render(<Tavern />);
+createRoot(document.getElementById('root')!).render(<AuthGateway />);

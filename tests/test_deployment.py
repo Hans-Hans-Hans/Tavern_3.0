@@ -1,7 +1,9 @@
 """Configuration checks; no Docker daemon, network, or real accounts required."""
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -20,10 +22,11 @@ class DeploymentConfiguration(unittest.TestCase):
 
     def configure(self, domain='chat.example.test', data=None):
         # The tag here is syntax-test input; no image is fetched or deployed.
-        return subprocess.run(['python3', str(PREPARE), '--domain', domain,
+        return subprocess.run([sys.executable, str(PREPARE), '--domain', domain,
             '--synapse-image', 'matrixdotorg/synapse:v1.2.3', '--source-dir', str(self.source),
             '--data-dir', str(data or self.data)], capture_output=True, text=True)
 
+    @unittest.skipIf(os.name == 'nt', 'Legacy host provisioner requires Linux paths and POSIX file permissions; tested in Linux CI.')
     def test_private_defaults_and_no_secret_in_public_environment(self):
         result = self.configure()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -53,11 +56,12 @@ class DeploymentConfiguration(unittest.TestCase):
                 self.assertNotEqual(self.configure(domain=domain).returncode, 0)
                 self.assertFalse(self.data.exists())
 
+    @unittest.skipIf(os.name == 'nt', 'Legacy host provisioner requires Linux paths and POSIX file permissions; tested in Linux CI.')
     def test_calls_configuration_preserves_identity_and_private_defaults(self):
         self.assertEqual(self.configure().returncode,0)
         before=json.loads((self.data/'synapse/homeserver.yaml').read_text())
         script=PREPARE.parent/'prepare-calls.py'
-        command=['python3',str(script),'--data-dir',str(self.data),'--turn-domain','turn.example.test','--public-ip','8.8.8.8']
+        command=[sys.executable,str(script),'--data-dir',str(self.data),'--turn-domain','turn.example.test','--public-ip','8.8.8.8']
         result=subprocess.run(command,capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         config=json.loads((self.data/'synapse/homeserver.yaml').read_text())

@@ -57,8 +57,8 @@ export class TavernCallDriver extends WidgetDriver {
   processError(error:unknown){const e=error as any;return typeof e?.asWidgetApiErrorData==='function'?{matrix_api_error:e.asWidgetApiErrorData()}:undefined;}
 }
 
-export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal){
-  signal?.throwIfAborted();claimMedia('conference');
+export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false){
+  signal?.throwIfAborted();if(!managedSession)claimMedia('conference');
   try {
   const room=client.getRoom(roomId);if(!room||!await client.getCrypto()?.isEncryptionEnabledInRoom(roomId))throw new Error('Conferences require an encrypted room.');
   await room.loadMembersIfNeeded();signal?.throwIfAborted();
@@ -76,8 +76,8 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   client.on(RoomEvent.Timeline,timeline);client.on(RoomStateEvent.Events,state);client.on(ClientEvent.ToDeviceEvent,device);client.on(MatrixEventEvent.Decrypted,decrypted);
   const close=(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});onClose();};
   for(const action of ['io.element.close','im.vector.hangup'])api.on('action:'+action,close);
-  for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});});
+  for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});if(action==='io.element.join')onJoined?.();});
   iframe.src=url.href;
-  return async()=>{if(stopped)return;stopped=true;await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);iframe.src='about:blank';};
-  }catch(error){releaseMedia('conference');throw error;}
+  return async()=>{if(stopped)return;stopped=true;await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
+  }catch(error){if(!managedSession)releaseMedia('conference');throw error;}
 }

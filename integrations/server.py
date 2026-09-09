@@ -18,6 +18,7 @@ from Crypto.Cipher import AES
 from nio import AsyncClient, AsyncClientConfig, ErrorResponse, RoomSendResponse, SyncResponse
 from nio.store import SqliteStore
 from protocol import authenticate, transaction
+from configuration import load_configuration
 
 DATA=Path('/data'); CONFIG=Path('/config/bot.json')
 
@@ -25,12 +26,10 @@ class Bridge:
     def __init__(self):
         os.umask(0o077)
         self.lock=(DATA/'bridge.lock').open('a');fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        self.config=json.loads(CONFIG.read_text());session=json.loads((CONFIG.parent/'session.json').read_text())
+        self.config,self.secrets,self.configuration=load_configuration(CONFIG);session=json.loads((CONFIG.parent/'session.json').read_text())
         self.pins=self.config.get('trusted_devices',{});self.hooks=self.config['hooks']
         self.queue_key=bytes.fromhex((CONFIG.parent/'queue.key').read_text().strip())
         if len(self.queue_key)!=32: raise RuntimeError('Queue key must contain 32 random bytes encoded as hex')
-        self.secrets={hook:Path(value['secret_file']).read_bytes().strip() for hook,value in self.hooks.items()}
-        if any(len(s)<32 for s in self.secrets.values()):raise RuntimeError('Webhook secrets must be at least 32 bytes')
         identity_path=DATA/'identity.json'
         if not identity_path.exists() or not (DATA/'crypto/crypto.db').exists():raise RuntimeError('Provision the bot once before startup; refusing to recreate a lost encryption store')
         self.identity=json.loads(identity_path.read_text())
@@ -44,6 +43,18 @@ class Bridge:
         self.db.execute('CREATE TABLE IF NOT EXISTS deliveries(hook TEXT,delivery TEXT,payload BLOB,nonce BLOB,tag BLOB,status TEXT,attempts INTEGER DEFAULT 0,next_attempt INTEGER,event_id TEXT,PRIMARY KEY(hook,delivery))');self.db.commit()
         self.matrix_lock=asyncio.Lock();self.last_sync=0
         self.ready=False;self.last_error='';self.rate={}
+    def reload_configuration(self):
+        config,keys,revision=load_configuration(CONFIG)
+        if revision==self.configuration:return
+        if config['homeserver']!=self.config['homeserver']:raise RuntimeError('Changing bot homeserver requires explicit identity provisioning')
+        for hook in set(self.hooks)&set(config['hooks']):
+            if self.hooks[hook]['room_id']!=config['hooks'][hook]['room_id']:raise RuntimeError('Existing webhook destinations are immutable')
+        removed=set(self.hooks)-set(config['hooks'])
+        with self.db:
+            for hook in removed:
+                self.db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND status='pending'",(hook,))
+        self.config,self.secrets,self.configuration=config,keys,revision
+        self.hooks,self.pins=config['hooks'],config.get('trusted_devices',{})
     async def start(self):
         identity=await self.client.whoami()
         if isinstance(identity,ErrorResponse) or identity.user_id!=self.identity['user_id'] or identity.device_id!=self.identity['device_id']:raise RuntimeError('Bot access token identity mismatch')
@@ -57,6 +68,7 @@ class Bridge:
     async def synchronize(self):
         while True:
             async with self.matrix_lock:
+                self.reload_configuration()
                 response=await asyncio.wait_for(self.client.sync(timeout=1000,set_presence='offline'),45)
                 if not isinstance(response,SyncResponse):raise RuntimeError('Matrix sync failed')
                 self.last_sync=time.monotonic()
@@ -87,10 +99,14 @@ class Bridge:
                 self.client.verify_device(device);expected_devices.add((user,device.id))
         return room_id,expected_devices
     async def enqueue(self,request):
-        hook=request.match_info['hook']
-        if hook not in self.hooks:raise web.HTTPNotFound()
         if request.content_type!='application/json':raise web.HTTPUnsupportedMediaType()
         raw=await request.read();delivery=request.headers.get('X-Tavern-Delivery','')
+        # Configuration changes cannot race recipient approval/key sharing.
+        async with self.matrix_lock:
+            try:self.reload_configuration()
+            except (OSError,ValueError,RuntimeError):raise web.HTTPServiceUnavailable(text='Integration configuration is unavailable')
+        hook=request.match_info['hook']
+        if hook not in self.hooks:raise web.HTTPNotFound()
         try:text=authenticate(hook,request.headers.get('X-Tavern-Timestamp',''),delivery,request.headers.get('X-Tavern-Signature',''),raw,self.secrets[hook])
         except (ValueError,TypeError):raise web.HTTPUnauthorized(text='Invalid signed request')
         previous=self.db.execute('SELECT status,event_id FROM deliveries WHERE hook=? AND delivery=?',(hook,delivery)).fetchone()
@@ -110,6 +126,10 @@ class Bridge:
             try:
                 if self.sync_task.done():raise RuntimeError('Matrix synchronization stopped')
                 async with self.matrix_lock:
+                    self.reload_configuration()
+                    if hook not in self.hooks:
+                        with self.db:self.db.execute("UPDATE deliveries SET status='cancelled',payload=NULL,nonce=NULL,tag=NULL WHERE hook=? AND delivery=?",(hook,delivery))
+                        continue
                     room,expected=await self.recipients(hook)
                     # Per-message rotation keeps departed recipients out even when membership was refreshed outside /sync.
                     self.client.invalidate_outbound_session(room)
@@ -126,7 +146,7 @@ class Bridge:
                 with self.db:self.db.execute('UPDATE deliveries SET attempts=attempts+1,next_attempt=? WHERE hook=? AND delivery=?',(int(time.time())+min(300,2**min(attempts+1,8)),hook,delivery))
     async def health(self,request):
         healthy=self.ready and not self.sync_task.done() and not self.worker.done() and time.monotonic()-self.last_sync<60
-        return web.json_response({'ready':healthy},status=200 if healthy else 503)
+        return web.json_response({'ready':healthy,'configuration':self.configuration},status=200 if healthy else 503)
     async def stop(self):
         self.ready=False
         for task in [self.worker,self.sync_task]:task.cancel()

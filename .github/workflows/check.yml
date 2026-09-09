@@ -1,10 +1,11 @@
 name: Tavern checks
 on:
   push:
-    branches: [V3]
+    branches: [V3, 'codex/**']
   pull_request:
     branches: [V3]
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
@@ -25,11 +26,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - run: pip install -r integrations/requirements.txt -c integrations/requirements.lock
+      - run: pip install -r api/requirements.txt
+      - run: pip install -r ops/requirements.txt
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: python3 scripts/sync-compose-aliases.py --check
+      - run: python3 -m compileall -q api ops docker/init synapse_modules
       - name: Validate GitHub deployment files
         env:
           TAVERN_DOMAIN: chat.example.test
@@ -40,6 +47,8 @@ jobs:
         run: |
           docker compose -f compose.github.yaml config --quiet
           docker compose -f compose.github.full.yaml config --quiet
+          docker compose -f compose.yaml config --quiet
+          docker compose -f compose.dockhand.yaml config --quiet
       - name: Build both images (remote Git contexts on branch pushes)
         env:
           TAVERN_EVENT: ${{ github.event_name }}
@@ -65,3 +74,33 @@ jobs:
             docker logs tavern-check
             docker rm -f tavern-check
           fi
+      - name: Start clean canonical stack and verify persistence
+        env:
+          TAVERN_DOMAIN: chat.example.test
+          TAVERN_HTTP_PORT: '18081'
+          NPM_PROXY_NETWORK: tavern_ci_proxy
+          TAVERN_WEB_IMAGE: tavern:check
+          TAVERN_API_IMAGE: tavern-api:check
+          TAVERN_INIT_IMAGE: tavern-init:check
+          TAVERN_DATA_DIR: ''
+          COMPOSE_PROFILES: operations
+          OPERATIONS_ENABLED: 'true'
+          TAVERN_OPERATIONS_IMAGE: tavern-operations:check
+        run: |
+          docker compose -p tavern-ci up -d --build --wait --wait-timeout 240
+          curl --fail http://127.0.0.1:18081/health
+          curl --fail http://127.0.0.1:18081/api/system/version
+          curl --fail http://127.0.0.1:18081/_matrix/client/versions
+          docker compose -p tavern-ci exec -T operations python /app/smoke.py
+          docker compose -p tavern-ci exec -T synapse python -c 'from pathlib import Path; import hashlib; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())' > /tmp/tavern-identity-before
+          docker compose -p tavern-ci down
+          docker compose -p tavern-ci up -d --wait --wait-timeout 240
+          docker compose -p tavern-ci exec -T synapse python -c 'from pathlib import Path; import hashlib; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())' > /tmp/tavern-identity-after
+          cmp /tmp/tavern-identity-before /tmp/tavern-identity-after
+          curl --fail http://127.0.0.1:18081/health
+      - name: Collect stack logs
+        if: always()
+        env:
+          TAVERN_DOMAIN: chat.example.test
+          NPM_PROXY_NETWORK: tavern_ci_proxy
+        run: docker compose -p tavern-ci logs --tail=100

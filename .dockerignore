@@ -23,12 +23,19 @@
 !public/tavern-config.json
 !scripts/
 !scripts/prepare-call-assets.mjs
+!scripts/operations.py
 !docker/
 !docker/nginx.conf
 !docker/npm/
 !docker/npm/*.conf
 !docker/npm/*.template
 !docker/npm/entrypoint.sh
+!docker/init/
+!docker/init/**
+!synapse_modules/
+!synapse_modules/**
+!ops/
+!ops/**
 
 # These exclusions win even within an allowed source directory.
 **/.env

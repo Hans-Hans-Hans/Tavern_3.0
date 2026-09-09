@@ -1,3 +1,5 @@
+> For Tavern 0.4 and the complete single Compose stack, use [Installation and operations](INSTALLATION.md). The manual recipes below describe earlier deployments; retain existing identity/data during migration.
+
 # Deploy V3 from GitHub with Dockhand and NPM
 
 The Compose files fetch Tavern source from this public GitHub repository and
