@@ -140,6 +140,12 @@ async def invitations(request):
     status, name = await service.matrix("GET", "/_matrix/client/v3/rooms/" + quote(room_id, safe="") + "/state/m.room.name/", token=token, expected=False)
     now, secret, identity = time.time(), secrets.token_urlsafe(32), secrets.token_urlsafe(18)
     room_name = name.get("name", room_id) if status == 200 else room_id
+    # Matrix room names are user-controlled, while SMTP subjects must be one
+    # line. Normalize before saving so header construction cannot lose the
+    # once-only invitation URL after the database insert succeeds.
+    if not isinstance(room_name, str):
+        room_name = room_id
+    room_name = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", room_name).strip()[:255] or room_id
     service.require_session(request)
     service.store.db.execute("INSERT INTO invitations(id,token_hash,room_id,room_name,creator,created,expires,max_uses,email,domain,default_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                              (identity, service.store.digest("invite:" + secret), room_id, room_name[:255], session["user_id"], now, now + hours * 3600, uses, email, domain, json.dumps(default_roles)))

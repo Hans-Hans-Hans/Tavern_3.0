@@ -3,6 +3,7 @@ import { effectiveRolePermissions, memberRoleRank, readRolePolicy, type RolePoli
 
 export const channelPolicyEvent = 'io.tavern.channel';
 export const timeoutEvent = 'io.tavern.timeout';
+export const temporaryBanEvent = 'io.tavern.tempban';
 export const channelKinds = { text: 'Text', voice: 'Voice', video: 'Video', forum: 'Forum', announcement: 'Announcement', rules: 'Rules', media: 'Media', 'read-only': 'Read only' } as const;
 export type ChannelKind = keyof typeof channelKinds;
 export type ChannelPolicy = { kind: ChannelKind; slowModeSeconds: number; archived: boolean };
@@ -67,6 +68,16 @@ export async function moderateMember(roomId: string, userId: string, operation: 
 export function postingRestriction(roomId: string): string {
   try {
     const { room, me, client, policies } = roomContext(roomId), policy = readChannelPolicy(roomId);
+    const parents = room.currentState.getStateEvents('m.space.parent').filter(event => {
+      const parentId = event.getStateKey(), parent = parentId && client.getRoom(parentId);
+      return event.getContent().canonical && event.getContent().via?.length && parent && readRolePolicy(parentId!) && parent.currentState.getStateEvents('m.space.child', roomId)?.getContent().via?.length;
+    }).map(event => client.getRoom(event.getStateKey()!)!);
+    for (const scope of [room, ...parents]) {
+      const restriction = scope.currentState.getStateEvents(temporaryBanEvent, me)?.getContent();
+      if (!restriction) continue;
+      if (restriction.version !== 1 || !Number.isSafeInteger(restriction.until) || restriction.until < 0) return 'A temporary ban is active. Ask a moderator to check its expiry.';
+      if (restriction.until > Date.now()) return 'You are temporarily banned ' + (scope.roomId === roomId ? 'from this conversation' : 'from this channel’s server') + ' until ' + new Date(restriction.until).toLocaleString() + '.';
+    }
     if (policy.archived) return 'This channel is archived. An authorized member can restore it in channel settings.';
     const until = Math.max(memberTimeout(roomId, me).until, ...room.currentState.getStateEvents('m.space.parent').filter(e => e.getContent().canonical).map(e => memberTimeout(e.getStateKey() || '', me).until));
     if (until > Date.now()) return 'You are timed out until ' + new Date(until).toLocaleString() + '.';

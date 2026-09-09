@@ -377,7 +377,7 @@ class Service:
         allowed = {'/api/auth/session', '/api/auth/logout', '/api/account/security', '/api/account/security/email-code', '/api/account/password'}
         if account.get('password_change_required') and request.path not in allowed:
             raise APIError(403, 'Change your password before continuing.', 'PASSWORD_CHANGE_REQUIRED')
-        enrollment = allowed | {'/api/account/email/start', '/api/account/email/complete', '/api/account/mfa/totp/start', '/api/account/mfa/totp/complete', '/api/account/mfa/email'}
+        enrollment = allowed | {'/api/account/email/start', '/api/account/email/complete', '/api/account/email/pending', '/api/account/email/pending/complete', '/api/account/mfa/totp/start', '/api/account/mfa/totp/complete', '/api/account/mfa/email'}
         if self.needs_mfa_enrollment(session) and request.path not in enrollment:
             raise APIError(403, 'Set up two-step verification before continuing.', 'MFA_ENROLLMENT_REQUIRED')
         return session
@@ -1154,7 +1154,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation"):
+    for module in ("operations", "social", "community_api", "system_policy", "admin_resources", "integrations_admin", "invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans"):
         import_module(prefix + module).register_routes(app)
     return app
 

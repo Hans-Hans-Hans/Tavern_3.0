@@ -10,10 +10,12 @@ try:
     from channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from thread_policy import ThreadPolicy, THREAD
     from invitation_policy import InvitationPolicy
+    from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
     from synapse_modules.channel_policy import ChannelPolicy, CHANNEL, TIMEOUT
     from synapse_modules.thread_policy import ThreadPolicy, THREAD
     from synapse_modules.invitation_policy import InvitationPolicy
+    from synapse_modules.temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
@@ -210,6 +212,7 @@ class TavernPolicy:
         self.channels = ChannelPolicy(api, permissions, rank)
         self.threads = ThreadPolicy(api, self.channels)
         self.invitations = InvitationPolicy(config, api)
+        self.temporary_bans = TemporaryBanPolicy(api, permissions, rank)
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed)
 
     @staticmethod
@@ -227,7 +230,10 @@ class TavernPolicy:
         parents = [(key, value) for (kind, key), value in state.items() if kind == "m.space.parent" and value.content.get("canonical") and value.content.get("via")]
         found = []
         for parent_id, _ in parents:
-            parent = await self.api.get_room_state(parent_id, [(POLICY, ''), (LAYOUT, ''), ('m.space.child', event.room_id), (TIMEOUT, event.sender)])
+            filters = [(POLICY, ''), (LAYOUT, ''), ('m.space.child', event.room_id), (TIMEOUT, event.sender), (TEMPBAN, event.sender), ('m.room.member', event.sender)]
+            if event.type in ('m.room.member', TEMPBAN) and isinstance(getattr(event, 'state_key', None), str):
+                filters.append((TEMPBAN, event.state_key))
+            parent = await self.api.get_room_state(parent_id, filters)
             policy = content(parent, POLICY)
             # Reciprocal links prevent a client from claiming membership of someone else's server.
             if (POLICY, "") in parent and content(parent, "m.space.child", event.room_id).get("via"):
@@ -235,6 +241,18 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        policies = await self._policies(event, state_events)
+        if any(not valid_policy(policy) for _, policy, _ in policies):
+            return False, None
+        if not await self.temporary_bans.check(event, state_events, policies):
+            return False, None
+        # Native Matrix auth still applies to these teardown events. A restricted
+        # member must be able to leave even if their former role was removed.
+        if temporary_ban_cleanup(event, state_events):
+            import time
+            now = int(time.time() * 1000)
+            if temporary_ban_active(state_events, event.sender, now) or any(temporary_ban_active(parent, event.sender, now) for _, _, parent in policies):
+                return True, None
         if not await self.invitations.check(event):
             return False, None
         if event.type == POLICY:
@@ -252,7 +270,6 @@ class TavernPolicy:
             if not valid_policy(old):
                 return False, None
             return may_edit_policy(old, event.content, event.sender), None
-        policies = await self._policies(event, state_events)
         if event.type == LAYOUT and (getattr(event, 'state_key', None) != '' or not valid_layout(event.content)):
             return False, None
         for server_id, policy, server_state in policies:
@@ -270,7 +287,7 @@ class TavernPolicy:
                 # adapter is covered by deployment tests and the pinned Synapse version.
                 original = await self.api._store.get_event(target, allow_none=True) if target else None
                 # Redacting a policy or parent could remove enforcement. Policies must be edited in place.
-                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, THREAD, LAYOUT, "m.space.parent", "m.space.child", "m.room.create"):
+                if not original or original.type in (POLICY, CHANNEL, TIMEOUT, TEMPBAN, THREAD, LAYOUT, "m.space.parent", "m.space.child", "m.room.create"):
                     return False, None
                 if original.sender != actor and "manage_messages" not in grants:
                     return False, None
@@ -293,7 +310,7 @@ class TavernPolicy:
             elif kind == "m.room.power_levels":
                 return False, None  # Native authority remains an owner operation.
             else:
-                need = {"m.room.message": "send_messages", "m.room.encrypted": "send_messages", "m.reaction": "add_reactions", "m.room.pinned_events": "pin_messages", "org.matrix.msc3401.call.member": "join_calls", "m.call.invite": "join_calls", "m.call.answer": "join_calls", "io.tavern.server.layout": "manage_channels", TIMEOUT: "timeout"}.get(kind)
+                need = {"m.room.message": "send_messages", "m.room.encrypted": "send_messages", "m.reaction": "add_reactions", "m.room.pinned_events": "pin_messages", "org.matrix.msc3401.call.member": "join_calls", "m.call.invite": "join_calls", "m.call.answer": "join_calls", "io.tavern.server.layout": "manage_channels", TIMEOUT: "timeout", TEMPBAN: "ban"}.get(kind)
                 if need is None and key is not None and kind != THREAD:
                     need = "manage_server" if event.room_id == server_id else "manage_channels"
                 if need and need not in grants:

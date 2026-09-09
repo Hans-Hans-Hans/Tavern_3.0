@@ -12,7 +12,10 @@ const pages = [], errors = [];
 async function page() {
   const context = await browser.newContext({ ignoreHTTPSErrors: true });
   const value = await context.newPage(); value.setDefaultTimeout(60000);
-  value.on('pageerror', error => errors.push(error.message)); pages.push(value); return value;
+  value.on('pageerror', error => errors.push(error.message));
+  value.on('console', message => { if (message.type() === 'error') errors.push(message.text().slice(0, 2000)); });
+  value.on('response', response => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.request().method() + ' ' + new URL(response.url()).pathname); });
+  pages.push(value); return value;
 }
 async function api(page, path, body, matrix = false) {
   return page.evaluate(async ({ path, body, matrix }) => {
@@ -38,6 +41,26 @@ async function login(page, username, password) {
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await ready(page);
+}
+function message(page, eventId) {
+  return page.locator('article.message[id=' + JSON.stringify('message-' + eventId) + ']');
+}
+async function responseDuring(page, predicate, action) {
+  // Attach both rejection handlers immediately so a missing response cannot
+  // terminate Node before the browser diagnostics in the outer catch run.
+  const [response] = await Promise.all([page.waitForResponse(predicate), action()]);
+  return response;
+}
+function encryptedResponse(page, action) {
+  return responseDuring(page, response => response.request().method() === 'PUT' && response.url().includes('/send/m.room.encrypted/'), action);
+}
+async function encryptedEvent(page, roomId, response, plaintext) {
+  assert.equal(response.status(), 200);
+  const { event_id: eventId } = await response.json();
+  const stored = await api(page, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/event/' + encodeURIComponent(eventId), undefined, true);
+  assert.equal(stored.status, 200); assert.equal(stored.data.type, 'm.room.encrypted');
+  assert.ok(stored.data.content.ciphertext); assert.ok(!JSON.stringify(stored.data).includes(plaintext));
+  return eventId;
 }
 try {
   const admin = await page(); await admin.goto(origin);
@@ -65,6 +88,7 @@ try {
   assert.equal((await api(admin, '/api/auth/config')).data.bootstrapRequired, false);
   const cookie = (await admin.context().cookies()).find(cookie => cookie.httpOnly);
   assert.ok(cookie?.secure, 'The authenticated session must use a secure HttpOnly cookie.');
+  console.log('PASS: administrator setup verifies email through TLS SMTP and creates a secure HttpOnly session.');
   for (const [username, displayName, credential] of [['cialice', 'CI Alice', alicePassword], ['cibob', 'CI Bob', bobPassword]]) {
     const result = await api(admin, '/api/admin/users', { username, displayName, password: credential });
     assert.equal(result.status, 201, 'An administrator must be able to create ordinary accounts: ' + JSON.stringify(result.data));
@@ -74,6 +98,7 @@ try {
   const aliceSession = (await api(alice, '/api/auth/session')).data, bobSession = (await api(bob, '/api/auth/session')).data;
   assert.equal(aliceSession.admin, false); assert.equal(bobSession.admin, false);
   assert.equal((await api(alice, '/api/admin/users')).status, 403);
+  console.log('PASS: two ordinary accounts sign in and administrator endpoints reject their sessions.');
   // Create the encrypted test fixture through the same authenticated native
   // Matrix gateway; actual sending/decryption below uses the production UI/SDK.
   const created = await api(alice, '/_matrix/client/v3/createRoom', { name: 'CI encrypted conversation', preset: 'private_chat', invite: [bobSession.userId], creation_content: { 'm.federate': false }, initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }] }, true);
@@ -81,19 +106,66 @@ try {
   assert.equal((await api(bob, '/_matrix/client/v3/join/' + encodeURIComponent(roomId), {}, true)).status, 200);
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   const text = 'Encrypted CI proof ' + randomBytes(12).toString('hex');
-  const encryptedSend = alice.waitForResponse(response => response.request().method() === 'PUT' && response.url().includes('/send/m.room.encrypted/'));
+  console.log('Ready to send an encrypted message from the production composer.');
   await alice.getByRole('textbox', { name: 'Message CI encrypted conversation', exact: true }).fill(text);
-  await alice.getByRole('button', { name: 'Send message', exact: true }).click();
-  const sent = await encryptedSend; assert.equal(sent.status(), 200);
-  const { event_id: eventId } = await sent.json();
+  const encryptedSend = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click());
+  const eventId = await encryptedEvent(alice, roomId, encryptedSend, text);
   await expect(bob.locator('.message-body').filter({ hasText: text })).toBeVisible({ timeout: 60000 });
-  const stored = await api(alice, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/event/' + encodeURIComponent(eventId), undefined, true);
-  assert.equal(stored.status, 200); assert.equal(stored.data.type, 'm.room.encrypted');
-  assert.ok(stored.data.content.ciphertext); assert.ok(!JSON.stringify(stored.data).includes(text));
   await bob.reload(); await ready(bob);
   assert.equal((await api(bob, '/api/auth/session')).data.deviceId, bobSession.deviceId);
   await expect(bob.locator('.message-body').filter({ hasText: text })).toBeVisible({ timeout: 60000 });
   console.log('PASS: real HTTPS administrator email verification, ordinary account login, server authorization, encrypted two-user messaging, and same-device reload decryption.');
+
+  const aliceMessage = message(alice, eventId), bobMessage = message(bob, eventId);
+  const edited = text + ' edited';
+  await aliceMessage.hover();
+  await aliceMessage.getByRole('button', { name: 'More message actions', exact: true }).click();
+  await alice.getByRole('menuitem', { name: 'Edit message', exact: true }).click();
+  await aliceMessage.getByRole('textbox', { name: 'Edit message text', exact: true }).fill(edited);
+  const encryptedEdit = await encryptedResponse(alice, () => aliceMessage.getByRole('button', { name: 'Save', exact: true }).click());
+  await encryptedEvent(alice, roomId, encryptedEdit, edited);
+  await expect(bobMessage.locator('.message-body')).toHaveText(edited);
+  await expect(bobMessage.locator('.edited')).toBeVisible();
+
+  await bobMessage.hover();
+  await bobMessage.getByRole('button', { name: 'Add reaction', exact: true }).click();
+  await bob.getByRole('searchbox', { name: 'Search emoji', exact: true }).fill('thumbs up');
+  const reacted = await responseDuring(bob, response => response.request().method() === 'PUT' && response.url().includes('/send/m.reaction/'), () => bob.getByRole('button', { name: 'thumbs up like yes', exact: true }).click());
+  assert.equal(reacted.status(), 200);
+  await bob.keyboard.press('Escape');
+  await expect(aliceMessage.getByRole('button', { name: 'View 1 people reacting with 👍', exact: true })).toBeVisible();
+
+  const threadText = 'Encrypted thread proof ' + randomBytes(12).toString('hex');
+  await bobMessage.hover();
+  await bobMessage.getByRole('button', { name: 'Reply in thread', exact: true }).click();
+  await bob.getByRole('textbox', { name: 'Message this thread', exact: true }).fill(threadText);
+  const encryptedThread = await encryptedResponse(bob, () => bob.locator('.thread-sheet').getByRole('button', { name: 'Send message', exact: true }).click());
+  await encryptedEvent(bob, roomId, encryptedThread, threadText);
+  await expect(aliceMessage.getByRole('button', { name: '1 reply View thread', exact: true })).toBeVisible();
+  await aliceMessage.getByRole('button', { name: '1 reply View thread', exact: true }).click();
+  await expect(alice.locator('.thread-sheet .message-body').filter({ hasText: threadText })).toBeVisible();
+  for (const participant of [alice, bob]) await participant.locator('.thread-sheet').getByRole('button', { name: 'Close', exact: true }).click();
+  console.log('PASS: encrypted edits and thread replies decrypt for the other user; reactions synchronize.');
+
+  const fileName = 'ci-encrypted-proof.bin', fileBytes = Buffer.concat([Buffer.from('Tavern private file proof '), randomBytes(4096)]);
+  const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files (up to 10 MB each)', exact: true }).click()]);
+  const upload = await responseDuring(alice, response => response.request().method() === 'POST' && /\/_matrix\/(media|client)\/.*\/upload(?:\?|$)/.test(response.url()), () => chooser.setFiles({ name: fileName, mimeType: 'application/octet-stream', buffer: fileBytes }));
+  assert.equal(upload.status(), 200);
+  const wireBytes = upload.request().postDataBuffer();
+  assert.ok(wireBytes?.length, 'The browser must upload encrypted file bytes.');
+  assert.notDeepEqual(wireBytes, fileBytes); assert.ok(!wireBytes.includes(Buffer.from('Tavern private file proof ')));
+  await expect(alice.locator('.pending-files')).toContainText(fileName);
+  const encryptedFile = await encryptedResponse(alice, () => alice.getByRole('button', { name: 'Send message', exact: true }).click());
+  await encryptedEvent(alice, roomId, encryptedFile, fileName);
+  const fileCard = bob.locator('.file-card').filter({ hasText: fileName });
+  await fileCard.click();
+  const [download] = await Promise.all([bob.waitForEvent('download'), bob.getByRole('dialog').getByRole('button', { name: 'Download', exact: true }).click()]);
+  assert.equal(download.suggestedFilename(), fileName);
+  const stream = await download.createReadStream(), chunks = [];
+  assert.ok(stream, 'The receiving user must be able to download the decrypted file.');
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  assert.deepEqual(Buffer.concat(chunks), fileBytes);
+  console.log('PASS: the uploaded file is ciphertext in transit and decrypts byte-for-byte for the receiving user.');
 } catch (error) {
   console.error('Live browser errors:', errors);
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));

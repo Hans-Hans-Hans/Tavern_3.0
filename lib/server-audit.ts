@@ -2,7 +2,7 @@ import { Direction, Filter } from 'matrix-js-sdk';
 import { getMatrixClient } from './matrix';
 import { effectiveRolePermissions, readRolePolicy } from './roles';
 
-export const auditEventTypes = ['m.room.create', 'm.room.name', 'm.room.topic', 'm.room.avatar', 'm.room.member', 'm.room.power_levels', 'm.room.join_rules', 'm.room.history_visibility', 'm.room.encryption', 'm.room.pinned_events', 'm.room.redaction', 'm.space.child', 'm.space.parent', 'io.tavern.roles', 'io.tavern.server.layout', 'io.tavern.channel', 'io.tavern.timeout', 'io.tavern.thread', 'io.tavern.server.onboarding', 'io.tavern.emoji'];
+export const auditEventTypes = ['m.room.create', 'm.room.name', 'm.room.topic', 'm.room.avatar', 'm.room.member', 'm.room.power_levels', 'm.room.join_rules', 'm.room.history_visibility', 'm.room.encryption', 'm.room.pinned_events', 'm.room.redaction', 'm.space.child', 'm.space.parent', 'io.tavern.roles', 'io.tavern.server.layout', 'io.tavern.channel', 'io.tavern.timeout', 'io.tavern.tempban', 'io.tavern.thread', 'io.tavern.server.onboarding', 'io.tavern.emoji'];
 export type AuditKind = 'membership' | 'moderation' | 'roles' | 'channels' | 'settings';
 export type ServerAuditEvent = { id: string; roomId: string; actor: string; target: string; at: number; kind: AuditKind; action: string; detail: string; type: string };
 export type AuditFilters = { actor: string; target: string; kind: string; since: string; until: string };
@@ -30,6 +30,12 @@ export function projectServerAuditEvent(raw: any, roomId: string): ServerAuditEv
     }
     case 'm.room.redaction': result.kind = 'moderation'; result.action = 'Redacted event'; result.target = text(content.redacts || raw.redacts, 1024) || 'Unavailable event ID'; result.detail = text(content.reason); break;
     case 'io.tavern.timeout': result.kind = 'moderation'; result.action = Number.isSafeInteger(content.until) && content.until > result.at && content.until <= 8640000000000000 ? 'Timed out member' : 'Removed member timeout'; result.detail = (Number.isSafeInteger(content.until) && content.until > result.at && content.until <= 8640000000000000 ? 'Until ' + new Date(content.until).toISOString() + '. ' : '') + text(content.reason); break;
+    case 'io.tavern.tempban': {
+      result.kind = 'moderation'; const until = content.until;
+      const valid = content.version === 1 && Number.isSafeInteger(until) && until >= 0 && until <= 8640000000000000;
+      result.action = !valid ? 'Temporary ban with invalid expiry' : until === 0 ? 'Lifted temporary ban' : 'Applied temporary ban';
+      result.detail = (!valid ? 'Restriction remains active until repaired. ' : until ? 'Until ' + new Date(until).toISOString() + '. ' : '') + text(content.reason); break;
+    }
     case 'io.tavern.roles': {
       result.kind = 'roles'; result.action = 'Updated server roles and permissions';
       const roles = Array.isArray(content.roles) ? content.roles.slice(0, 100) : [], old = Array.isArray(previous.roles) ? previous.roles.slice(0, 100) : [];

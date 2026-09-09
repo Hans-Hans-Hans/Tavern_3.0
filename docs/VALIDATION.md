@@ -1,43 +1,44 @@
 # Tavern validation record
 
-This records observed checks for the 0.4 development branch. It distinguishes successful stages from a successful complete workflow and from production acceptance. See the [implementation checklist](IMPLEMENTATION_CHECKLIST.md) for the full requested feature inventory.
+This records observed checks for the 0.4 development code, including the `923d726` test checkpoint pushed to `V3` on 2026-09-09. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
 ## Observed continuous integration
 
-[GitHub run 34303667300](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34303667300) tested commit `16ad9c274acecd1482d215e45f2d9fa766589b7f`. The following stages were observed passing:
+[GitHub run 34343989783](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34343989783) tested `923d726`. These stages passed:
 
 | Check | Result and scope |
 |---|---|
-| Frontend build and type checking | Passed for the tested commit; static app and bundled conference assets compiled |
-| JavaScript and browser tests | Passed for the tested commit; model/crypto/projection tests and actual headless-browser fixtures |
-| Production PWA offline smoke | Passed using built production assets; verifies safe static caching and offline UI |
-| Python tests | Passed for the tested commit; account/API/policy/deployment/operations cases |
-| Remote-context Docker builds | Passed for web and integration images |
-| Restricted gateway startup | Passed with read-only filesystem, dropped capabilities, blocked federation/admin routes and runtime config assertions |
-| Fresh canonical Compose stack | Containers became healthy; actual API, database, Synapse and gateway startup observed |
-| Backup archive integrity | Passed; the archive included recoverable database and persistent configuration/media contents |
-| Clone PostgreSQL restoration | Failed in this run at temporary-database readiness; a TCP-readiness fix is implemented and awaits observed rerun |
+| Frontend build and type checking | Production frontend and bundled conference assets compiled |
+| JavaScript and browser tests | Model/crypto/projection tests and headless-browser fixtures passed |
+| Production PWA offline smoke | Built production assets opened safely offline |
+| Python and Compose validation | API/policy/operations tests and deployment definitions passed |
+| Remote-context Docker builds | Web and integration images built from the committed GitHub source |
+| Restricted gateway | Read-only filesystem, dropped capabilities, health, blocked federation/admin routes and runtime configuration passed |
+| Fresh canonical stack | Actual gateway, API, Synapse, PostgreSQL and supporting services became healthy |
+| Backup and isolated clone restore | Binary API-volume contents, PostgreSQL fixture row and Synapse signing identity survived backup/restoration |
+| TLS SMTP and HTTPS setup | Real SMTP delivery, administrator email verification and a secure HttpOnly session succeeded |
+| Ordinary account authorization | Two ordinary accounts signed in, administrator APIs rejected their sessions, and native encrypted-room creation/join succeeded |
+| Encrypted send/decryption | Did not complete: the test timed out waiting for the first send response |
 
-The overall run was not green because clone restoration failed. Earlier run 34302882380 exposed binary corruption when a Docker log stream was used to extract an archive; the binary exec-stream fix passed the archive-integrity stage above. These failed cases remain visible as evidence of defects found, not successful restore claims.
+The overall run failed at the messaging stage. Investigation found that a room deep link could be requested before joined-room state arrived in Matrix sync. The later sync refresh updated the room list without resolving the pending link. This routing defect has been fixed in subsequent source; a rerun must establish whether it resolves the observed failure. The smoke script now captures failures reliably and additionally checks real encrypted edits, reactions, thread replies and byte-for-byte file download. Those additional checks are not recorded as passing yet.
+
+Earlier failures exposed binary archive extraction, restored-database readiness, read-only proxy mounts and the runner's access to the SMTP inbox. The successful stages above validate their fixes; the failures are not counted as successful checks.
 
 ## Subsequent local verification
 
-Focused tests have also passed for category role inheritance and permission-boundary moves, invitation privacy, rich account administration, emoji customization/preferences, profile metadata, encrypted IndexedDB search, notifications/appearance, command navigation and 2,000-row variable-height message virtualization. The richer administrator UI has browser checks for empty filtered pages with continued pagination, MFA email-code state retention and retry, self-account guards, and privilege-safe profile edits.
+Current focused verification includes 21 invitation/community API tests covering hierarchy, native authority, stale writes, suspension, capacity retries, email failure and temporary-token cleanup. Temporary-ban work passed 43 combined Python policy/API cases, six channel-policy JavaScript cases and two browser flows. Three warning browser flows cover typed confirmation, rejected-draft retention, withdrawal history, inbox read state and losing moderator authority. These sets overlap and must not be added to produce a suite total.
 
-These tests extend the tested source beyond the CI commit above. They do not retroactively certify that commit or establish a green run for the latest working tree. Exact totals change as implementation continues; use the final CI logs as the authoritative test count.
+Prior browser/API checks also cover category authorization, privacy, account administration, required password/MFA gates, branding, service log filtering, roles, reactions, encrypted image previews, streaming exports, onboarding, search, notifications, keyboard navigation and 2,000-row message virtualization. Production build and typecheck passed after mounting the new moderation/admin panels. Exact totals continue to change; final CI logs are authoritative for their tested commit.
 
-A real TLS SMTP test sink was independently exercised with SMTP_SSL, MIME parsing, and code retrieval. The new full-stack HTTPS smoke is implemented to exercise one-time bootstrap, two users sending encrypted Matrix messages, absence of plaintext in the server event, and same-device decryption after reload. That full-stack browser stage has not yet been observed passing in this record.
-
-The Windows development environment has no local Docker daemon. Container results above came from the GitHub runner, not local YAML parsing.
+The Windows development workspace has no local Docker daemon. Container and real SMTP/HTTPS results came from the GitHub runner, not local YAML parsing.
 
 ## Remaining acceptance
 
-- Observe a completely green workflow for the final commit, including restored PostgreSQL fixture data, API-volume binary hashes and Synapse signing-key equality.
-- Run the real HTTPS/two-user encrypted-message smoke and interrupted-login/verification/recovery paths against the pinned Synapse image.
-- Validate Gmail App Password delivery, external NPM/Cloudflare cookie behavior and required public routing.
-- Exercise role/category/thread/invitation policies with independent ordinary and moderator accounts against deployed Synapse.
-- Test TURN/LiveKit voice/video/screen sharing from independent networks and supported devices.
-- Perform preserved-data upgrades, failed-update rollback and an actual backup recovery/E2EE drill before production cutover.
-- Review mobile/PWA installation, keyboard/screen-reader/contrast behavior, realistic load and independent security findings.
+- Complete green CI for the final commit, including the real two-user encrypted message/edit/thread/media workflows.
+- Gmail App Password delivery and external NPM/Cloudflare cookie/routing validation.
+- Independent ordinary/moderator account tests for role/category/thread/invitation policies against deployed Synapse.
+- TURN/LiveKit voice, video and screen sharing from independent networks and supported devices.
+- Preserved-data upgrades, failed-update rollback and a full server/E2EE recovery drill before production cutover.
+- Mobile/PWA installation, keyboard/screen-reader/contrast behavior, representative load and independent security review.
 
-Passing unit tests, configured health checks, a complete source build, or a healthy container do not prove external media connectivity or production-scale performance. No independent security audit, load-capacity certification, or complete mature-platform parity is claimed.
+Healthy services and unit tests do not establish external media connectivity or production-scale performance. No independent security audit, capacity certification or complete mature-platform parity is claimed.

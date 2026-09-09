@@ -2,7 +2,7 @@
 
 ## 0.4.0 — Unreleased
 
-This version is under development on `codex/tavern-completion`. These entries describe implemented changes; acceptance is tracked in [VALIDATION](docs/VALIDATION.md). No 0.4 images or release have been published.
+This version is under development on `codex/tavern-completion`; a test checkpoint is available on `V3`. These entries describe implemented changes; acceptance is tracked in [VALIDATION](docs/VALIDATION.md). No 0.4 images or release have been published.
 
 ### Added
 
@@ -11,6 +11,8 @@ This version is under development on `codex/tavern-completion`. These entries de
 - Account/server profiles, optimized image editing, contacts and invitation privacy, independent server roles, category/channel permission inheritance, custom emojis, and onboarding.
 - Virtualized conversations and threads, encrypted device search, forwarding with destination encryption, consent-based text link previews, and an encrypted local outbox for retries, scheduled sends, and reminders.
 - Administrative email, user, room, report, audit, quota, integration, maintenance, announcement, backup, and update workflows.
+- Validated instance artwork and security policy editors, invitation email/default roles, private warning inboxes, temporary bans, bulk message moderation, server audit and measured service logs/performance.
+- Optimistic reaction member popovers, configurable message entry, encrypted image thumbnails and streaming historical message export.
 - Installable app shell, offline/reconnect behavior, guarded app updates, and automated browser/API/deployment coverage.
 
 ### Changed

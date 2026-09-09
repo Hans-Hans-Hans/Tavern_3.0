@@ -1,4 +1,5 @@
 """Default invitation roles use the deployed policy and the issuer's real token."""
+import asyncio
 import copy
 import time
 from urllib.parse import quote
@@ -24,8 +25,11 @@ async def checked_roles(service, room_id, issuer, requested, target=None):
     if service.store.account(issuer).get('access_blocked'):
         raise APIError(403, 'The invitation issuer is suspended.')
     model, current = policy_model(service), await state(service, room_id)
+    if service.store.account(issuer).get('access_blocked'):
+        raise APIError(403, 'The invitation issuer is suspended.')
     policy = content(current, model.POLICY)
-    if content(current, 'm.room.create').get('type') != 'm.space' or not model.valid_policy(policy):
+    create = content(current, 'm.room.create')
+    if create.get('type') != 'm.space' or create.get('m.federate', True) or not model.valid_policy(policy):
         raise APIError(400, 'Default roles are available on servers with an enabled role policy.')
     if content(current, 'm.room.member', issuer).get('membership') != 'join':
         raise APIError(403, 'The invitation issuer no longer belongs to this server.')
@@ -52,6 +56,13 @@ async def checked_roles(service, room_id, issuer, requested, target=None):
 
 
 async def apply_roles(service, invitation, session, requested):
+    # Serialize companion suspension/revocation with the final grant. Native
+    # Matrix authorization still applies to the short-lived issuer token.
+    async with service.user_locks.setdefault(invitation['creator'], asyncio.Lock()):
+        await _apply_roles(service, invitation, session, requested)
+
+
+async def _apply_roles(service, invitation, session, requested):
     policy = await checked_roles(service, invitation['room_id'], invitation['creator'], requested, session['user_id'])
     if policy is None: return
     model = policy_model(service); proposed = copy.deepcopy(policy)

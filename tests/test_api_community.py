@@ -4,6 +4,7 @@ import re
 import unittest
 
 from tests import test_api as fixture
+from api.server import APIError
 
 
 class CommunityAPITests(unittest.IsolatedAsyncioTestCase):
@@ -57,6 +58,40 @@ class CommunityAPITests(unittest.IsolatedAsyncioTestCase):
         denied = await self.request("POST", "/api/invitations/redeem", {"token": invitation["token"]}, bob)
         self.assertEqual(denied.status, 403)
         self.assertEqual(self.service.store.db.execute("SELECT uses FROM invitations WHERE id=?", (invitation["id"],)).fetchone()[0], 0)
+
+    async def test_email_invitation_requires_explicit_delivery_and_an_exact_recipient(self):
+        owner, invitation = await self.create_invitation(email='bob@example.com')
+        self.service.send_email.assert_not_awaited()
+        for values in ({'sendEmail': True}, {'sendEmail': True, 'domain': 'example.com'}):
+            result = await self.request('POST', '/api/invitations', {'roomId': '!room:test', **values}, owner)
+            self.assertEqual(result.status, 400)
+        self.service.store.set('smtp', {'enabled': False})
+        result = await self.request('POST', '/api/invitations', {'roomId': '!room:test', 'sendEmail': True, 'email': 'bob@example.com'}, owner)
+        self.assertEqual(result.status, 400)
+        self.assertEqual(self.service.store.db.execute('SELECT count(*) FROM invitations').fetchone()[0], 1)
+        self.service.send_email.assert_not_awaited()
+
+    async def test_invitation_email_is_normalized_and_partial_failure_returns_the_existing_link_once(self):
+        self.rooms['!room:test']['name'] = 'Test\r\nBcc: unwanted@example.com\x00 server'
+        owner, invitation = await self.create_invitation(email='bob@example.com', sendEmail=True)
+        self.assertTrue(invitation['emailSent'])
+        recipient, subject, message = self.service.send_email.call_args.args
+        self.assertEqual(recipient, 'bob@example.com')
+        self.assertNotRegex(subject, r'[\x00-\x1f\x7f-\x9f]')
+        self.assertIn(invitation['url'], message)
+        self.service.send_email.side_effect = APIError(502, 'Email delivery failed.', 'SMTP_FAILED')
+        result = await self.request('POST', '/api/invitations', {'roomId': '!room:test', 'email': 'bob@example.com', 'sendEmail': True}, owner)
+        self.assertEqual(result.status, 201, await result.text())
+        partial = await result.json()
+        self.assertFalse(partial['emailSent'])
+        self.assertIn('email delivery failed', partial['warning'])
+        self.assertIn(partial['token'], partial['url'])
+        rows = self.service.store.db.execute('SELECT * FROM invitations').fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertNotIn(partial['token'], str([tuple(row) for row in rows]))
+        listing = await self.request('GET', '/api/invitations', cookie=owner)
+        self.assertNotIn(partial['token'], await listing.text())
+        self.assertEqual((await self.request('GET', '/api/invitations/preview/' + partial['token'])).status, 200)
 
     async def test_revoked_invitation_cannot_be_redeemed(self):
         owner, invitation = await self.create_invitation()

@@ -10,7 +10,8 @@ import { ReportReview } from './report-review';
 import { AdminAudit } from './admin-audit';
 import { AdminUsers } from './admin-users';
 import { AdminIntegrations } from './admin-integrations';
-const sections = ['Overview', 'Users', 'Rooms', 'Storage', 'Integrations', 'Email', 'Instance', 'Security', 'Policy', 'Reports', 'Audit', 'Diagnostics', 'Updates', 'Backups'] as const;
+import { AdminLogs } from './admin-logs';
+const sections = ['Overview', 'Users', 'Rooms', 'Storage', 'Integrations', 'Email', 'Instance', 'Security', 'Policy', 'Reports', 'Audit', 'Logs', 'Diagnostics', 'Updates', 'Backups'] as const;
 const formatTime = (n: number | string) => n ? new Date(typeof n === 'number' && n < 1e12 ? n * 1000 : n).toLocaleString() : '—';
 export default function AdminConsole({ session }: { session: AccountSession }) {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -20,7 +21,7 @@ export default function AdminConsole({ session }: { session: AccountSession }) {
   async function load() {
     setBusy(true); setError('');
     try {
-      if(['Reports','Policy','Rooms','Storage','Audit','Integrations','Users','Instance','Security'].includes(section)){setData({});return;}
+      if(['Reports','Policy','Rooms','Storage','Audit','Integrations','Users','Instance','Security','Logs'].includes(section)){setData({});return;}
       const route = section === 'Users' ? '/admin/users?limit=50&from=' + page + '&search=' + encodeURIComponent(query) : section === 'Email' || section === 'Instance' ? '/admin/settings' : '/admin/' + section.toLowerCase();
       const value = await requestApi(route); setData(value); if (section === 'Email' || section === 'Instance') setSettings(value);
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
@@ -38,6 +39,7 @@ export default function AdminConsole({ session }: { session: AccountSession }) {
     {section === 'Instance' && <InstanceBranding key={refreshKey} session={session}/>}
     {section === 'Security' && <AdminSecurityPolicy key={refreshKey}/>}
     {section === 'Audit' && <AdminAudit key={refreshKey}/>}
+    {section === 'Logs' && <AdminLogs key={refreshKey}/>}
     {section === 'Diagnostics' && data && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Component</th><th>Status</th><th>Details</th><th>Latency</th></tr></thead><tbody>{data.checks?.map((c: any) => <tr key={c.component}><td>{c.component}</td><td>{c.status}</td><td>{c.detail}</td><td>{typeof c.latencyMs === 'number' ? Math.round(c.latencyMs) + ' ms' : '—'}</td></tr>)}</tbody></table><p>Checked {formatTime(data.checkedAt)}</p></div>}
     {section === 'Updates' && data && <div className="product-section"><h3>{data.updateAvailable ? 'An update is available' : data.latestStable ? 'Current stable release checked' : 'Release information unavailable'}</h3><p>Installed: {typeof data.current === 'string' ? data.current : data.current?.version}<br/>Latest stable: {data.latestStable?.version || data.latestStable?.tag_name || data.latestStable || 'No published release'}<br/>Latest prerelease: {data.latestPrerelease?.version || data.latestPrerelease?.tag_name || data.latestPrerelease || 'No published prerelease'}</p>{data.reason && <p>{data.reason}</p>}</div>}
     {section === 'Updates' && <OperationsPanel key='updates' mode='updates' releases={data}/>}
