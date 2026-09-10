@@ -408,6 +408,19 @@ class TavernPolicy:
             return may_edit_policy(old, event.content, event.sender) and may_assign_native_members(old, event.content, state_events, event.sender), None
         if event.type == LAYOUT and (getattr(event, 'state_key', None) != '' or not valid_layout(event.content)):
             return False, None
+        if event.type == LAYOUT and 'io.tavern.previous_event' in event.content:
+            # New sidebar writers name the native revision they edited. Keep
+            # legacy version-1 layouts readable and old clients compatible.
+            state_events = await self.api.get_room_state(event.room_id)
+            previous = state_events.get((LAYOUT, ''))
+            if event.content['io.tavern.previous_event'] != (previous.event_id if previous else None):
+                return False, None
+            powers = content(state_events, 'm.room.power_levels')
+            threshold = powers.get('events', {}).get(LAYOUT, powers.get('state_default', 50))
+            if (type(threshold) is not int or content(state_events, 'm.room.member', event.sender).get('membership') != 'join'
+                    or native_member_power(state_events, event.sender) < threshold):
+                return False, None
+            policies = await self._policies(event, state_events)
         for server_id, policy, server_state in policies:
             if not valid_policy(policy):
                 return False, None

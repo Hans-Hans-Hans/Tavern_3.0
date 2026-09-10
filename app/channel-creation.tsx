@@ -6,7 +6,7 @@ import { channelKinds, type ChannelKind } from '@/lib/channel-policy';
 import { channelCreationOwner, channelSlowModes, channelTemplates, createTypedChannel, finishChannelCreation, isChannelCreationOwner, type ChannelCreationResult, type ChannelDraft } from '@/lib/channel-creation';
 import './channel-creation.css';
 
-type Props = { serverId?: string; members: { id: string; name: string }[]; policyEnabled: boolean; callsEnabled: boolean; onCreated: (roomId: string, isCurrent: () => boolean) => Promise<unknown> };
+type Props = { serverId?: string; initialCategoryId?: string; members: { id: string; name: string }[]; policyEnabled: boolean; callsEnabled: boolean; onCreated: (roomId: string, isCurrent: () => boolean) => Promise<unknown> };
 export function ChannelCreationForm(props: Props) {
   const [, refresh] = useState(0);
   useEffect(() => { const stop = onMatrixUpdate(() => refresh(value => value + 1)), timer = setInterval(() => refresh(value => value + 1), 500); return () => { stop(); clearInterval(timer); }; }, []);
@@ -16,11 +16,11 @@ export function ChannelCreationForm(props: Props) {
     boundary.current = { client, user, device, account, serverId, revision: boundary.current.revision + 1 };
   return <ChannelCreationEditor key={boundary.current.revision} {...props}/>;
 }
-function ChannelCreationEditor({ serverId, members, policyEnabled, callsEnabled, onCreated }: Props) {
+function ChannelCreationEditor({ serverId, initialCategoryId = '', members, policyEnabled, callsEnabled, onCreated }: Props) {
   const [owner] = useState(channelCreationOwner), live = useRef(true), lock = useRef(false), receipt = useRef<ChannelCreationResult | null>(null);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const current = () => live.current && isChannelCreationOwner(owner);
-  const [draft, setDraft] = useState<ChannelDraft>({ name: '', description: '', kind: 'text', slowModeSeconds: 0, serverId, categoryId: '', members: [], icon: channelTemplates.text.icon });
+  const [draft, setDraft] = useState<ChannelDraft>({ name: '', description: '', kind: 'text', slowModeSeconds: 0, serverId, categoryId: initialCategoryId, members: [], icon: channelTemplates.text.icon });
   const [filter, setFilter] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [result, setResult] = useState<ChannelCreationResult | null>(null);
   const client = getMatrixClient(), server = serverId ? client?.getRoom(serverId) : null, layout = serverId ? readServerLayout(serverId) : null;
   const candidates = members.filter(member => member.id !== client?.getUserId() && (!serverId || server?.getMember(member.id)?.membership === 'join'));

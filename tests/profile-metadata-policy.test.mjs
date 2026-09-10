@@ -8,7 +8,7 @@ function setup() {
   const roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   const channels = loadTs('../lib/channel-administration.ts', { './matrix': matrix, './roles': roles });
   f.api = loadTs('../lib/profile-metadata-policy.ts', { './matrix': matrix, './channel-administration': channels });
-  f.community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './profile-metadata-policy': f.api, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': {}, './response-image': {}, './server-branding': {}, './self-profile': { nativeSelfProfile: () => ({ name: 'Global owner', avatar: '' }) } });
+  f.community = loadTs('../lib/community.ts', { './api': { accountArtworkOwner: () => null }, './matrix': matrix, './roles': roles, './profile-metadata-policy': f.api, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': {}, './response-image': {}, './server-branding': {}, './self-profile': { nativeSelfProfile: () => ({ name: 'Global owner', avatar: '' }) } });
   f.rules = { ...f.api.emptyProfileMetadataPolicy(), enabled: true, allowLinks: false, maxBioLength: 160, maxStatusLength: 40 };
   f.profile = f.community.normalizeProfile({ name: 'Owner', bio: 'b'.repeat(500), status: 's'.repeat(80), links: [{ label: 'Homepage', url: 'https://example.com' }], fields: [{ label: 'Office', value: 'Remote' }] });
   return f;

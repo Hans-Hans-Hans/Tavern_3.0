@@ -1,9 +1,10 @@
 import type { Room } from 'matrix-js-sdk';
-import { getMatrixClient } from './matrix';
+import { getMatrixClient, mutateMatrixAccountData } from './matrix';
+import { accountArtworkOwner } from './api';
 import { authenticatedMatrixMediaUrl } from './matrix-media';
 import { readImageResponse } from './response-image';
 import { nativeSelfProfile } from './self-profile';
-import { effectiveRolePermissions, mayEditCategoryLayout, readRolePolicy } from './roles';
+import { effectiveRolePermissions, mayEditCategoryLayout, nativeMemberPower, parseRolePolicy, readRolePolicy, rolesEvent } from './roles';
 import { serverNicknameForRoom } from './server-nickname';
 import { checkProfileMetadataPublication, visibleProfileMetadata } from './profile-metadata-policy';
 
@@ -48,8 +49,44 @@ function context(roomId?: string) { const c = getMatrixClient(), me = c?.getUser
 function state(room: Room | null | undefined, type: string, key = '') { return room?.currentState.getStateEvents(type, key)?.getContent() || {}; }
 export function serverChannelIds(serverId: string): string[] { const r = getMatrixClient()?.getRoom(serverId); return r?.currentState.getStateEvents('m.space.child').filter(e => Array.isArray(e.getContent().via) && e.getContent().via.length > 0).map(e => e.getStateKey()!).filter(Boolean) || []; }
 export function readServerLayout(serverId: string) { return normalizeServerLayout(state(getMatrixClient()?.getRoom(serverId), communityEvents.layout), serverChannelIds(serverId)); }
-export function canEditCommunity(roomId: string, kind: 'layout' | 'channel') { const c = getMatrixClient(), me = c?.getUserId(), r = c?.getRoom(roomId); return !!(me && r?.getMyMembership() === 'join' && r.currentState.maySendStateEvent(communityEvents[kind], me)); }
-export async function saveServerLayout(serverId: string, layout: ServerLayout) { const { c, me, room } = context(serverId); if (!room!.isSpaceRoom() || !room!.currentState.maySendStateEvent(communityEvents.layout, me)) throw new Error('You do not have permission to organize this server.'); const policy = readRolePolicy(serverId), next = normalizeServerLayout(layout, serverChannelIds(serverId)); if (policy) { if (!effectiveRolePermissions(policy, me).has('manage_channels')) throw new Error('You do not have permission to organize this server.'); let previous = {}; try { previous = await c.getStateEvent(serverId, communityEvents.layout as any, ''); } catch (e) { if ((e as any).errcode !== 'M_NOT_FOUND') throw e; } if (!mayEditCategoryLayout(policy, me, previous, next)) throw new Error('Only the server owner can move channels across category permission boundaries.'); } await c.sendStateEvent(serverId, communityEvents.layout as any, next, ''); }
+export function canEditCommunity(roomId: string, kind: 'layout' | 'channel') {
+  const c = getMatrixClient(), me = c?.getUserId(), r = c?.getRoom(roomId);
+  if (!me || r?.getMyMembership() !== 'join' || !r.currentState.maySendStateEvent(communityEvents[kind], me)) return false;
+  if (kind !== 'layout') return true;
+  const raw = state(r, rolesEvent), policy = parseRolePolicy(raw);
+  return r.isSpaceRoom() && (!Object.keys(raw).length || !!policy && effectiveRolePermissions(policy, me).has('manage_channels'));
+}
+export async function saveServerLayout(serverId: string, layout: ServerLayout, expected?: ServerLayout) {
+  const { c, me, room } = context(serverId);
+  if (!room!.isSpaceRoom() || !room!.currentState.maySendStateEvent(communityEvents.layout, me)) throw new Error('You do not have permission to organize this server.');
+  const device = c.getDeviceId(), base = c.getHomeserverUrl(), account = accountArtworkOwner();
+  const current = () => { if (getMatrixClient() !== c || c.getUserId() !== me || c.getDeviceId() !== device || c.getHomeserverUrl() !== base || accountArtworkOwner() !== account || c.getRoom(serverId) !== room || room!.getMyMembership() !== 'join') throw new Error('Your account or server membership changed. Reopen the server.'); };
+  const draft = normalizeServerLayout(layout), baseline = normalizeServerLayout(expected ?? readServerLayout(serverId));
+  const events = await c.roomState(serverId); current();
+  if (!Array.isArray(events) || events.length > 50000) throw new Error('The server state is unavailable or too large to organize safely.');
+  const seen = new Set<string>();
+  for (const event of events) {
+    const key = JSON.stringify([event?.type, event?.state_key]);
+    if (!event || typeof event.type !== 'string' || typeof event.state_key !== 'string' || !event.content || typeof event.content !== 'object' || Array.isArray(event.content) || seen.has(key) || event.room_id !== undefined && event.room_id !== serverId) throw new Error('The current server state is invalid.');
+    seen.add(key);
+  }
+  const find = (type: string, key = '') => events.find(event => event.type === type && event.state_key === key);
+  const content = (type: string, key = '') => find(type, key)?.content || {};
+  const rawPolicy = find(rolesEvent), policy = rawPolicy ? parseRolePolicy(rawPolicy.content) : null;
+  const threshold = content('m.room.power_levels').events?.[communityEvents.layout] ?? content('m.room.power_levels').state_default ?? 50;
+  const power = nativeMemberPower({ currentState: { getStateEvents: (type: string, key: string) => { const event = find(type, key); return event ? { getContent: () => event.content, getSender: () => event.sender } : null; } } }, me);
+  if (content('m.room.create').type !== 'm.space' || content('m.room.member', me).membership !== 'join' || !Number.isSafeInteger(threshold) || power < threshold || rawPolicy && (!policy || !effectiveRolePermissions(policy, me).has('manage_channels'))) throw new Error('You do not have permission to organize this server.');
+  const saved = find(communityEvents.layout), ids = events.filter(event => event.type === 'm.space.child' && Array.isArray(event.content.via) && event.content.via.length).map(event => event.state_key);
+  // Reject stale edits, including concurrent additions. A refreshed client can
+  // retry the intended move; never silently replace another editor's layout.
+  const previous = normalizeServerLayout(saved?.content, ids), next = normalizeServerLayout(draft, ids);
+  if (JSON.stringify(baseline) !== JSON.stringify(previous)) throw new Error('The server layout changed elsewhere. Review the updated sidebar and retry your change.');
+  if (policy && !mayEditCategoryLayout(policy, me, previous, next)) throw new Error('Only the server owner can move channels across category permission boundaries.');
+  if (saved && (typeof saved.event_id !== 'string' || !saved.event_id.startsWith('$'))) throw new Error('The saved layout revision is unavailable. Reload the server.');
+  current();
+  await c.sendStateEvent(serverId, communityEvents.layout as any, { ...next, 'io.tavern.previous_event': saved?.event_id ?? null }, '');
+  current();
+}
 export { readServerBranding, canEditServerBranding, saveServerBranding } from './server-branding';
 export function readChannelAppearance(roomId: string) { return normalizeChannelAppearance(state(getMatrixClient()?.getRoom(roomId), communityEvents.channel)); }
 export async function saveChannelAppearance(roomId: string, value: ChannelAppearance) { const { c, me, room } = context(roomId); if (!room!.currentState.maySendStateEvent(communityEvents.channel, me)) throw new Error('You do not have permission to customize this channel.'); let current = {}; try { current = await c.getStateEvent(roomId, communityEvents.channel as any, ''); } catch (e) { if ((e as any).errcode !== 'M_NOT_FOUND') throw e; } const appearance = normalizeChannelAppearance(value); await c.sendStateEvent(roomId, communityEvents.channel as any, { ...current, version: 1, icon: appearance.icon, accent: appearance.accent }, ''); }
@@ -90,9 +127,15 @@ export async function saveOwnProfile(value: Profile, serverId?: string) {
 }
 export async function resetServerProfile(serverId: string): Promise<Profile> { const { c, room } = context(serverId); if (!room!.isSpaceRoom()) throw new Error('Choose a server for this profile.'); return publishOwnProfile(serverId, readOwnProfile(), '', c, true); }
 export function collapsedCategories(serverId: string): string[] { const p = getMatrixClient()?.getAccountData(communityEvents.preferences as any)?.getContent(); const values = record(record(p).collapsed)[serverId]; return Array.isArray(values) ? values.filter(v => typeof v === 'string').slice(0, 100) : []; }
-let preferenceQueue: Promise<unknown> = Promise.resolve();
 export function setCollapsedCategory(serverId: string, categoryId: string, collapsed: boolean) {
-  const { c } = context(); const task = preferenceQueue.catch(() => {}).then(async () => { const old = record(c.getAccountData(communityEvents.preferences as any)?.getContent()), ids = new Set(collapsedCategories(serverId)); collapsed ? ids.add(categoryId) : ids.delete(categoryId); await c.setAccountData(communityEvents.preferences as any, { ...old, collapsed: { ...record(old.collapsed), [serverId]: [...ids] } } as any); }); preferenceQueue = task; return task;
+  const { c, me } = context(serverId), device = c.getDeviceId(), base = c.getHomeserverUrl(), account = accountArtworkOwner();
+  if (!/^[\w-]{1,80}$/.test(categoryId)) throw new Error('Choose a valid category.');
+  const current = () => { if (getMatrixClient() !== c || c.getUserId() !== me || c.getDeviceId() !== device || c.getHomeserverUrl() !== base || accountArtworkOwner() !== account) throw new Error('Your account changed. Reopen the server.'); };
+  return mutateMatrixAccountData(c, communityEvents.preferences, value => {
+    const old = record(value), values = record(old.collapsed)[serverId], ids = new Set<string>(Array.isArray(values) ? values.filter(id => typeof id === 'string').slice(0, 100) : []);
+    collapsed ? ids.add(categoryId) : ids.delete(categoryId);
+    return { ...old, collapsed: { ...record(old.collapsed), [serverId]: [...ids].slice(-100) } };
+  }, current);
 }
 export async function uploadProfileImage(blob: Blob) { const { c } = context(); if (!['image/webp', 'image/png', 'image/jpeg'].includes(blob.type) || blob.size > 2 * 1024 * 1024) throw new Error('Use an optimized PNG, JPEG, or WebP image under 2 MB.'); return (await c.uploadContent(blob, { includeFilename: false, type: blob.type })).content_uri; }
 export async function profileImageBlob(mxc: string, size = 128, signal?: AbortSignal, height = size): Promise<Blob> {

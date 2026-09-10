@@ -66,9 +66,10 @@ const defaultsChanged = (event: MatrixEvent) => { if ([notificationDefaultsEvent
 const synced=(state:string)=>{if(state==='PREPARED'||state==='SYNCING'){ready=true;queueDefaults();}refreshWebPushForeground();};
 export function initializeNotifications(c:MatrixClient){resetNotifications();client=c;started=Date.now();setWebPushForegroundHandler(device=>client===c&&ready&&['PREPARED','SYNCING'].includes(c.getSyncState()||'')&&c.getDeviceId()===device&&(document.visibilityState==='visible'||browserNotificationsEnabled()));c.on(ClientEvent.Sync,synced);c.on(RoomEvent.Timeline,eventReceived);c.on(MatrixEventEvent.Decrypted,eventReceived);c.on(RoomStateEvent.Events,defaultsChanged);}
 export function resetNotifications(){setWebPushForegroundHandler(null);client?.off(ClientEvent.Sync,synced);client?.off(RoomEvent.Timeline,eventReceived);client?.off(MatrixEventEvent.Decrypted,eventReceived);client?.off(RoomStateEvent.Events,defaultsChanged);client=null;ready=false;seen.clear();appliedDefaults.clear();if(defaultTimer)clearTimeout(defaultTimer);defaultTimer=undefined;retryAfter=0;defaultsError='';if(soundContext){void soundContext.close().catch(()=>{});soundContext=null;}}
-export async function setRoomNotifications(c:MatrixClient,roomId:string,mode:'all'|'mentions'|'mute'){
-  await nativeRoomNotifications(c,roomId,mode);
-  await updateNotificationPreferences(p=>({...p,rooms:{...p.rooms,[roomId]:{mode:mode==='mute'?'nothing':mode,mutedUntil:0}}}),c);
+export async function setRoomNotifications(c:MatrixClient,roomId:string,mode:'all'|'mentions'|'mute',active:()=>boolean=()=>true){
+  if(!active())throw new Error('Your account or room membership changed.');
+  await nativeRoomNotifications(c,roomId,mode,active);
+  await updateNotificationPreferences(p=>({...p,rooms:{...p.rooms,[roomId]:{mode:mode==='mute'?'nothing':mode,mutedUntil:0}}}),c,active);
 }
 async function nativeRoomNotifications(c:MatrixClient,roomId:string,mode:'all'|'mentions'|'mute', active: () => boolean = () => true){
   const muteId='io.tavern.mute.'+roomId;
@@ -78,6 +79,6 @@ async function nativeRoomNotifications(c:MatrixClient,roomId:string,mode:'all'|'
   if(!active())throw new Error('Your account changed.');
   if(mode==='mute')await c.addPushRule('global',PushRuleKind.Override,muteId,{conditions:[{kind:ConditionKind.EventMatch,key:'room_id',pattern:roomId}],actions:[]});
   else await c.addPushRule('global',PushRuleKind.RoomSpecific,roomId,{actions:mode==='all'?[PushRuleActionName.Notify]:[]});
-  c.setPushRules(await c.getPushRules());
+  const next=await c.getPushRules();if(!active())throw new Error('Your account changed.');c.setPushRules(next);
 }
 export async function synchronizeNotificationRules(preferences:NotificationPreferences,scope:{roomId?:string;serverId?:string}={}){const c=client;if(!c)return;const rooms=c.getRooms().filter(r=>r.getMyMembership()==='join'&&!r.isSpaceRoom()&&(!scope.roomId||r.roomId===scope.roomId)&&(!scope.serverId||notificationServerForRoom(c,r.roomId)===scope.serverId));for(const room of rooms){const setting=resolveNotificationPreference(preferences,room.roomId,notificationServerForRoom(c,room.roomId));await nativeRoomNotifications(c,room.roomId,setting.mode==='nothing'||setting.mutedUntil===-1?'mute':setting.mode);}}

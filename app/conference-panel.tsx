@@ -18,6 +18,7 @@ import { ConferenceIdle } from './conference-idle';
 import { ConferenceAudioModeration, type AudioModerationTarget } from './conference-audio-moderation';
 import { ConferenceAudioStatus } from './conference-audio-status';
 import { ConferenceDiagnostics } from './conference-diagnostics';
+import { bindVoiceSidebar } from '@/lib/voice-sidebar';
 import './calls.css';
 
 /** An async control belongs to the exact call and native account that started it. */
@@ -56,10 +57,12 @@ export function ConferencePanel() {
   const [showTools, setShowTools] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null), closeRef = useRef<{ generation: number; roomId: string; close: () => Promise<boolean> } | null>(null), epoch = useRef(0);
   const controlsRef = useRef<{ controls: ConferenceControls; owner: ReturnType<typeof operationOwner> } | null>(null), deviceOperation = useRef<object | null>(null), [devices, setDevices] = useState<ConferenceDevices>({}), [deviceBusy, setDeviceBusy] = useState(false);
+  const sidebarRef = useRef<ReturnType<typeof bindVoiceSidebar> | null>(null);
   const [moderation, setModeration] = useState(false), [removing, setRemoving] = useState<RemovalTarget | null>(null), [moderationBusy, setModerationBusy] = useState(false);
   const removalTarget = useRef<RemovalTarget | null>(null), removalOperation = useRef<object | null>(null);
   const [audioModeration, setAudioModeration] = useState(false), [audioTarget, setAudioTarget] = useState<AudioModerationTarget | null>(null);
   const participants = useConferenceParticipants(session.roomId);
+  useEffect(() => { sidebarRef.current?.update({ busy: deviceBusy }); }, [deviceBusy]);
   useEffect(() => onParticipantNavigation(() => { if (conferenceSnapshot().roomId) minimizeConference(true); }), []);
   useEffect(() => {
     let alive = true; setModeration(false); setRemoving(null); setModerationBusy(false); removalTarget.current = null; removalOperation.current = null; setAudioModeration(false); setAudioTarget(null);
@@ -89,12 +92,16 @@ export function ConferencePanel() {
     };
     const scopedClose = { generation, roomId, close }; closeRef.current = scopedClose;
     if (!client) { clearConference(generation); return; }
-    void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing && owner.current()) setDevices(previous => ({ ...previous, ...value })); }, {voiceOnly,onTelemetry:value=>{if(!disposed&&!closing&&getMatrixClient()===client&&accountArtworkOwner()===account)setObservation({roomId,generation,value});}})).then(cleanup => {
-      if (disposed || closing || !owner.current()) void cleanup(); else { stop = cleanup; controlsRef.current = { controls: cleanup, owner }; }
+    const sidebar = bindVoiceSidebar({ roomId, generation, isCurrent: () => !disposed && !closing && owner.current(), setMicrophone: enabled => changeDevices({ audio_enabled: enabled }), disconnect: close,
+      openSettings: () => { if (owner.current()) { setShowTools(true); minimizeConference(false); } } });
+    sidebarRef.current = sidebar;
+    void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing && owner.current()) { setDevices(previous => ({ ...previous, ...value })); sidebar.update({ devices: value }); } }, {voiceOnly,onTelemetry:value=>{if(!disposed&&!closing&&getMatrixClient()===client&&accountArtworkOwner()===account){setObservation({roomId,generation,value});sidebar.update({telemetry:value});}}})).then(cleanup => {
+      if (disposed || closing || !owner.current()) void cleanup(); else { stop = cleanup; controlsRef.current = { controls: cleanup, owner }; sidebar.update({ ready: true }); }
     }).catch(error => { if (!disposed && !controller.signal.aborted) conferenceFailed(generation, error.message || 'The conference could not connect.'); });
     const off = onMatrixUpdate(() => { if (!owner.current() || (readChannelPolicy(roomId).kind==='voice')!==voiceOnly) void close(); });
     return () => {
       disposed = true; controller.abort(); off();
+      sidebar.dispose(); if (sidebarRef.current === sidebar) sidebarRef.current = null;
       if (closeRef.current === scopedClose) closeRef.current = null;
       if (controlsRef.current?.controls === stop) controlsRef.current = null;
       deviceOperation.current = null;

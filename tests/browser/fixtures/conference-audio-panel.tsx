@@ -26,7 +26,7 @@ export function mountFixture() {
     })));
     rooms.set(id, room);
     const listeners = new Set();
-    sessions.set(id, { memberships: [{ userId: me }, { userId: '@guest:local' }, { userId: '@guest:local' }], on: (_event: string, fn: () => void) => listeners.add(fn), off: (_event: string, fn: () => void) => listeners.delete(fn) });
+    sessions.set(id, { memberships: [{ userId: me, deviceId: 'D1' }, { userId: '@guest:local', deviceId: 'D2' }, { userId: '@guest:local', deviceId: 'D3' }], on: (_event: string, fn: () => void) => listeners.add(fn), off: (_event: string, fn: () => void) => listeners.delete(fn) });
   }
   client.getRoom = id => rooms.get(id) || null;
   client.getRooms = () => [...rooms.values()];

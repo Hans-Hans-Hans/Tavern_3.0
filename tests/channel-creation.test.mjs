@@ -8,7 +8,7 @@ function setup() {
   const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account };
   const roles = loadTs('../lib/roles.ts', { './matrix': matrix, './api': api, './conference-publication': loadTs('../lib/conference-publication.ts', {}) });
   const channels = loadTs('../lib/channel-policy.ts', { './matrix': matrix, './roles': roles, './member-state': loadTs('../lib/member-state.ts', {}) });
-  const community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './server-nickname': {}, './matrix-media': {}, './response-image': {}, './profile-metadata-policy': {}, './server-branding': {}, './self-profile': {} });
+  const community = loadTs('../lib/community.ts', { './api': { accountArtworkOwner: () => null }, './matrix': matrix, './roles': roles, './server-nickname': {}, './matrix-media': {}, './response-image': {}, './profile-metadata-policy': {}, './server-branding': {}, './self-profile': {} });
   f.roles = roles;
   f.states = { [serverId]: [ev('m.room.create', { type: 'm.space', room_version: '12', 'm.federate': false }),
     ev('m.room.member', { membership: 'join' }, actor), ev('m.room.member', { membership: 'join' }, peer),

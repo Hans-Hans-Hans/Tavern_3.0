@@ -13,32 +13,35 @@ import { CommunityAvatar } from './community-settings';
 import './voice-channel.css';
 
 export function useConferenceParticipants(roomId: string | null) {
-  const [participants, setParticipants] = useState<{ userId: string; name: string; devices: number }[]>([]);
+  type Participant = { userId: string; name: string; devices: number; deviceIds: string[] };
+  const [observed, setObserved] = useState<{ current: () => boolean; participants: Participant[] } | null>(null);
   useEffect(() => {
     let detach = () => {}, bound: unknown, scope: unknown, stopped = false;
     const update = () => {
       if (stopped) return;
       const client = getMatrixClient(), owner = accountArtworkOwner();
       const room = roomId ? client?.getRoom(roomId) : undefined;
-      if (!client || !room || room.getMyMembership() !== 'join') { detach(); bound = undefined; setParticipants([]); return; }
+      if (!client || !room || room.getMyMembership() !== 'join') { detach(); bound = undefined; setObserved(null); return; }
+      const actor = client.getUserId(), device = client.getDeviceId();
+      const current = () => getMatrixClient() === client && accountArtworkOwner() === owner && client.getUserId() === actor && client.getDeviceId() === device && client.getRoom(roomId!) === room && room.getMyMembership() === 'join';
       const session = client.matrixRTC.getRoomSession(room);
       if (bound !== session || scope !== owner) {
         detach(); bound = session; scope = owner;
         session.on(MatrixRTCSessionEvent.MembershipsChanged, update);
         detach = () => session.off(MatrixRTCSessionEvent.MembershipsChanged, update);
       }
-      const members = new Map<string, number>();
+      const members = new Map<string, Set<string>>();
       for (const member of session.memberships.slice(0, 256)) {
-        if (room.getMember(member.userId)?.membership !== 'join') continue;
-        members.set(member.userId, (members.get(member.userId) || 0) + 1);
+        if (room.getMember(member.userId)?.membership !== 'join' || typeof member.deviceId !== 'string' || !member.deviceId || member.isExpired?.()) continue;
+        const ids = members.get(member.userId) || new Set<string>(); ids.add(member.deviceId); members.set(member.userId, ids);
       }
-      const next = [...members].slice(0, 128).map(([userId, devices]) => ({ userId, devices, name: room.getMember(userId)?.name || userId }));
-      setParticipants(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+      const next = [...members].slice(0, 128).map(([userId, ids]) => ({ userId, devices: ids.size, deviceIds: [...ids].sort(), name: room.getMember(userId)?.name || userId }));
+      setObserved(previous => previous?.current() && JSON.stringify(previous.participants) === JSON.stringify(next) ? previous : { current, participants: next });
     };
     update(); const off = onMatrixUpdate(update);
     return () => { stopped = true; detach(); off(); };
   }, [roomId]);
-  return participants;
+  return observed?.current() ? observed.participants : [];
 }
 
 export function VoiceChannel({ roomId, name, disabled, onProfile }: { roomId: string; name: string; disabled?: boolean; onProfile: (id: string) => void }) {

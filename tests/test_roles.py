@@ -183,6 +183,25 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         proposed['io.tavern.previous_event'] = None
         self.assertEqual(await self.module.check_event_allowed(event(policy_module.POLICY, sender='@owner:local', key='', body=proposed), state), (True, None))
 
+    async def test_layout_revision_checks_fresh_native_state_and_permission(self):
+        layout = {'version': 1, 'categories': [], 'channels': []}
+        self.server.update({
+            ('m.room.create', ''): event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False}),
+            ('m.room.member', '@owner:local'): event('m.room.member', body={'membership': 'join'}),
+            ('m.room.power_levels', ''): event('m.room.power_levels', body={'users': {'@owner:local': 100}}),
+            (policy_module.LAYOUT, ''): event(policy_module.LAYOUT, body=layout, eid='$fresh'),
+        })
+        snapshot = dict(self.server)
+        snapshot[(policy_module.LAYOUT, '')] = event(policy_module.LAYOUT, body=layout, eid='$stale')
+        proposed = {**layout, 'io.tavern.previous_event': '$stale'}
+        async def check():
+            return await self.module.check_event_allowed(event(policy_module.LAYOUT, sender='@owner:local', key='', room='!server:local', body=proposed), snapshot)
+        self.assertEqual(await check(), (False, None))
+        proposed['io.tavern.previous_event'] = '$fresh'
+        self.assertEqual(await check(), (True, None))
+        self.server[('m.room.power_levels', '')].content['users']['@owner:local'] = 0
+        self.assertEqual(await check(), (False, None))
+
     async def test_fake_one_way_parent_does_not_inherit_server(self):
         self.server.pop(('m.space.child', '!channel:local'))
         self.assertEqual(await self.module.check_event_allowed(event('m.room.power_levels'), self.room), (True, None))
