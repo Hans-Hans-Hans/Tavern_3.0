@@ -43,7 +43,14 @@ test('real observer requires the current iframe challenge, both devices and twen
   const wrongDevice = payload(23); wrongDevice.participants[1].deviceId = 'REPLACEMENT'; emit(wrongDevice); assert.equal(window.__tavernCiConferenceSmoke.read().status, 'participants');
   emit(payload(24)); time += 6000; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'stale');
   emit(payload(25)); assert.equal(window.__tavernCiConferenceSmoke.read().stableMs, 0);
-  child.document = {}; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'scope');
+  frame.isConnected = false; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'scope'); frame.isConnected = true;
+  const fatal = payload(26); fatal.failure = { code: 'UNKNOWN_ERROR' }; emit(fatal);
+  assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
+  childListeners.forEach(fn => fn({ source: window, origin, data: bind }));
+  for (let i = 1; i <= 25; i++) { time += 1000; emit(payload(i)); }
+  assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
+  assert.equal(window.__tavernCiConferenceSmoke.read().stableMs, 0);
+  child.document = {}; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
   window.__tavernCiConferenceSmoke.stop(); assert.equal(parentListeners.size + childListeners.size, 0); assert.equal(window.__tavernCiConferenceSmoke, undefined);
 });
 
@@ -77,13 +84,13 @@ function fixture({ synthetic = true, connected = true, beforeApi } = {}) {
     const frame = { src: frameUrl(owner) };
     const vm = () => ({ window: { __tavernCiConferenceSmoke: probe }, location: { origin }, document: { querySelector: () => attached ? frame : null }, URL, URLSearchParams });
     page.evaluate = async (fn, args) => {
-      if (fn === installConferenceObserver) { probe = { nonce: args.nonce, read: () => ({ status: connected ? 'ready' : 'encryption', stableMs: 21000, ageMs: 500, packets: 25 }), stop: () => { probe = undefined; actions.push('observer-stop-' + index); } }; return true; }
+      if (fn === installConferenceObserver) { probe = { nonce: args.nonce, owns: () => true, read: () => ({ status: connected ? 'ready' : 'encryption', stableMs: 21000, ageMs: 500, packets: 25 }), stop: () => { probe = undefined; actions.push('observer-stop-' + index); } }; return true; }
       if (fn.toString().includes('enumerateDevices')) return synthetic;
       return runInNewContext('(' + fn.toString() + ')', vm())(args);
     };
-    page.getByRole = (_role, { name }) => ({ click: async () => { actions.push(name + '-' + index); attached = name === 'Join conference'; } });
+    page.getByRole = (_role, { name }) => ({ click: async () => { actions.push(name + '-' + index); attached = name === 'Join conference'; if (name === 'Leave conference') { const event = states.find(event => event.type === 'org.matrix.msc3401.call.member' && event.state_key === '_' + owner.userId + '_' + owner.deviceId + '_m.call'); if (event) event.content = {}; } } });
     page.locator = () => ({ count: async () => attached ? 1 : 0, waitFor: async ({ state }) => { assert.equal(state, 'detached'); assert.equal(attached, false); } });
-    page.frameLocator = () => ({ getByTestId: id => { assert.equal(id, 'lobby_joinCall'); return { waitFor: async () => { actions.push('lobby-' + index); }, click: async () => { actions.push('native-widget-join-' + index); } }; } });
+    page.frameLocator = () => ({ getByTestId: id => { assert.equal(id, 'lobby_joinCall'); return { waitFor: async () => { actions.push('lobby-' + index); }, click: async () => { actions.push('native-widget-join-' + index); states.push({ type: 'org.matrix.msc3401.call.member', state_key: '_' + owner.userId + '_' + owner.deviceId + '_m.call', content: { application: 'm.call', device_id: owner.deviceId } }); } }; } });
     page.waitForFunction = async (fn, nonce, options) => { assert.equal(options.polling, 250); assert.equal(runInNewContext('(' + fn.toString() + ')', vm())(nonce), true); actions.push('twenty-seconds-' + index); };
     return page;
   });

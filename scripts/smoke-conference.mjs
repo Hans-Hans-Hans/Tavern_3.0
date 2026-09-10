@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { setTimeout as pause } from 'node:timers/promises';
 import { isCiRoomId } from './ci-room-id.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
@@ -66,9 +67,9 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
     || !validNonce(widget) || !validNonce(session) || params.get('roomId') !== roomId
     || params.get('userId') !== owner.userId || params.get('deviceId') !== owner.deviceId
     || params.get('baseUrl') !== origin || params.get('perParticipantE2EE') !== 'true') return false;
-  let challenge = '', sequence = 0, received = 0, since = null, status = 'waiting', packets = 0;
-  const current = () => location.origin === origin && frame.isConnected && frame.contentWindow === source && source.document === nativeDocument && frame.src === url.href;
-  const reset = value => { since = null; status = value; };
+  let challenge = '', sequence = 0, received = 0, since = null, status = 'waiting', packets = 0, fatal = false;
+  const current = () => { try { return location.origin === origin && frame.isConnected && frame.contentWindow === source && source.document === nativeDocument && frame.src === url.href; } catch { return false; } };
+  const reset = value => { since = null; status = fatal ? 'fatal' : value; };
   const bind = event => {
     const data = event.data;
     if (!current() || event.source !== window || event.origin !== origin || !data || typeof data !== 'object' || Object.keys(data).length !== 6
@@ -82,6 +83,8 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
       || !Number.isSafeInteger(data.sequence) || data.sequence <= sequence || !Array.isArray(data.participants) || data.participants.length > 128) return;
     const now = performance.now(); if (received && now - received > 5000) reset('stale');
     sequence = data.sequence; received = now; packets++;
+    if (data.failure !== null && data.failure !== undefined) fatal = true;
+    if (fatal) { reset('fatal'); return; }
     if (data.connected !== true || data.reconnecting !== false) { reset('disconnected'); return; }
     const peers = data.participants;
     if (data.complete !== true || peers.length !== 2 || owners.some(expected => peers.filter(peer => peer && peer.userId === expected.userId && peer.deviceId === expected.deviceId
@@ -90,7 +93,7 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
     status = 'ready'; since ??= now;
   };
   source.addEventListener('message', bind); window.addEventListener('message', message);
-  window[key] = { nonce, read: () => {
+  window[key] = { nonce, owns: current, read: () => {
     const now = performance.now();
     if (!current()) reset('scope'); else if (received && now - received > 5000) reset('stale');
     return { status, stableMs: since === null ? 0 : Math.max(0, now - since), ageMs: received ? Math.max(0, now - received) : null, packets };
@@ -161,6 +164,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     }
     await run(() => Promise.all([...owners.keys()].map(page => page.waitForFunction(nonce => {
       const probe = window.__tavernCiConferenceSmoke, value = probe?.nonce === nonce ? probe.read() : null;
+      if (value?.status === 'fatal') throw new Error('The owning embedded call reported a fatal error.');
       return value?.status === 'ready' && value.stableMs >= 20000 && value.ageMs !== null && value.ageMs <= 5000 && value.packets >= 10;
     }, nonce, { timeout: 75000, polling: 250 }))), 'connected-encryption', 75000);
     for (const page of owners.keys()) await scope(page);
@@ -170,7 +174,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     }
     succeeded = true;
   } catch {
-    const allowed = new Set(['waiting', 'disconnected', 'participants', 'encryption', 'ready', 'scope', 'stale']);
+    const allowed = new Set(['waiting', 'disconnected', 'participants', 'encryption', 'ready', 'scope', 'stale', 'fatal']);
     const statuses = [];
     for (const page of owners.keys()) {
       let timer;
@@ -186,18 +190,29 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     for (const page of opened) {
       try {
         await session(page);
-        const owned = await page.evaluate(({ nonce, roomId }) => {
+        const owned = await run(() => page.evaluate(({ nonce, roomId }) => {
           const probe = window.__tavernCiConferenceSmoke, frame = document.querySelector('iframe[title="Tavern encrypted conference"]');
           if (!frame) return 'closed';
           const url = new URL(frame.src), params = new URLSearchParams(url.hash.slice(2));
-          return url.origin === location.origin && params.get('roomId') === roomId && (!probe || probe.nonce === nonce) ? 'owned' : 'changed';
-        }, { nonce, roomId });
+          return url.origin === location.origin && params.get('roomId') === roomId && probe?.nonce === nonce && probe.owns() ? 'owned' : 'changed';
+        }, { nonce, roomId }), 'leave-scope', 5000);
         if (owned === 'changed') throw new Error();
-        if (owned === 'owned') { await page.getByRole('button', { name: 'Leave conference', exact: true }).click({ timeout: 10000 }); await page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }); }
+        if (owned === 'owned') { await run(() => page.getByRole('button', { name: 'Leave conference', exact: true }).click({ timeout: 10000 }), 'leave-widget', 10000); await run(() => page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }), 'leave-frame', 15000); }
+        const owner = owners.get(page), keys = new Set([owner.userId, '_' + owner.userId + '_' + owner.deviceId + '_m.call', owner.userId + '_' + owner.deviceId + '_m.call']);
+        const until = Math.min(deadline, Date.now() + 10000);
+        for (;;) {
+          const state = await scope(page);
+          const remaining = state.filter(event => event.type === 'org.matrix.msc3401.call.member' && keys.has(event.state_key)).some(event => {
+            const content = event.content;
+            return Object.keys(content).length > 0 && !(Object.keys(content).length === 1 && Array.isArray(content.memberships) && content.memberships.length === 0);
+          });
+          if (!remaining) break;
+          requireProof(Date.now() < until, 'Native CI call membership did not clear after leaving.'); await pause(250);
+        }
       } catch { cleanupFailed = true; }
-      finally { try { await page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; if (probe?.nonce === nonce) probe.stop(); }, nonce); } catch { cleanupFailed = true; } }
+      finally { try { await run(() => page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; if (probe?.nonce === nonce) probe.stop(); }, nonce), 'observer-cleanup', 3000); } catch { cleanupFailed = true; } }
     }
-    if (cleanupFailed && succeeded) throw new Error('Embedded conference connected but clean UI leave could not be confirmed.');
+    if (cleanupFailed && succeeded) throw new Error('Embedded conference connected but clean UI/native leave could not be confirmed.');
   }
   console.log('PASS: two ordinary CI accounts joined the real embedded conference with synthetic devices, retained complete encrypted participant observations for twenty seconds, and left through the UI.');
 }

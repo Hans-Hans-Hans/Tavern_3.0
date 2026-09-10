@@ -15,6 +15,7 @@ import { invitationPrivacySmoke } from './smoke-invitation-privacy.mjs';
 import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
 import { callAudioSmoke } from './smoke-call-audio.mjs';
 import { rtcAuthSmoke } from './smoke-rtc-auth.mjs';
+import { conferenceSmoke } from './smoke-conference.mjs';
 import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
@@ -29,13 +30,14 @@ const fingerprint = createHash('sha256').update(certificate.publicKey.export({ t
 const origin = 'https://chat.example.test';
 const password = () => 'Ci!' + randomBytes(24).toString('base64url');
 const adminPassword = password(), alicePassword = password(), bobPassword = password();
-const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--ignore-certificate-errors-spki-list=' + fingerprint] });
+const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--ignore-certificate-errors-spki-list=' + fingerprint] });
 const pages = [], errors = [];
+let conferenceProbe = false;
 async function page() {
   const context = await browser.newContext();
   const value = await context.newPage(); value.setDefaultTimeout(60000);
-  value.on('pageerror', error => errors.push(error.message));
-  value.on('console', message => { if (message.type() === 'error') errors.push(message.text().slice(0, 2000)); });
+  value.on('pageerror', error => errors.push(conferenceProbe ? 'Embedded conference browser exception (see bounded probe result).' : error.message));
+  value.on('console', message => { if (message.type() === 'error') errors.push(conferenceProbe ? 'Embedded conference console error (see bounded probe result).' : message.text().slice(0, 2000)); });
   value.on('response', response => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.request().method() + ' ' + new URL(response.url()).pathname); });
   pages.push(value); return value;
 }
@@ -139,6 +141,14 @@ try {
   assert.equal((await api(bob, '/_matrix/client/v3/join/' + encodeURIComponent(roomId), {}, true)).status, 200);
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   await rtcAuthSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
+  conferenceProbe = true;
+  try {
+    for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
+    await conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
+  } finally {
+    for (const participant of [alice, bob]) await participant.context().clearPermissions();
+    conferenceProbe = false;
+  }
   const text = 'Encrypted CI proof ' + randomBytes(12).toString('hex');
   console.log('Ready to send an encrypted message from the production composer.');
   await alice.getByRole('textbox', { name: 'Message CI encrypted conversation', exact: true }).fill(text);

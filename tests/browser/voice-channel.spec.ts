@@ -106,6 +106,24 @@ test('video conferences retain their camera controls and never adopt voice-only 
   expect(await page.evaluate(() => (window as any).voiceFixture.mounts)).toEqual([{ roomId: '!video:local', voiceOnly: false }]);
 });
 
+test('active call failure exposes only safe copied details and does not leak into a replacement call', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await fixture(page); await join(page);
+  await page.evaluate(() => { const f = (window as any).voiceFixture, value = f.sample(); value.failure = { code: 'CONNECTION_LOST_ERROR', cause: 'MatrixError', status: 403, reason: null, matrixCode: 'M_FORBIDDEN' }; f.publish(value); });
+  const details = page.getByRole('alert', { name: 'Call error details' });
+  await expect(details).toContainText('could not keep its room membership active');
+  await expect(details).toContainText('M_FORBIDDEN');
+  await expect(page.locator('iframe')).not.toHaveClass(/voice-frame-hidden/);
+  await details.getByRole('button', { name: 'Copy call error details', exact: true }).click();
+  expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText()))).toEqual({ code: 'CONNECTION_LOST_ERROR', cause: 'MatrixError', status: 403, reason: null, matrixCode: 'M_FORBIDDEN' });
+  await page.getByRole('button', { name: 'Leave conference', exact: true }).click();
+  await expect(details).toHaveCount(0);
+  await page.getByRole('button', { name: 'Join voice', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).voiceFixture.mounts.length)).toBe(2);
+  await page.evaluate(() => { const f = (window as any).voiceFixture, value = f.sample(); value.failure = { code: 'UNKNOWN_ERROR', cause: null, status: null, reason: null, matrixCode: null }; f.publish(value, 0); });
+  await expect(details).toHaveCount(0);
+});
+
 test('a pending voice join cannot open its old room after the keyed page is unmounted', async ({ page }) => {
   await fixture(page); await page.evaluate(() => { (window as any).voiceFixture.holdConfiguration = true; });
   await page.getByRole('button', { name: 'Join voice', exact: true }).click();

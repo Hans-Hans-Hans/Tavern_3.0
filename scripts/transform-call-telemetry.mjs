@@ -31,7 +31,9 @@ export function transformCallTelemetry(code, mapText) {
   const scope = parent.parameters[0].name.text, room = parent.parameters[2].name.text;
   const changed = new MagicString(code, { filename: PINNED_CALL_ASSET });
   changed.prepend('import { attachEmbeddedCallTelemetry as __tavernCallTelemetry } from "./embedded-call-telemetry.js";\n');
-  changed.appendLeft(target.expression.getStart(ast), `__tavernCallTelemetry(${scope},${room},`);
+  // The pinned bundle uses `return{...}` without whitespace. Inserting an
+  // identifier at the brace must keep it separate from the return keyword.
+  changed.appendLeft(target.expression.getStart(ast), ` __tavernCallTelemetry(${scope},${room},`);
   changed.appendRight(target.expression.end, ')');
   const intermediate = changed.generateMap({ source: PINNED_CALL_ASSET, file: PINNED_CALL_ASSET, includeContent: true, hires: true });
   const composed = remapping([JSON.parse(intermediate.toString()), original], () => null);
