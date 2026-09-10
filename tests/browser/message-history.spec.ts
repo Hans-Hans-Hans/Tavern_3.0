@@ -38,7 +38,7 @@ test('actual SDK history panel pages empty cursors, joins live history, and supp
   expect(await page.evaluate(() => (window as any).historyFixture.requests.length)).toBe(6);
   await context(page).getByRole('button', { name: 'Back to latest', exact: true }).click();
   await expect(context(page)).toHaveCount(0);
-  expect(await page.evaluate(() => ({ latest: (window as any).latest, listeners: (window as any).historyFixture.listenerCount() }))).toEqual({ latest: true, listeners: 0 });
+  expect(await page.evaluate(() => ({ latest: (window as any).latest, listeners: (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline }))).toEqual({ latest: true, listeners: 0 });
   expect(errors).toEqual([]);
 });
 
@@ -48,10 +48,10 @@ test('close during native context lookup releases only its listener and cannot p
   await context(page).getByRole('button', { name: 'Close message context', exact: true }).click();
   await page.evaluate(() => (window as any).release());
   await expect(context(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount())).toBe(0);
+  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline)).toBe(0);
   await page.evaluate(() => (window as any).reopen());
   await expect(selected(page)).toHaveText('Selected message');
-  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount())).toBe(1);
+  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline)).toBe(1);
 });
 
 for (const change of ['account', 'membership']) test(change + ' change clears visible history and rejects delayed decryption', async ({ page }) => {
@@ -64,18 +64,18 @@ for (const change of ['account', 'membership']) test(change + ' change clears vi
   await expect(selected(page)).toHaveCount(0);
   await page.evaluate(() => (window as any).release());
   await expect(selected(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount())).toBe(0);
+  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline)).toBe(0);
 });
 
 test('missing keys and StrictMode replay remain honest and keyboard controls work on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 740 }); await fixture(page, 'missing-key&strict');
   await expect(selected(page)).toHaveText('Missing key');
   await expect(context(page)).toContainText('does not replace missing encryption keys');
-  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount())).toBe(1);
+  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline)).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const close = context(page).getByRole('button', { name: 'Close message context', exact: true });
   await close.focus(); await page.keyboard.press('Enter'); await expect(context(page)).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount())).toBe(0);
+  expect(await page.evaluate(() => (window as any).historyFixture.listenerCount() - (window as any).historyListenerBaseline)).toBe(0);
 });
 
 test('saved historical messages open context rather than losing their selected event at latest', async ({ page }) => {

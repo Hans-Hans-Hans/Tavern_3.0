@@ -45,6 +45,7 @@ if (query.has('workspace')) {
   };
 } else {
   const f = w.historyFixture = messageHistoryFixture();
+  w.historyListenerBaseline = f.listenerCount();
   w.listeners = new Set(); w.notify = () => w.listeners.forEach((listener: () => void) => listener());
   w.replaceAccount = () => { setAccountDevice('B'); setAccountDevice('A'); w.notify(); };
   w.historyFixture.state.missingKey = query.has('missing-key');

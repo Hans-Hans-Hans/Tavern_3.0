@@ -39,6 +39,7 @@ class CallDiagnosticTests(unittest.IsolatedAsyncioTestCase):
         self.config = Config('https://calls.example.invalid', self.root / 'unused-database')
         self.requests, self.overrides = [], {}
         async def handler(request):
+            self.assertEqual(request.headers.get('Accept-Encoding'), 'identity')
             # Capture only this isolated fixture's credentials for assertions.
             self.requests.append((request.method, request.path, dict(request.query), request.headers.get('Authorization'), await request.read()))
             stage = request.match_info['stage']

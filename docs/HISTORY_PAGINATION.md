@@ -29,3 +29,38 @@ real IndexedDB and WebCrypto. Browser history tests control the SDK request and
 decryption boundary to exercise empty pages, cycles, omitted room IDs and changes
 during page loading, decryption and the final storage callback. They do not claim
 live homeserver decryption acceptance for this change.
+
+## Opening a message's surrounding conversation
+
+Search results, message links, reminders, and the source buttons on saved or
+mentioned messages open **Message context** at the selected event. A reply in a
+public thread opens its thread instead; private discussions keep their separate
+encrypted discussion panel. **Reply in thread** still starts or opens a thread.
+
+The context uses the owning Matrix SDK's joined-room timeline and this device's
+existing encryption keys. The initial request can fetch the selected event and
+one 25-event page on each side. **Load earlier** and **Load later** each make at
+most one additional 50-event request, first using cached events when available.
+Empty pages with advancing cursors remain pageable. The view holds at most 500
+raw events; paging can trim the opposite end. The controls report empty pages,
+the window limit, and whether the currently synced timeline has been reached.
+**Return to selected message** recenters the view; **Back to latest** returns to
+the normal conversation. Neither action changes encryption keys.
+
+Each operation has a 20-second deadline. The helper rejects cycles, invalid
+cursors, more than 32 connected segments, and more than 200 requested pages in
+one direction. Closing the panel removes only its own SDK listener. Changes to
+the client, account generation, device, homeserver, room, or joined membership
+discard pending results and clear the displayed context. Its attachment gallery
+contains only the displayed history window and closes/revokes its object URLs
+when that context loses access. The Matrix client's own caches remain governed
+by the existing session lifecycle; these checks do not make native requests
+atomic with membership changes or recover missing keys.
+
+Context validation adds eight browser checks for actual SDK context/pagination,
+empty pages and deliberate retry, listener cleanup, delayed-result cancellation,
+account replacement, membership loss, StrictMode, phone/keyboard controls, the
+mounted Workspace navigation, and the real attachment viewer. The 11 SDK Node
+checks also cover timeline merging, reset detection, window bounds and deadlines.
+These local fixtures use the real pinned SDK but control the HTTP and crypto
+boundaries; they do not establish live homeserver recovery or delivery evidence.

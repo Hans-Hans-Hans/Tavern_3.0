@@ -69,6 +69,10 @@ async def probe(http, stage, url, *, method='GET', params=None, body=None, heade
     """Never return/log response text, request URLs, headers or exceptions."""
     status = None
     try:
+        # Bound plain response bytes without negotiating compression that this
+        # diagnostic deliberately does not decode. Cloudflare may honor the
+        # client's default gzip/br offer even for tiny discovery documents.
+        headers = {**(headers or {}), 'Accept-Encoding': 'identity'}
         async with http.request(method, url, params=params, json=body, headers=headers,
                                 allow_redirects=False, auto_decompress=False,
                                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)) as response:
