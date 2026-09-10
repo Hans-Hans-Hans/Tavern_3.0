@@ -50,4 +50,3 @@ test('actual transformed view returns through the helper instead of evaluating a
   assert.notEqual(broken, transformed);
   assert.throws(() => check(broken), /real return statement/);
 });
-
