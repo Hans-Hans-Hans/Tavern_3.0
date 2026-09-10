@@ -23,6 +23,7 @@ export type ChannelNavigationProps = {
   renderChannel?: (channel: NavigationChannel, button: ReactNode, extraActions: ContextAction[]) => ReactNode;
   onCreateChannel?: (options: { category: string }) => void; onEditChannel?: (id: string) => void; onInviteChannel?: (id: string) => void;
   renderParticipants?: (channelId: string) => ReactNode;
+  createCategoryRequest?: number;
 };
 const icons: Record<ChannelKind, typeof Hash> = { text: Hash, voice: Volume2, video: Video, announcement: Megaphone, rules: BookOpen, forum: MessageSquare, media: Image, 'read-only': LockKeyhole };
 const empty: ServerLayout = { version: 1, categories: [], channels: [] };
@@ -51,6 +52,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const nav = useRef<HTMLElement>(null), live = useRef({ owner, layout, signature }); live.current = { owner, layout, signature };
   const channelList = useRef(channels); channelList.current = channels;
   const operation = useRef<object | null>(null), dragRef = useRef<{ owner: typeof owner; item: NavigationDrag; baseline: string } | null>(null), suppressClick = useRef(0);
+  const categoryRequest = useRef(0);
   const hover = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null), scrolling = useRef<{ element: HTMLElement; delta: number } | null>(null), frame = useRef<number | null>(null);
   const shown = optimistic?.owner === owner && owner.current() && (signature === optimistic.baseline || signature === layoutKey(optimistic.next)) ? optimistic.next : layout;
   const collapsed = collapse?.owner === owner ? collapse.ids : nativeCollapsed;
@@ -88,6 +90,12 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
   }, [owner]);
   void version;
+  useEffect(() => {
+    const request = props.createCategoryRequest || 0;
+    if (request === categoryRequest.current) return;
+    categoryRequest.current = request;
+    if (request > 0 && owner.current()) openEditor('create');
+  }, [props.createCategoryRequest, owner]);
 
   function assertEditing(previous: ServerLayout) {
     if (!owner.current() || !serverId || !canEditCommunity(serverId, 'layout')) throw new Error('Your account or server permissions changed. Reopen these controls.');

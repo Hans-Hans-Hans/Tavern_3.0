@@ -4,6 +4,7 @@ import { readInstanceConfig } from './instance';
 import { markRoomsRead, roomReadCounts, watchRoomReadCounts } from './read-state';
 import { isPrivateDiscussion } from './conversation-routing';
 import { addDirectMessage, directRoomId, readDirectMessageMap } from './dm-account-data';
+import { restoreDirectListing } from './dm-recovery';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
 import { readJoinedRoom } from './room-read-scope';
@@ -310,6 +311,11 @@ export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:
  }catch(error){check();}}
  check();
  const id=crypto.randomUUID(),record={id,name:file.name,size:file.size,type:file.type,roomId,info,url:uploaded.content_uri,file:descriptor?{...descriptor,url:uploaded.content_uri}:null};pendingFiles.set(id,{...record,owned});return record;
+}
+export async function showInDirectMessages(roomId:string){
+ const c=requireClient(),actor=c.getUserId(),device=c.getDeviceId(),base=c.getHomeserverUrl(),account=accountArtworkOwner();
+ const current=()=>{if(client!==c||c.getUserId()!==actor||c.getDeviceId()!==device||c.getHomeserverUrl()!==base||accountArtworkOwner()!==account)throw new Error('Your account changed. Reopen Messages.');};
+ await restoreDirectListing(c,roomId,current,(update,validate)=>mutateMatrixAccountData(c,'m.direct',update,validate));current();notify();
 }
 /** Copy only encrypted delivery metadata, never the captured live SDK owner. */
 export function snapshotMatrixAttachments(ids:readonly string[],roomId:string,parent:string|undefined,nonce:string):QueuedAttachment[]{
