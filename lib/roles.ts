@@ -30,9 +30,10 @@ export function parseRolePolicy(value: any): RolePolicy | null {
   const overrides = value.overrides || {}; if (typeof overrides !== 'object' || Array.isArray(overrides) || Object.keys(overrides).length > 1000) return null;
   for (const [room, kinds] of Object.entries(overrides)) if (!room.startsWith('!') || !validTargets(kinds, ids)) return null;
   const categoryOverrides = value.categoryOverrides || {}; if (typeof categoryOverrides !== 'object' || Array.isArray(categoryOverrides) || Object.keys(categoryOverrides).length > 100 || Object.entries(categoryOverrides).some(([id, targets]) => !/^[\w-]{1,80}$/.test(id) || !validTargets(targets, ids))) return null;
-  const normalizedTargets = (values: Record<string, any>) => Object.fromEntries(Object.entries(values).map(([id, targets]) => [id, { roles: targets.roles || {}, users: targets.users || {} }]));
+  const copyTargets = (targets: Record<string, PermissionOverride> = {}) => Object.fromEntries(Object.entries(targets).map(([id, permissions]) => [id, { ...permissions }]));
+  const normalizedTargets = (values: Record<string, any>) => Object.fromEntries(Object.entries(values).map(([id, targets]) => [id, { roles: copyTargets(targets.roles || {}), users: copyTargets(targets.users || {}) }]));
   if (!validPublicationVersion(value)) return null;
-  return { version: 1, ...(value.callPublicationVersion === 1 ? { callPublicationVersion: 1 as const } : {}), owner: value.owner, roles: value.roles.map((r: ServerRole) => ({ ...r, color: r.color || '', icon: r.icon || '', mentionable: r.mentionable === true, separate: r.separate === true })), members: value.members, overrides: normalizedTargets(overrides), categoryOverrides: normalizedTargets(categoryOverrides) };
+  return { version: 1, ...(value.callPublicationVersion === 1 ? { callPublicationVersion: 1 as const } : {}), owner: value.owner, roles: value.roles.map((r: ServerRole) => ({ ...r, permissions: [...r.permissions], color: r.color || '', icon: r.icon || '', mentionable: r.mentionable === true, separate: r.separate === true })), members: Object.fromEntries(Object.entries(value.members as Record<string, string[]>).map(([user, ids]) => [user, [...ids]])), overrides: normalizedTargets(overrides), categoryOverrides: normalizedTargets(categoryOverrides) };
 }
 export function defaultRolePolicy(owner: string): RolePolicy { return { version: 1, owner, roles: [{ id: 'everyone', name: 'Member', color: '', icon: '', position: 0, permissions: ['send_messages', 'add_reactions', 'join_calls', 'invite'], mentionable: false, separate: false }], members: {}, overrides: {}, categoryOverrides: {} }; }
 export function readRolePolicy(serverId: string) { const policy = parseRolePolicy(getMatrixClient()?.getRoom(serverId)?.currentState.getStateEvents(rolesEvent, '')?.getContent()); if (policy) policyServers.set(policy, serverId); return policy; }
@@ -70,9 +71,16 @@ async function freshRoles(owner: ReturnType<typeof roleWriteOwner>, serverId: st
   }
   return { raw, policy: raw ? parseRolePolicy(raw)! : null, revision };
 }
-export async function saveRolePolicy(serverId: string, policy: RolePolicy) {
+export async function saveRolePolicy(serverId: string, policy: RolePolicy, previous?: RolePolicy | null) {
   const owner = roleWriteOwner(serverId), fresh = await freshRoles(owner, serverId);
   if (fresh.policy?.callPublicationVersion !== policy.callPublicationVersion) throw new Error('Conference permissions changed. Reopen server roles; enabling them requires the separate migration action.');
+  // This editor owns roles, assignments and channel overrides. Preserve its
+  // draft instead of overwriting a concurrent editor; category writes are
+  // independently merged below and remain untouched by ordinary role edits.
+  if (previous !== undefined) {
+    const edited = (value: RolePolicy | null) => value && { ...value, categoryOverrides: {} };
+    if (stableRoleJson(edited(previous)) !== stableRoleJson(edited(fresh.policy))) throw new Error('Server roles changed elsewhere. Reload saved roles before saving this draft.');
+  }
   const ids = new Set(policy.roles.map(role => role.id)), categoryOverrides = Object.fromEntries(Object.entries(fresh.policy?.categoryOverrides || policy.categoryOverrides || {}).map(([id, targets]) => [id, { ...targets, roles: Object.fromEntries(Object.entries(targets.roles || {}).filter(([role]) => ids.has(role))) }]));
   const next = { ...policy, categoryOverrides };
   if (!parseRolePolicy(next)) throw new Error('The role policy is invalid. Check role positions and assigned members.');
@@ -119,13 +127,17 @@ let memberRoleWrites: Promise<unknown> = Promise.resolve();
 function stableRoleJson(value: any): string { if (Array.isArray(value)) return '[' + value.map(stableRoleJson).join(',') + ']'; if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableRoleJson(value[key])).join(',') + '}'; return JSON.stringify(value); }
 export function saveMemberRoles(serverId: string, userId: string, selected: string[], previous: string[]) {
   const client = getMatrixClient(); if (!client || !canAssignMemberRoles(serverId, userId)) return Promise.reject(new Error('You cannot manage this member’s roles.'));
+  const owner = roleWriteOwner(serverId), selectedIds = [...selected], previousIds = [...previous];
   const task = memberRoleWrites.catch(() => {}).then(async () => {
+    owner.assertCurrent();
     const observed = client.getRoom(serverId)?.currentState.getStateEvents(rolesEvent, ''), revision = observed?.getId(), snapshot = observed ? parseRolePolicy(structuredClone(observed.getContent())) : null;
     const [raw, member, powers] = await Promise.all([client.getStateEvent(serverId, rolesEvent as any, ''), client.getStateEvent(serverId, 'm.room.member' as any, userId), client.getStateEvent(serverId, 'm.room.power_levels' as any, '').catch(error => { if (error.errcode !== 'M_NOT_FOUND') throw error; return null; })]), policy = parseRolePolicy(raw), me = client.getUserId();
+    owner.assertCurrent();
     if (client !== getMatrixClient() || !me || !policy || member.membership !== 'join' || !canManageServerRoles(serverId)) throw new Error('Your account, membership, or role policy changed. Reopen the member’s roles.');
     if (!revision || !snapshot || stableRoleJson(snapshot) !== stableRoleJson(policy)) throw new Error('Server roles changed while syncing. Wait for the latest state, reload assignments, and retry.');
     const room = client.getRoom(serverId), fresh = { currentState: { getStateEvents: (kind: string, key: string) => kind === 'm.room.power_levels' ? powers ? { getContent: () => powers } : null : room?.currentState.getStateEvents(kind as any, key) } };
     if (!canAssignMemberRoles(serverId, userId) || nativeMemberPower(fresh, userId) >= nativeMemberPower(fresh, me)) throw new Error('This member now has equal or higher native room authority. Reopen their roles.');
-    const next = mergeMemberRoles(policy, me, userId, selected, previous); await client.sendStateEvent(serverId, rolesEvent as any, { ...next, 'io.tavern.previous_event': revision }, ''); return next;
+    const next = mergeMemberRoles(policy, me, userId, selectedIds, previousIds); owner.assertCurrent();
+    await client.sendStateEvent(serverId, rolesEvent as any, { ...next, 'io.tavern.previous_event': revision }, ''); owner.assertCurrent(); return next;
   }); memberRoleWrites = task; return task;
 }

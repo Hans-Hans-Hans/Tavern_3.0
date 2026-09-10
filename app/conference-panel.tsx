@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Maximize2, Mic, MicOff, Minimize2, PhoneOff, Video, VideoOff } from 'lucide-react';
 import type { ConferenceControls, ConferenceDevices } from '@/lib/conference';
-import { MatrixRTCSessionEvent } from 'matrix-js-sdk/lib/matrixrtc/MatrixRTCSession';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { callSnapshot, callsConfigured } from '@/lib/calls';
 import { conferenceSnapshot, subscribeConference, openConference, minimizeConference, conferenceJoined, conferenceFailed, conferenceClosing, clearConference } from '@/lib/conference-session';
 import { requestPeerVerification } from '@/lib/security';
 import { accountArtworkOwner, isManagedAccount, requestApi } from '@/lib/api';
-import { canModerateMember } from '@/lib/channel-policy';
+import { canModerateMember, readChannelPolicy } from '@/lib/channel-policy';
+import type { ConferenceTelemetry } from '@/lib/conference-telemetry';
+import { voiceChannelView, subscribeVoiceChannelView } from '@/lib/voice-channel-view';
+import { useConferenceParticipants, VoiceRoster } from './voice-channel';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { ActionMenu, copyText } from './action-menu';
@@ -31,34 +33,19 @@ export function ConferenceButton({ roomId, disabled }: { roomId: string; disable
   return <button className="icon-button" aria-label={configured === false ? 'Conference setup required' : 'Join conference'} title={configured === false ? 'Your administrator needs to configure calls' : 'Join conference'} disabled={disabled || configured === false} onClick={() => void join()}><Video size={18}/></button>;
 }
 
-function useParticipants(roomId: string | null) {
-  const [participants, setParticipants] = useState<{ userId: string; name: string; devices: number }[]>([]);
-  useEffect(() => {
-    if (!roomId) { setParticipants([]); return; }
-    const client = getMatrixClient(), room = client?.getRoom(roomId);
-    if (!client || !room) return;
-    const session = client.matrixRTC.getRoomSession(room);
-    const update = () => {
-      const members = new Map<string, number>();
-      for (const membership of session.memberships) members.set(membership.userId, (members.get(membership.userId) || 0) + 1);
-      setParticipants([...members].map(([userId, devices]) => ({ userId, devices, name: room.getMember(userId)?.name || userId })));
-    };
-    update();
-    session.on(MatrixRTCSessionEvent.MembershipsChanged, update);
-    const off = onMatrixUpdate(update);
-    return () => { session.off(MatrixRTCSessionEvent.MembershipsChanged, update); off(); };
-  }, [roomId]);
-  return participants;
-}
-
 /** Mounted once beside CallPanel, independently of the selected channel. */
 export function ConferencePanel() {
   const session = useSyncExternalStore(subscribeConference, conferenceSnapshot);
+  const voiceView = useSyncExternalStore(subscribeVoiceChannelView, voiceChannelView);
+  const voiceOnly = !!session.roomId && readChannelPolicy(session.roomId).kind === 'voice';
+  const [observation, setObservation] = useState<{roomId:string;generation:number;value:ConferenceTelemetry|null}|null>(null);
+  const telemetry = observation?.roomId === session.roomId && observation.generation === session.generation ? observation.value : null;
+  const [showTools, setShowTools] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null), closeRef = useRef<{ generation: number; roomId: string; close: () => Promise<boolean> } | null>(null), epoch = useRef(0);
   const controlsRef = useRef<ConferenceControls | null>(null), [devices, setDevices] = useState<ConferenceDevices>({}), [deviceBusy, setDeviceBusy] = useState(false);
   const [moderation, setModeration] = useState(false), [removing, setRemoving] = useState<{ userId: string; name: string } | null>(null), [moderationBusy, setModerationBusy] = useState(false);
   const [audioModeration, setAudioModeration] = useState(false), [audioTarget, setAudioTarget] = useState<AudioModerationTarget | null>(null);
-  const participants = useParticipants(session.roomId);
+  const participants = useConferenceParticipants(session.roomId);
   useEffect(() => onParticipantNavigation(() => { if (conferenceSnapshot().roomId) minimizeConference(true); }), []);
   useEffect(() => {
     let alive = true; setModeration(false); setRemoving(null); setAudioModeration(false); setAudioTarget(null);
@@ -73,7 +60,7 @@ export function ConferencePanel() {
   useEffect(() => {
     if (!session.roomId || !frame.current) return;
     const generation = session.generation, roomId = session.roomId, currentEpoch = ++epoch.current;
-    setDevices({}); setDeviceBusy(false); controlsRef.current = null;
+    setDevices({}); setDeviceBusy(false); setObservation(null); setShowTools(false); controlsRef.current = null;
     const client = getMatrixClient(), account = accountArtworkOwner(), actor = client?.getUserId(), device = client?.getDeviceId(), iframe = frame.current, controller = new AbortController();
     let disposed = false, stop: (() => Promise<void>) | null = null, closing = false;
     const close = async () => {
@@ -87,10 +74,10 @@ export function ConferencePanel() {
     };
     const scopedClose = { generation, roomId, close }; closeRef.current = scopedClose;
     if (!client) { clearConference(generation); return; }
-    void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing) setDevices(previous => ({ ...previous, ...value })); })).then(cleanup => {
+    void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing) setDevices(previous => ({ ...previous, ...value })); }, {voiceOnly,onTelemetry:value=>{if(!disposed&&!closing&&getMatrixClient()===client&&accountArtworkOwner()===account)setObservation({roomId,generation,value});}})).then(cleanup => {
       if (disposed || closing) void cleanup(); else { stop = cleanup; controlsRef.current = cleanup; }
     }).catch(error => { if (!disposed && !controller.signal.aborted) conferenceFailed(generation, error.message || 'The conference could not connect.'); });
-    const off = onMatrixUpdate(() => { if (getMatrixClient() !== client || accountArtworkOwner() !== account || client.getUserId() !== actor || client.getDeviceId() !== device || client.getRoom(roomId)?.getMyMembership() !== 'join') void close(); });
+    const off = onMatrixUpdate(() => { if (getMatrixClient() !== client || accountArtworkOwner() !== account || client.getUserId() !== actor || client.getDeviceId() !== device || client.getRoom(roomId)?.getMyMembership() !== 'join' || (readChannelPolicy(roomId).kind==='voice')!==voiceOnly) void close(); });
     return () => {
       disposed = true; controller.abort(); off();
       if (closeRef.current === scopedClose) closeRef.current = null;
@@ -119,10 +106,12 @@ export function ConferencePanel() {
     finally { setModerationBusy(false); }
   }
   const client = getMatrixClient(), room = client?.getRoom(session.roomId), me = client?.getUserId();
-  return <section className={'conference-panel persistent-conference' + (session.minimized ? ' conference-minimized' : '')} aria-label={'Conference in ' + (room?.name || 'conversation')}>
+  const inline = voiceOnly && !session.minimized && voiceView?.roomId === session.roomId ? voiceView : null;
+  const voiceReady = voiceOnly && telemetry?.connected === true;
+  return <section className={'conference-panel persistent-conference' + (session.minimized ? ' conference-minimized' : '') + (voiceOnly?' voice-conference':'') + (inline?' voice-inline':'')} style={inline?{left:inline.left,top:inline.top,width:inline.width,height:inline.height}:undefined} aria-label={'Conference in ' + (room?.name || 'conversation')}>
     <header><div><strong>{room?.name || 'Tavern conference'}</strong><small aria-live="polite">{session.phase === 'joining' ? 'Preparing your conference' : session.phase === 'joined' ? 'Conference active' : session.phase === 'closing' ? 'Leaving conference' : 'Connection needs attention'} · {participants.length} participating</small></div><div className="inline-actions">
       <button className="icon-button" disabled={deviceBusy || devices.audio_enabled === undefined || session.phase === 'closing'} aria-label={devices.audio_enabled ? 'Mute conference microphone' : 'Unmute conference microphone'} aria-pressed={devices.audio_enabled === false} onClick={() => void changeDevices({ audio_enabled: !devices.audio_enabled })}>{devices.audio_enabled ? <Mic/> : <MicOff/>}</button>
-      <button className="icon-button" disabled={deviceBusy || devices.video_enabled === undefined || session.phase === 'closing'} aria-label={devices.video_enabled ? 'Disable conference camera' : 'Enable conference camera'} aria-pressed={devices.video_enabled} onClick={() => void changeDevices({ video_enabled: !devices.video_enabled })}>{devices.video_enabled ? <Video/> : <VideoOff/>}</button>
+      {!voiceOnly&&<button className="icon-button" disabled={deviceBusy || devices.video_enabled === undefined || session.phase === 'closing'} aria-label={devices.video_enabled ? 'Disable conference camera' : 'Enable conference camera'} aria-pressed={devices.video_enabled} onClick={() => void changeDevices({ video_enabled: !devices.video_enabled })}>{devices.video_enabled ? <Video/> : <VideoOff/>}</button>}
       <button className="icon-button" aria-label={session.minimized ? 'Expand conference' : 'Minimize conference'} title={session.minimized ? 'Expand conference' : 'Keep talking while browsing'} onClick={() => minimizeConference(!session.minimized)}>{session.minimized ? <Maximize2/> : <Minimize2/>}</button>
       <button disabled={session.phase === 'closing'} className="icon-button call-end" aria-label="Leave conference" onClick={() => void closeRef.current?.close()}><PhoneOff/></button>
     </div></header>
@@ -139,7 +128,9 @@ export function ConferencePanel() {
         { label: 'Server deafen…', visible: audioModeration && member.userId !== me, run: () => setAudioTarget({ ...member, action: 'deafened' }) },
         { label: 'Remove from channel and call', danger: true, separator: true, visible: moderation && member.userId !== me && canModerateMember(session.roomId!, member.userId, 'kick'), run: () => setRemoving(member) },
       ]}><button onClick={() => { try { navigateParticipant('profile', session.roomId!, member.userId); } catch (error) { toast.error((error as Error).message); } }} title={member.userId + (member.devices > 1 ? ' · ' + member.devices + ' devices' : '')} className="conference-participant">{member.name}{member.userId === me ? ' (you)' : ''}</button></ActionMenu>)}</div>
-      <iframe ref={frame} title="Tavern encrypted conference" allow="camera; microphone; display-capture; autoplay; fullscreen" referrerPolicy="no-referrer" tabIndex={session.minimized ? -1 : 0}/>
+      {voiceReady&&!showTools&&<VoiceRoster roomId={session.roomId} telemetry={telemetry} onProfile={id=>navigateParticipant('profile',session.roomId!,id)}/>}
+      <iframe ref={frame} className={voiceReady&&!showTools?'voice-frame-hidden':undefined} aria-hidden={session.minimized||voiceReady&&!showTools} title="Tavern encrypted conference" allow={voiceOnly?"camera 'none'; display-capture 'none'; microphone; autoplay; fullscreen":"camera; microphone; display-capture; autoplay; fullscreen"} referrerPolicy="no-referrer" tabIndex={session.minimized||voiceReady&&!showTools ? -1 : 0}/>
+      {voiceReady&&<div className="voice-call-tools"><button className="secondary-button" onClick={()=>setShowTools(value=>!value)}>{showTools?'Show voice participants':'Call controls and devices'}</button></div>}
     </div>
     {audioTarget && <ConferenceAudioModeration key={session.roomId + ':' + session.generation + ':' + audioTarget.userId + ':' + audioTarget.action} roomId={session.roomId} generation={session.generation} target={audioTarget} onClose={() => setAudioTarget(null)}/>}
     <AlertDialog open={!!removing} onOpenChange={open => { if (!open && !moderationBusy) setRemoving(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle><AlertDialogDescription>This removes their membership in this channel and disconnects their current conference devices. They will need channel access again to receive new encrypted conversations. This does not ban their account from the server.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={moderationBusy}>Cancel</AlertDialogCancel><AlertDialogAction disabled={moderationBusy} onClick={event => { event.preventDefault(); void removeParticipant(); }}>{moderationBusy ? 'Removing…' : 'Remove from channel and call'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

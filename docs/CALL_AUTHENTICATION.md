@@ -33,6 +33,15 @@ gateway could not complete its internal Synapse check;
 `CALL_SFU_ROOM_CREATION_FAILED` means the issuer could not create the LiveKit room.
 These errors include no upstream response text or tokens.
 
+If a call joins and immediately reports a lost connection, check the failed
+request's path. A `401` on `/api/matrix/_matrix/client/versions` can come from the
+embedded widget's unauthenticated version discovery: its pinned SDK deliberately
+omits cookies. Tavern now gives that widget the public Matrix base URL for such
+discovery, while OpenID, RTC transports, state and encrypted device operations
+continue through its authenticated parent driver. Updating this fix requires
+rebuilding/recreating `tavern-web` and reloading the browser; restarting only the
+API or issuer does not update the embedded client.
+
 Run the read-only diagnostic from the same Compose directory and environment as the deployed stack:
 
 ```sh

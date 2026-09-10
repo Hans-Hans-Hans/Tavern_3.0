@@ -432,7 +432,13 @@ class RtcGateway:
         for name in set(desired) - {'canPublish', 'canPublishSources', 'tavernCanSubscribeAudio'}:
             desired[name] = observed[name]
         clearing_mute = not flags['muted'] and (row['audio_last_muted'] == 1 or row['audio_last_muted'] == -1 and bool(flags['sources']))
-        rejoin_needed = bool(row['audio_rejoin'] or clearing_mute and desired['canPublish'] and not observed['canPublish'])
+        # Retain the policy/issuer intent before intersecting the observed
+        # ceiling. A former all-sources role denial sets canPublish=false; its
+        # later restoration still needs a truthful rejoin warning, even when
+        # there was never a moderator mute flag.
+        wanted_publish = desired['canPublish']
+        wanted_sources = set(desired['canPublishSources'] or SOURCES) if wanted_publish else set()
+        rejoin_needed = bool(row['audio_rejoin'] or clearing_mute and wanted_publish and not observed['canPublish'])
         if desired['canPublish'] and not observed['canPublish']:
             # Pinned SetPermission does not increment version for identical
             # external writes. There is no proof that a current global publish
@@ -443,7 +449,6 @@ class RtcGateway:
         # mask in place; clearing a mute can require a fresh managed join.
         observed_sources = set(observed['canPublishSources'] or SOURCES)
         ceiling = set(baseline['canPublishSources'] or SOURCES)
-        wanted_sources = set(desired['canPublishSources'] or SOURCES) if desired['canPublish'] else set()
         sources = ceiling & observed_sources & wanted_sources
         desired['canPublishSources'] = [] if sources == set(SOURCES) else sorted(sources)
         if not sources:

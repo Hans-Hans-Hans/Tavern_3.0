@@ -20,10 +20,11 @@ async function fixture(page: Page) {
   await page.route('**/role-mentions-test', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/role-mentions.tsx")).mountFixture();</script></body></html>' }));
   await page.goto('/role-mentions-test'); await expect(page.getByRole('textbox', { name: 'Message Role test', exact: true })).toBeVisible();
 }
-async function enable(page: Page, index = 1) {
+async function enable(page: Page) {
   // Duplicate names are deliberately present. The editor fields belong to their
   // own role fieldset; the picker additionally identifies each stable role ID.
-  await page.getByLabel('Allow members to mention this role', { exact: true }).nth(index).check();
+  await page.getByRole('button', { name: 'Edit Helpers (mod)', exact: true }).click();
+  await page.getByLabel('Allow members to mention this role', { exact: true }).check();
   await page.getByRole('button', { name: 'Save roles and permissions', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).roleFixture.states.get('!server:test').find((event: any) => event.type === 'io.tavern.roles').content.roles.find((role: any) => role.id === 'mod').mentionable)).toBe(true);
 }

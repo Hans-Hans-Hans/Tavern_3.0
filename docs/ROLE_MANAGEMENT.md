@@ -1,0 +1,13 @@
+# Role management
+
+Open a server's role settings to find and select a role. The selected role has **Appearance**, **Permissions**, and **Members** tabs. The role list shows assignment counts and marks roles at or above your authority as read only. Search and keyboard-operable tabs work on narrow screens; the full permission list is divided into conversation, voice/video, moderation, and server-management groups.
+
+Appearance includes a name, emoji or short symbol, suggested icons, color palette, custom color, and a preview. Clearing the icon or choosing the default color removes that override. Roles can be displayed separately in the member list or made mentionable. Duplicate role copies its appearance and explicit permissions but starts unassigned and not mentionable. The default Member role cannot be removed. Order can be changed by dragging or with the higher/lower buttons.
+
+**Assign member roles** filters joined members below your current native and server-role authority. The member profile's separate role dialog offers searchable checkboxes and a preview of selected badges. Searching never removes hidden selections. You cannot grant a permission you lack or promote a member to your own authority. The native Synapse policy validates every write independently.
+
+Channel overrides live in the role editor's **Channel overrides** section. Category permissions remain in the category editor. Category rules apply before explicit channel rules; role denies win over other role allows at each level, and an individual member override wins over role rules at that level. Room membership still controls history access. Separate conference publishing controls require the explicit [publication migration](CONFERENCE_PUBLICATION.md).
+
+Role changes are drafts until saved. New roles, duplication, removals, appearance changes, order, and assignments use the same save. Reload saved roles deliberately discards the local draft. Saving a stale full-role draft refuses to overwrite newer roles or member assignments and leaves the draft visible. Independent category updates are preserved. The member dialog merges only the selected assignment changes into current native state.
+
+Editors and queued writes belong to the captured API account generation, Matrix client/user/device, server membership, and mounted target. Navigation, account replacement, lost membership, or authority changes suppress stale completion and prevent a subsequent write for another account. A native write already accepted before a change cannot be undone by a local cancellation; the UI does not report its delayed acknowledgement as a new account's success.

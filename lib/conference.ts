@@ -1,5 +1,7 @@
 import { claimMedia, releaseMedia } from './media-session';
 import { authenticatedMatrixMediaUrl } from './matrix-media';
+import { conferenceHomeserverUrl } from './conference-url';
+import { observeConferenceTelemetry, type ConferenceTelemetry } from './conference-telemetry';
 import { ClientEvent, EventType, MatrixEventEvent, RoomEvent, RoomStateEvent, type MatrixClient, type MatrixEvent } from 'matrix-js-sdk';
 import { ClientWidgetApi, Widget, WidgetDriver, WidgetEventCapability, EventDirection, MatrixCapabilities, OpenIDRequestState,
   type Capability, type IRoomEvent, type IOpenIDUpdate, type SimpleObservable } from 'matrix-widget-api';
@@ -60,7 +62,7 @@ export class TavernCallDriver extends WidgetDriver {
 
 export type ConferenceDevices = { audio_enabled?: boolean; video_enabled?: boolean };
 export type ConferenceControls = (() => Promise<void>) & { setDevices: (devices: ConferenceDevices) => Promise<void> };
-export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void):Promise<ConferenceControls>{
+export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void,options:{voiceOnly?:boolean;onTelemetry?:(value:ConferenceTelemetry|null)=>void}={}):Promise<ConferenceControls>{
   signal?.throwIfAborted();if(!managedSession)claimMedia('conference');
   try {
   const room=client.getRoom(roomId);if(!room||!await client.getCrypto()?.isEncryptionEnabledInRoom(roomId))throw new Error('Conferences require an encrypted room.');
@@ -68,7 +70,7 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   if(!room.currentState.maySendStateEvent(EventType.GroupCallMemberPrefix,client.getUserId()!))throw new Error('A room administrator must enable conference membership in channel permissions.');
   const transports=await client._unstable_getRTCTransports();if(!transports.length)throw new Error('Configure the self-hosted MatrixRTC services before joining a conference.');
   signal?.throwIfAborted();
-  const widgetId=crypto.randomUUID(),params=new URLSearchParams({widgetId,parentUrl:location.origin,roomId,userId:client.getUserId()!,deviceId:client.getDeviceId()!,baseUrl:client.getHomeserverUrl(),intent:'start_call',perParticipantE2EE:'true',allowIceFallback:'false',confineToRoom:'true',theme:'dark',background:'solid',showControls:'true'});
+  const widgetId=crypto.randomUUID(),telemetrySession=crypto.randomUUID(),actor=client.getUserId(),deviceId=client.getDeviceId(),params=new URLSearchParams({widgetId,tavernTelemetry:telemetrySession,parentUrl:location.origin,roomId,userId:actor!,deviceId:deviceId!,baseUrl:conferenceHomeserverUrl(client.getHomeserverUrl(),location.origin),intent:options.voiceOnly?'start_call_voice':'start_call',perParticipantE2EE:'true',allowIceFallback:'false',confineToRoom:'true',theme:'dark',background:'solid',showControls:'true'});
   const url=new URL('/element-call/index.html',location.origin);url.hash='?'+params;
   const driver=new TavernCallDriver(client,roomId),api=new ClientWidgetApi(new Widget({id:widgetId,creatorUserId:client.getUserId()!,type:'m.custom',name:'Tavern conference',url:url.href,waitForIframeLoad:false}),iframe,driver);api.setViewedRoomId(roomId);
   let stopped=false;
@@ -81,8 +83,9 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   for(const action of ['io.element.close','im.vector.hangup'])api.on('action:'+action,close);
   const devices=(data:any)=>({...(typeof data?.audio_enabled==='boolean'?{audio_enabled:data.audio_enabled}:{}),...(typeof data?.video_enabled==='boolean'?{video_enabled:data.video_enabled}:{})});
   for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});if(action==='io.element.join')onJoined?.();else onDevices?.(devices(event.detail.data));});
+  const stopTelemetry=observeConferenceTelemetry({iframe,widgetId,session:telemetrySession,roomId,isCurrent:()=>!stopped&&!signal?.aborted&&client.getUserId()===actor&&client.getDeviceId()===deviceId&&client.getRoom(roomId)?.getMyMembership()==='join',onUpdate:value=>options.onTelemetry?.(value)});
   iframe.src=url.href;
-  const cleanup=async()=>{if(stopped)return;stopped=true;await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
+  const cleanup=async()=>{if(stopped)return;stopped=true;stopTelemetry();await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
   return Object.assign(cleanup,{setDevices:async(patch:ConferenceDevices)=>{if(stopped)throw new Error('The conference has ended.');const result=devices(await api.transport.send('io.element.device_mute',patch));if(stopped)return;onDevices?.(result);if(Object.entries(patch).some(([key,value])=>(result as any)[key]!==value))throw new Error('The call is still preparing this device. Check its settings in the conference.');}});
   }catch(error){if(!managedSession)releaseMedia('conference');throw error;}
 }

@@ -86,6 +86,19 @@ class PublicationAPITests(unittest.IsolatedAsyncioTestCase):
         result = project(baseline, False, False, {'speak': False, 'video': True, 'screen_share': True})
         self.assertFalse(result['canPublish']); self.assertFalse(result['canPublishData'])
 
+    async def test_restoring_after_all_publication_rights_were_denied_requires_rejoin(self):
+        await self.connected()
+        self.set_policy(policy(speak=False, video=False, screen_share=False))
+        await self.due()
+        self.assertFalse(self.participants[0]['permission']['canPublish'])
+        self.set_policy(policy())
+        await self.due()
+        self.assertFalse(self.participants[0]['permission']['canPublish'])
+        self.assertTrue(self.rows()[0]['audio_rejoin'])
+        value = await self.controls()
+        self.assertTrue(value['enforcement']['rejoinRequired'])
+        self.assertEqual(value['enforcement']['status'], 'pending')
+
     async def test_missing_feature_capability_or_preupgrade_baseline_fails_closed_only_when_constrained(self):
         token = await self.mint()
         self.support_status = 404
