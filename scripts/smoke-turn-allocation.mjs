@@ -1,5 +1,5 @@
-// Real Chromium + coturn allocation only. No Matrix account, production volume,
-// remote peer, microphone, camera or internet relay destination is involved.
+// Real Chromium + coturn allocation and same-server relay bytes. No Matrix
+// account, production volume, capture or internet peer destination is involved.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -12,7 +12,7 @@ import { chromium } from 'playwright';
 import ts from 'typescript';
 
 const execute = promisify(execFile), IMAGE = 'coturn/coturn:4.17.2-r0', LABEL = 'io.tavern.ci.turn-allocation';
-const STAGES = new Set(['guard', 'image-pull', 'network-create', 'container-start', 'endpoint-proof', 'listener', 'runner-load', 'browser-start', 'valid-allocation', 'invalid-credentials', 'browser-cleanup', 'server-cleanup', 'container-cleanup', 'network-cleanup']);
+const STAGES = new Set(['guard', 'runtime-script', 'image-pull', 'network-create', 'container-start', 'endpoint-proof', 'listener', 'runner-load', 'browser-start', 'valid-allocation', 'invalid-credentials', 'relay-exchange', 'browser-cleanup', 'server-cleanup', 'container-cleanup', 'network-cleanup']);
 const RESULTS = new Set(['allocated', 'failed', 'timeout', 'cancelled', 'unavailable', 'not-configured', 'unauthorized']);
 class TurnFixtureFailure extends Error {}
 export function turnFailureSummary(stage, error, observation, container) {
@@ -62,18 +62,85 @@ export function isolatedTurnEndpoint(network, container, { nonce, name, networkN
       !inSubnet(address, network.IPAM.Config[0].Subnet, endpoint.IPPrefixLen)) return invalid();
   return { address, port: 3478 };
 }
-export function turnContainerArguments(name, network, nonce, secret) {
+export function coturnRuntimeScript(compose) {
+  // This deliberately accepts only the canonical Compose block format. Never
+  // invent a fallback implementation that could stop testing production code.
+  if (typeof compose !== 'string' || compose.length > 128000) throw new Error('Coturn runtime is unavailable.');
+  const block = compose.replaceAll('\r\n', '\n').match(/^  coturn:\n([\s\S]*?)^  livekit:/m)?.[1];
+  const body = block?.match(/^    entrypoint: \["\/bin\/sh", "-ec"\]\n    command:\n      - \|\n((?:        .*\n)+)      - tavern-coturn\n      - -c\n      - \/config\/turnserver\.conf\n/m)?.[1];
+  if (!body) throw new Error('Coturn runtime is unavailable.');
+  return body.replace(/^        /gm, '').replaceAll('$$', '$');
+}
+export function turnContainerArguments(name, network, nonce, secret, runtime) {
   if (!/^[a-f0-9]{24}$/.test(nonce) || name !== 'tavern-turn-ci-' + nonce || network !== name + '-network' || !/^[a-f0-9]{64}$/.test(secret)) throw new Error('Invalid isolated TURN ownership.');
+  if (typeof runtime !== 'string' || runtime.length > 8192 || !runtime.includes('exec /usr/bin/turnserver "$@" "--allowed-peer-ip=$turn_self_ip"')) throw new Error('The production coturn runtime is required.');
   return ['run', '-d', '--name', name, '--label', LABEL + '=' + nonce, '--network', network, '--user', '0:0',
     '--read-only', '--cap-drop', 'ALL', '--cap-add', 'NET_BIND_SERVICE', '--security-opt', 'no-new-privileges:true',
     '--pids-limit', '128', '--memory', '128m', '--cpus', '1', '--log-driver', 'none',
     '--tmpfs', '/tmp:size=8m,mode=1777', '--tmpfs', '/var/lib/coturn:size=1m,mode=1777',
-    '--entrypoint', '/usr/bin/turnserver', IMAGE,
+    '--entrypoint', '/bin/sh', IMAGE, '-ec', runtime, 'tavern-coturn',
     '-n', '--listening-ip=0.0.0.0', '--listening-port=3478', '--relay-threads=1', '--min-port=49160', '--max-port=49164',
     '--realm=tavern-turn-ci.invalid', '--use-auth-secret', '--static-auth-secret=' + secret, '--fingerprint',
     '--max-allocate-lifetime=60', '--user-quota=4', '--total-quota=8', '--no-cli', '--no-tls', '--no-dtls', '--no-tcp-relay', '--no-multicast-peers',
     '--denied-peer-ip=0.0.0.0-255.255.255.255', '--denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    // A documentation-only external address exercises coturn's public→private
+    // mapping without requiring NAT or any public route. The production entry
+    // point adds only this container's exact private IP to the peer whitelist.
+    '--external-ip=198.51.100.1', '--allowed-peer-ip=198.51.100.1',
     '--pidfile=/tmp/turn.pid', '--no-stdout-log', '--log-file=/dev/null', '--simple-log'];
+}
+
+export async function exchangeRelayData({ address, port, username, credential, nonce }) {
+  const peers = [], channels = [], cleanup = [];
+  let timer, captures = 0, result;
+  const failure = () => new Error('The isolated relay byte exchange failed.');
+  const originalUser = navigator.mediaDevices.getUserMedia, originalDisplay = navigator.mediaDevices.getDisplayMedia;
+  navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getDisplayMedia = async () => { captures++; throw failure(); };
+  const expect = value => { if (!value) throw failure(); };
+  const listen = (target, type, fn) => { target.addEventListener(type, fn); cleanup.push(() => target.removeEventListener(type, fn)); };
+  const until = (target, type, ready) => new Promise((resolve, reject) => {
+    const check = () => { try { if (ready()) resolve(); } catch { reject(failure()); } }; listen(target, type, check); check();
+  });
+  const gather = async (peer, description) => {
+    await peer.setLocalDescription(description);
+    await until(peer, 'icegatheringstatechange', () => peer.iceGatheringState === 'complete');
+    const candidates = peer.localDescription.sdp.split(/\r?\n/).filter(line => line.startsWith('a=candidate:'));
+    expect(candidates.length > 0 && candidates.length <= 8);
+    for (const line of candidates) {
+      const candidate = new RTCIceCandidate({ candidate: line.slice(2), sdpMid: '0' });
+      expect(candidate.type === 'relay' && candidate.protocol === 'udp' && candidate.address === '198.51.100.1' && candidate.port >= 49160 && candidate.port <= 49164);
+    }
+    return { type: peer.localDescription.type, sdp: peer.localDescription.sdp };
+  };
+  try {
+    result = await Promise.race([(async () => {
+      for (let index = 0; index < 2; index++) {
+        const peer = new RTCPeerConnection({ iceTransportPolicy: 'relay', iceServers: [{ urls: ['turn:' + address + ':' + port + '?transport=tcp'], username, credential }] });
+        peers.push(peer); channels.push(peer.createDataChannel('isolated-relay-proof', { negotiated: true, id: 0 }));
+      }
+      const receipts = channels.map((channel, index) => new Promise((resolve, reject) => listen(channel, 'message', event => event.data === nonce + ':' + (1 - index) ? resolve() : reject(failure()))));
+      // Attach rejection handling immediately, even before SDP negotiation.
+      const delivered = Promise.all(receipts); delivered.catch(() => {});
+      const offer = await gather(peers[0], await peers[0].createOffer());
+      await peers[1].setRemoteDescription(offer);
+      const answer = await gather(peers[1], await peers[1].createAnswer());
+      await peers[0].setRemoteDescription(answer);
+      await Promise.all(channels.map(channel => until(channel, 'open', () => { expect(channel.readyState !== 'closed'); return channel.readyState === 'open'; })));
+      channels.forEach((channel, index) => channel.send(nonce + ':' + index));
+      await delivered;
+      for (const peer of peers) {
+        const stats = await peer.getStats();
+        const transport = [...stats.values()].find(value => value.type === 'transport' && value.selectedCandidatePairId);
+        const pair = transport && stats.get(transport.selectedCandidatePairId);
+        expect(pair?.state === 'succeeded' && stats.get(pair.localCandidateId)?.candidateType === 'relay' && stats.get(pair.remoteCandidateId)?.candidateType === 'relay');
+      }
+      return { exchanged: true, relayPairs: 2 };
+    })(), new Promise((_, reject) => { timer = setTimeout(() => reject(failure()), 25000); })]);
+  } finally {
+    clearTimeout(timer); cleanup.forEach(remove => remove()); channels.forEach(channel => channel.close()); peers.forEach(peer => peer.close());
+    navigator.mediaDevices.getUserMedia = originalUser; navigator.mediaDevices.getDisplayMedia = originalDisplay;
+  }
+  return { ...result, captures, closed: peers.filter(peer => peer.signalingState === 'closed').length };
 }
 export async function runTurnDocker(args, timeout = 30000, executeCommand = execute) {
   // A fresh image pull can otherwise fill execFile's bounded output buffer with
@@ -116,11 +183,14 @@ export async function turnAllocationSmoke() {
   let browser, server, stage = 'image-pull', observation;
   const failures = [];
   try {
+    stage = 'runtime-script';
+    const runtime = coturnRuntimeScript(await readFile(new URL('../compose.yaml', import.meta.url), 'utf8'));
+    stage = 'image-pull';
     await docker(['pull', IMAGE], 120000);
     stage = 'network-create';
     const networkId = await docker(['network', 'create', '--driver', 'bridge', '--internal', '--opt', 'com.docker.network.bridge.gateway_mode_ipv4=nat', '--label', LABEL + '=' + nonce, network]);
     stage = 'container-start';
-    const containerId = await docker(turnContainerArguments(name, network, nonce, secret));
+    const containerId = await docker(turnContainerArguments(name, network, nonce, secret, runtime));
     // Internal Docker networks deliberately skip published-port programming.
     // The Linux host can reach their bridge addresses directly. Inspect only
     // this fresh private endpoint; never read or expose the secret-bearing CMD.
@@ -158,6 +228,9 @@ export async function turnAllocationSmoke() {
     const rejected = observation = await run(randomBytes(24).toString('base64'));
     assert.ok(['failed', 'timeout'].includes(rejected.result.status), 'Invalid credentials must never allocate a relay.');
     assert.equal(rejected.captures, 0); assert.equal(rejected.closed, 1);
+    stage = 'relay-exchange'; observation = undefined;
+    const exchanged = await page.evaluate(exchangeRelayData, { address, port, username, credential: password, nonce });
+    assert.deepEqual(exchanged, { exchanged: true, relayPairs: 2, captures: 0, closed: 2 }, 'Two same-server relay-only peers must exchange real bytes through the production exact-self ACL.');
   } catch (error) {
     let container;
     try { container = await docker(['container', 'inspect', '--format', '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}', name]); } catch { /* No owned container may have been created. */ }
@@ -173,7 +246,7 @@ export async function turnAllocationSmoke() {
     }
   }
   if (failures.length) throw new TurnFixtureFailure(failures.join('; '));
-  console.log('PASS real Chromium/coturn: relay allocation, invalid-credential rejection and resource cleanup; no media or native-account claim.');
+  console.log('PASS real Chromium/coturn: relay allocation, invalid-credential rejection, same-server relay-only byte exchange and resource cleanup; no media or native-account claim.');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   turnAllocationSmoke().catch(error => { console.error('FAIL isolated TURN allocation acceptance: ' + (error instanceof TurnFixtureFailure ? error.message : turnFailureSummary('guard', error)) + '. No credentials or candidate addresses are logged.'); process.exitCode = 1; });

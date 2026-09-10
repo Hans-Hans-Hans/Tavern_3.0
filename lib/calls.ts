@@ -1,5 +1,5 @@
 import { claimMedia, releaseMedia, mediaOwner } from './media-session';
-import { CallEvent, CallFeedEvent, ClientEvent, type MatrixClient, type MatrixCall } from 'matrix-js-sdk';
+import { CallEvent, CallFeedEvent, type MatrixClient, type MatrixCall } from 'matrix-js-sdk';
 import { CallFeed } from 'matrix-js-sdk/lib/webrtc/callFeed';
 import { SDPStreamMetadataPurpose } from 'matrix-js-sdk/lib/webrtc/callEventTypes';
 import { readInstanceConfig } from './instance';
@@ -52,15 +52,13 @@ function incoming(call: MatrixCall) {
 }
 export function initializeCalls(c: MatrixClient) {
   resetCalls(); client = c; c.getMediaHandler().restoreMediaSettings(media.audioInput, media.videoInput); c.on(CallEventHandlerEvent.Incoming, incoming);
-  const identity = identityOwner(c); let refreshFailed = false;
-  const available = () => { refreshFailed = false; }, unavailable = () => { refreshFailed = true; };
+  const identity = identityOwner(c);
   const peerCreated = (peer: RTCPeerConnection, call: MatrixCall) => {
     // SDK emits synchronously before setting remote SDP / creating an offer,
     // including calls accepted automatically during a glare replacement.
     if (!identity() || call.groupCallId || call.peerConn !== peer || hasEnded(call) || peer.localDescription ||
         !['stable', 'have-remote-offer'].includes(peer.signalingState) || ['connected', 'disconnected', 'failed', 'closed'].includes(peer.connectionState)) return;
     try {
-      if (refreshFailed) throw new Error(callRelayError);
       configureInitialCallRelay(peer, currentCallRelay(c), callOwner(c, call.roomId));
     } catch {
       // An SDK event listener must not throw into its call setup pipeline.
@@ -69,8 +67,8 @@ export function initializeCalls(c: MatrixClient) {
       if (active === call) { error = callRelayError; changed(); }
     }
   };
-  c.on(ClientEvent.TurnServers, available); c.on(ClientEvent.TurnServersError, unavailable); c.on(CallEvent.PeerConnectionCreated, peerCreated);
-  detachRelay = () => { c.off(ClientEvent.TurnServers, available); c.off(ClientEvent.TurnServersError, unavailable); c.off(CallEvent.PeerConnectionCreated, peerCreated); };
+  c.on(CallEvent.PeerConnectionCreated, peerCreated);
+  detachRelay = () => { c.off(CallEvent.PeerConnectionCreated, peerCreated); };
 }
 export function resetCalls() { mediaEpoch++; detachRelay?.(); detachRelay = null; if (active && active.state !== CallState.Ended) active.hangup(CallErrorCode.UserHangup, false); detach?.(); detach = null; client?.off(CallEventHandlerEvent.Incoming, incoming); client = null; active = null;releaseMedia('direct'); busy = false; error = ''; changed(); }
 async function requireRelay(roomId: string) {

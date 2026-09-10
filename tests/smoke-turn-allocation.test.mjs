@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { isolatedTurnEndpoint, removeOwnedTurnResource, requireTurnAllocationCi, runTurnDocker, turnContainerArguments, turnFailureSummary } from '../scripts/smoke-turn-allocation.mjs';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
+import { coturnRuntimeScript, exchangeRelayData, isolatedTurnEndpoint, removeOwnedTurnResource, requireTurnAllocationCi, runTurnDocker, turnContainerArguments, turnFailureSummary } from '../scripts/smoke-turn-allocation.mjs';
+const compose = await readFile(new URL('../compose.yaml', import.meta.url), 'utf8'), runtime = coturnRuntimeScript(compose);
 test('actual allocation fixture requires explicit disposable Linux CI', () => {
   const env = { GITHUB_ACTIONS: 'true', TAVERN_CI_SMOKE: 'true' };
   requireTurnAllocationCi(env, 'linux');
@@ -10,14 +13,73 @@ test('actual allocation fixture requires explicit disposable Linux CI', () => {
   assert.throws(() => requireTurnAllocationCi(env, 'win32'));
 });
 test('coturn stays on its fresh internal network without published ports and with denied peer destinations', () => {
-  const nonce = 'a'.repeat(24), name = 'tavern-turn-ci-' + nonce, args = turnContainerArguments(name, name + '-network', nonce, 'b'.repeat(64));
+  const nonce = 'a'.repeat(24), name = 'tavern-turn-ci-' + nonce, args = turnContainerArguments(name, name + '-network', nonce, 'b'.repeat(64), runtime);
   assert.equal(args.includes('-p'), false); assert.equal(args.includes('--publish'), false);
   assert.equal(args.includes('--read-only'), true); assert.equal(args[args.indexOf('--cap-drop') + 1], 'ALL');
-  assert.equal(args[args.indexOf('--cap-add') + 1], 'NET_BIND_SERVICE'); assert.equal(args[args.indexOf('--entrypoint') + 1], '/usr/bin/turnserver');
+  assert.equal(args[args.indexOf('--cap-add') + 1], 'NET_BIND_SERVICE'); assert.equal(args[args.indexOf('--entrypoint') + 1], '/bin/sh');
+  assert.equal(args[args.indexOf('-ec') + 1], runtime);
+  assert.ok(args.includes('--external-ip=198.51.100.1')); assert.ok(args.includes('--allowed-peer-ip=198.51.100.1'));
   assert.equal(args.includes('-v'), false); assert.equal(args.includes('--privileged'), false);
   assert.equal(args.includes('--denied-peer-ip=0.0.0.0-255.255.255.255'), true); assert.equal(args.includes('--min-port=49160'), true); assert.equal(args.includes('--max-port=49164'), true);
   assert.throws(() => turnContainerArguments('production', name + '-network', nonce, 'b'.repeat(64)));
   assert.throws(() => turnContainerArguments(name, 'shared-network', nonce, 'b'.repeat(64)));
+  assert.throws(() => turnContainerArguments(name, name + '-network', nonce, 'b'.repeat(64), 'exec unsafe'));
+});
+
+test('native relay fixture executes the actual production self-IP validation without inventing a fallback script', () => {
+  assert.match(runtime, /hostname -i/); assert.match(runtime, /exec \/usr\/bin\/turnserver "\$@" "--allowed-peer-ip=\$turn_self_ip"/);
+  assert.equal(runtime.includes('$$'), false);
+  assert.throws(() => coturnRuntimeScript(compose.replace('      - tavern-coturn', '      - unrelated')));
+  assert.throws(() => coturnRuntimeScript('unsafe arbitrary script'));
+});
+
+function relayFixture({ candidateType = 'relay', received = 'correct', selectedType = 'relay' } = {}) {
+  const peers = [], channels = [], configurations = [], nonce = 'a'.repeat(24);
+  const originalCapture = async () => { throw new Error('Physical capture boundary must never run'); };
+  const mediaDevices = { getUserMedia: originalCapture, getDisplayMedia: originalCapture };
+  class Signal {
+    handlers = new Map();
+    addEventListener(type, fn) { const handlers = this.handlers.get(type) || new Set(); handlers.add(fn); this.handlers.set(type, handlers); }
+    removeEventListener(type, fn) { this.handlers.get(type)?.delete(fn); }
+    emit(type, event = {}) { this.handlers.get(type)?.forEach(fn => fn(event)); }
+  }
+  class Channel extends Signal {
+    readyState = 'connecting';
+    constructor(index) { super(); this.index = index; channels.push(this); }
+    send(value) { channels[1 - this.index].emit('message', { data: received === 'correct' ? value : 'wrong nonce' }); }
+    close() { this.readyState = 'closed'; }
+  }
+  class Peer extends Signal {
+    signalingState = 'stable'; iceGatheringState = 'new';
+    constructor(configuration) { super(); configurations.push(configuration); this.index = peers.length; peers.push(this); }
+    createDataChannel(_label, options) { assert.equal(options.negotiated, true); assert.equal(options.id, 0); return new Channel(this.index); }
+    async createOffer() { return { type: 'offer', sdp: '' }; }
+    async createAnswer() { return { type: 'answer', sdp: '' }; }
+    async setLocalDescription(description) { this.localDescription = { ...description, sdp: 'a=candidate:1 1 udp 100 198.51.100.1 49160 typ ' + candidateType }; this.iceGatheringState = 'complete'; }
+    async setRemoteDescription(description) { if (description.type === 'answer') channels.forEach(channel => { channel.readyState = 'open'; channel.emit('open'); }); }
+    async getStats() { return new Map([['transport', { type: 'transport', selectedCandidatePairId: 'pair' }], ['pair', { state: 'succeeded', localCandidateId: 'local', remoteCandidateId: 'remote' }], ['local', { candidateType: 'relay' }], ['remote', { candidateType: selectedType }]]); }
+    close() { this.signalingState = 'closed'; }
+  }
+  const probe = runInNewContext('(' + exchangeRelayData.toString() + ')', { navigator: { mediaDevices }, RTCPeerConnection: Peer,
+    RTCIceCandidate: class { constructor({ candidate }) { const fields = candidate.split(' '); this.type = fields[7]; this.protocol = fields[2]; this.address = fields[4]; this.port = Number(fields[5]); } }, setTimeout, clearTimeout });
+  return { run: () => probe({ address: '172.25.0.2', port: 3478, username: 'temporary', credential: 'NOT-LOGGED', nonce }), configurations,
+    closed: () => peers.every(peer => peer.signalingState === 'closed') && channels.every(channel => channel.readyState === 'closed'),
+    restored: () => mediaDevices.getUserMedia === originalCapture && mediaDevices.getDisplayMedia === originalCapture };
+}
+
+test('relay byte proof requires both selected relay pairs and exact exchanged payloads, then closes all resources', async () => {
+  const f = relayFixture(), result = await f.run();
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { exchanged: true, relayPairs: 2, captures: 0, closed: 2 });
+  assert.equal(f.configurations.length, 2);
+  for (const configuration of f.configurations) {
+    assert.equal(configuration.iceTransportPolicy, 'relay'); assert.equal(configuration.iceServers.length, 1);
+    assert.deepEqual([...configuration.iceServers[0].urls], ['turn:172.25.0.2:3478?transport=tcp']);
+  }
+  assert.equal(f.closed(), true); assert.equal(f.restored(), true);
+  for (const options of [{ candidateType: 'host' }, { received: 'wrong' }, { selectedType: 'host' }]) {
+    const denied = relayFixture(options); await assert.rejects(denied.run(), /isolated relay byte exchange failed/);
+    assert.equal(denied.closed(), true); assert.equal(denied.restored(), true);
+  }
 });
 
 function endpointFixture() {

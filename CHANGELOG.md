@@ -63,6 +63,9 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Fixed
 
+- Direct calls apply fresh TURN credentials to the actual browser connection before negotiation, including incoming and replacement calls. Expired credentials are rejected and failed media no longer appears connected.
+- Coturn permits its exact current container address after public-to-private relay translation, so same-server relay traffic is not rejected by private-address restrictions. Existing configuration and credentials are preserved.
+
 - Fixed a call-screen crash caused by joining the telemetry helper name to the `return` keyword in the embedded minified bundle; the actual returned expression now has an execution regression.
 
 - Embedded call discovery now uses the public Matrix URL while authenticated operations stay with the managed parent client; the persistent host also handles its advertised always-on-screen widget action.

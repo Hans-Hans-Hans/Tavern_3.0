@@ -49,6 +49,27 @@ obtained a UDP relay candidate. That proves allocation and authentication from
 that browser, not delivery between two participants. Direct-call acceptance is
 still open; the successful embedded-conference join does not close it.
 
+The updated direct-call panel subsequently reported two local relay candidates
+and zero remote candidates. The user later reported a cellular-to-PC direct call
+remaining connected without audible audio, while conference calls work normally.
+Direct-call media delivery/playback still requires deployed verification.
+
+Two separate defects have regression coverage. The pinned Matrix SDK captures
+an incoming call's old TURN array before refreshing the client; the application
+now applies fresh credentials through the public peer configuration API before
+negotiation. It also checks current account/room ownership and credential expiry.
+The header shares native connection observations with the details panel rather
+than asserting an established relay while media has failed.
+
+Coturn maps a public relay peer back to its private Docker address before checking
+peer permissions. The canonical Compose entrypoint now allows only that exact
+current container address while retaining the existing configuration and private
+network restrictions. The entrypoint's actual POSIX-shell tests pass. Its Linux
+fixture now exchanges bytes through two relay allocations; Docker execution is
+pending. The direct-call checkpoint passed its production build, 41 focused
+Node tests and the three runtime-shell tests; adjacent presentation browser tests
+passed. These checks do not establish audible media on the user's deployment.
+
 The advertised `set_always_on_screen` action now receives the host's response.
 Safe active fatal-error details can be copied without raw console logs or tokens.
 A new Linux smoke joins both ordinary accounts through the actual embedded UI,

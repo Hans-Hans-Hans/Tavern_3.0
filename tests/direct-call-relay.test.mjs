@@ -76,6 +76,19 @@ test('answer refresh failure rejects an otherwise populated stale cache without 
   assert.equal(f.answered.length, 0); assert.equal(call.peerConn.updates, before); assert.equal(f.calls.callSnapshot().busy, false);
 }));
 
+test('a late concurrent refresh error does not poison a later successful SDK cache-hit incoming call', () => fixture(async f => {
+  const pending = [];
+  f.client.turnServer = () => new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  const first = f.client.checkTurnServers(), late = f.client.checkTurnServers();
+  pending[0].resolve(fresh()); assert.equal(await first, true);
+  pending[1].reject(new Error('fixture refresh unavailable')); assert.equal(await late, false);
+  // The real SDK now returns true from cache without emitting TurnServers.
+  const call = f.call(); await f.invite(call);
+  assert.equal(pending.length, 2); assert.equal(call.peerConn.updates, 1);
+  assert.equal(call.peerConn.signalingState, 'have-remote-offer');
+  f.incoming(call); await f.calls.answerCall(false); assert.equal(f.answered.length, 1);
+}));
+
 for (const kind of ['account', 'actor', 'device', 'base', 'room', 'ended']) test(`answer refresh cannot reconfigure or answer a retired ${kind}`, () => fixture(async f => {
   const call = f.call(); await f.invite(call); f.incoming(call);
   let release; f.client.checkTurnServers = () => new Promise(resolve => { release = () => resolve(true); });

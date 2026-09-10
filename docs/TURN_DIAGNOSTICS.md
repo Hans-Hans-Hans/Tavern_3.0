@@ -39,12 +39,18 @@ RTC connection boundary is controlled; they do not claim real TURN reachability.
 `scripts/smoke-turn-allocation.mjs` is a separate Linux GitHub Actions fixture. It
 creates a uniquely owned internal Docker network and pinned coturn container,
 publishes no host ports, uses temporary random HMAC credentials, bounds relay
-ports and denies all peer destinations. It verifies the exact newly created
+ports and blocks peer destinations except its exact self-address mapping. It verifies the exact newly created
 network/container IDs, ownership labels, internal bridge scope, sole membership,
 private IPv4 subnet/address and absence of port publishing. The Linux CI host
 then connects directly to that verified bridge endpoint. Real Chromium runs the
 production diagnostic helper against it and checks both allocation and
-invalid-credential rejection. The container, network, browser and HTTP fixture
+invalid-credential rejection. The production Compose entrypoint permits only the
+container's own exact IPv4 address through the private-peer block. A second phase exchanges bounded
+nonce-tagged data-channel bytes in both directions between two relay-only peers,
+and verifies both selected ICE pairs are relay/relay. A documentation-only
+advertised address exercises coturn's public-to-private mapping; the network has
+no public route and no other container or peer is admitted. The container,
+network, browser and HTTP fixture
 are closed afterward. No production account, configuration or volume is used.
 
 The first Linux CI execution failed with a generic error. Later stage diagnostics
@@ -60,7 +66,8 @@ pull progress can exhaust its bounded child-process output buffer before startup
 Failures report only a fixed stage and reason, optional container state/exit/OOM
 status, and fixed browser outcome/capture/close counts. They expose no command,
 credential, candidate address or raw browser/container error. Success is printed
-only after the allocation, invalid-credential check and all owned cleanup finish.
+only after allocation, invalid-credential rejection, bidirectional relay bytes
+and all owned cleanup finish.
 An inspection failure alone does not count as successful cleanup: a bounded
 native inventory must confirm absence, or cleanup remains a failure.
 The next Linux run must still pass both real authentication cases.
@@ -70,6 +77,31 @@ and the pinned image's [direct turnserver binary](https://github.com/coturn/cotu
 with its existing listener, allocation and authentication flags checked against
 the [coturn 4.17.2 option parser](https://github.com/coturn/coturn/blob/4.17.2/src/apps/relay/mainrelay.c).
 Local tests exercise actual bounded child pipes and diagnostic redaction; they
-do not substitute for Docker allocation. This fixture tests browser/coturn
-allocation and authentication separately from the managed-account credential
-fetch. It is not a media end-to-end test.
+do not substitute for Docker allocation and byte exchange. This fixture tests
+browser/coturn transport separately from managed-account credential fetching.
+It does not prove a user's public NAT/firewall route or a complete media call.
+
+## Same-server relays and existing deployments
+
+Tavern's direct Matrix calls require TURN. Successful allocation can coexist
+with denied peer traffic when both participants use the same coturn instance.
+Coturn4.17.2 [rewrites a public peer address to its private mapping](https://github.com/coturn/coturn/blob/4.17.2/src/client/ns_turn_msg.c#L1763)
+before [checking the CreatePermission peer ACL](https://github.com/coturn/coturn/blob/4.17.2/src/server/ns_turn_server.c#L3166).
+The bare `external-ip=PUBLIC_IP` form establishes mappings but does not add the
+private relay address to the allowlist. The explicit public/private form does.
+See the pinned [mapping setup and option parser](https://github.com/coturn/coturn/blob/4.17.2/src/apps/relay/mainrelay.c#L2280).
+Synapse's [coturn instructions](https://element-hq.github.io/synapse/latest/setup/turn/coturn.html)
+therefore exempt the TURN server's own listening address from private-peer denial.
+
+The Compose coturn entrypoint now derives and validates its one current container
+IPv4 address, then adds only `--allowed-peer-ip=THAT_ADDRESS` when starting the
+existing binary. The original readonly configuration, shared secret, external
+mapping and private-subnet blocks remain intact. This also applies to existing
+generated configurations after recreating coturn with the updated Compose file;
+configuration regeneration is unnecessary. Multiple, malformed, loopback or
+non-unicast addresses fail startup with a fixed error. No private subnet is
+allowed and `allow-loopback-peers` is not enabled.
+
+Three actual POSIX-shell regressions verify address validation, failure handling
+and argument preservation. The enhanced Docker byte-exchange phase requires its
+next Linux CI execution; this Windows workspace has no Docker daemon.

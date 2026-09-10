@@ -270,7 +270,22 @@ services:
     user: 0:0
     cap_add:
     - NET_BIND_SERVICE
+    entrypoint:
+    - /bin/sh
+    - -ec
     command:
+    - "turn_self_ip=\"$$(\n  fail() { printf '%s\\n' 'TURN requires one canonical\
+      \ container IPv4 address.' >&2; exit 64; }\n  set -f\n  turn_addresses=\"$$(hostname\
+      \ -i)\" || fail\n  set -- $$turn_addresses\n  [ \"$$#\" -eq 1 ] || fail\n  turn_address=\"\
+      $$1\"\n  case \"$$turn_address\" in ''|*[!0-9.]*) fail ;; esac\n  IFS=.\n  set\
+      \ -- $$turn_address\n  [ \"$$#\" -eq 4 ] || fail\n  [ \"$$turn_address\" = \"\
+      $$1.$$2.$$3.$$4\" ] || fail\n  for turn_octet do\n    case \"$$turn_octet\"\
+      \ in 0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) fail ;; esac\n    [ \"$$turn_octet\"\
+      \ -le 255 ] || fail\n  done\n  [ \"$$1\" -gt 0 ] && [ \"$$1\" -lt 224 ] && [\
+      \ \"$$1\" -ne 127 ] || fail\n  [ \"$$1.$$2\" != '169.254' ] || fail\n  printf\
+      \ '%s' \"$$turn_address\"\n)\"\nexec /usr/bin/turnserver \"$$@\" \"--allowed-peer-ip=$$turn_self_ip\"\
+      \n"
+    - tavern-coturn
     - -c
     - /config/turnserver.conf
     volumes:
