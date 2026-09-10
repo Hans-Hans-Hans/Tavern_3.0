@@ -6,6 +6,10 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Audio-only voice channel pages with participant avatars, live speaking rings, measured ping/jitter/loss, explicit encryption status and a persistent call while browsing.
+- Typed channel creation with category placement, purpose/icon presets, explicit member invitations and retry of partial setup without creating duplicate rooms.
+- Searchable server role creation, color/emoji previews, grouped permissions, role duplication and searchable member assignments with concurrent-save protection.
+
 - Read-only call-service diagnostics with bounded checks of OpenID, issuer health, LiveKit credentials and optional public HTTPS discovery.
 - Bounded administrator server/channel hierarchy with native metadata, reciprocal relationship status, explicit expansion and revision-checked pages.
 - Encrypted attachment retry copies with per-file delivery checkpoints, explicit retry/cancel controls, stable native transaction content and rejection of malformed acknowledgements.
@@ -56,6 +60,9 @@ This version is under development and testing on `V3`. These entries describe im
 - Production configuration is generated once and retained across restarts. Migration preserves existing Matrix server identity and data.
 
 ### Fixed
+
+- Embedded call discovery now uses the public Matrix URL while authenticated operations stay with the managed parent client; the persistent host also handles its advertised always-on-screen widget action.
+- Voice page joins, call observations and channel creation completion retire when their account, room or navigation changes; iframe reloads reject telemetry from the previous document.
 
 - Calls create LiveKit rooms through the private service address and return the authenticated public WebSocket URL to browsers. Existing call configurations gain a missing Synapse OpenID listener without rotating credentials; authorization errors identify the failing stage.
 - Isolated TURN acceptance connects to a verified internal Docker bridge endpoint, and invitation test fixtures implement the native fresh-state API used by current role enforcement.

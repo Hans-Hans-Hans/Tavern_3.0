@@ -18,6 +18,10 @@ services:
     image: tavern-sfu-audio:check
     command: [--config, /config/livekit.ci.yaml]
     ports: !reset []
+    networks:
+      private: {}
+      media:
+        ipv4_address: 172.30.239.2
   coturn:
     ports: !reset []
   rtc-auth:
@@ -125,3 +129,6 @@ networks:
   # No CI call service may discover or forward media outside this project.
   media:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.239.0/24

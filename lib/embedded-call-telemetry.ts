@@ -1,4 +1,4 @@
-import { CALL_TELEMETRY_TYPE, TELEMETRY_LIMIT, emptyConferenceMetrics, parseConferenceTelemetry, telemetryNonce, telemetryString, type ConferenceMetrics, type ConferenceParticipant } from './conference-telemetry-protocol.js';
+import { CALL_TELEMETRY_TYPE, CALL_TELEMETRY_BIND, CALL_TELEMETRY_READY, TELEMETRY_LIMIT, conferenceFailure, emptyConferenceMetrics, parseConferenceTelemetry, telemetryNonce, telemetryString, type ConferenceFailure, type ConferenceMetrics, type ConferenceParticipant } from './conference-telemetry-protocol.js';
 
 // These objects belong to pinned Element Call. Only its existing attested
 // members, public LiveKit track APIs, and observable cleanup scope are observed.
@@ -22,7 +22,8 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     installations.get(host)?.();
     const sequence = sequences.get(host)?.binding === url.href ? sequences.get(host)! : { binding: url.href, value: 0 }; sequences.set(host, sequence);
     let stopped = false, revision = 0, scheduled: ReturnType<typeof setTimeout> | undefined, gathering = false;
-    let metrics = emptyConferenceMetrics();
+    let metrics = emptyConferenceMetrics(), document = '';
+    let failure: ConferenceFailure | null = null;
     const nested = new Map<Native, () => void>(), trackCounters = new WeakMap<object, Map<string, { received: number; lost: number }>>(), statsReads = new WeakMap<object, Promise<Native>>();
     const value = (observable: Native) => observable?.value;
     const members = () => { const local = value(view.localMatrixLivekitMember$), remote = value(view.remoteMatrixLivekitMembers$); return [...(local ? [local] : []), ...(Array.isArray(remote) ? remote.slice(0, TELEMETRY_LIMIT) : [])]; };
@@ -48,13 +49,13 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     };
     const current = () => !stopped && host.location.href === url.href && matrixRoom.client === client && client.getUserId() === actor && client.getDeviceId() === device && client.getHomeserverUrl() === base && client.getRoom(roomId) === matrixRoom && matrixRoom.getMyMembership() === 'join';
     const emit = () => {
-      scheduled = undefined; if (!current()) { stop(); return; }
-      const list = entries(), active = value(view.connected$) === true;
+      clearTimeout(scheduled); scheduled = undefined; if (!current()) { stop(); return; } if (!document) return;
+      const list = failure ? [] : entries(), active = !failure && value(view.connected$) === true;
       const enabled = !active || !list.length ? null : list.some(p => p.data.e2eeEnabled === false) ? false : list.every(p => p.data.e2eeEnabled === true) ? true : null;
       const remote = value(view.remoteMatrixLivekitMembers$), memberCount = (value(view.localMatrixLivekitMember$) ? 1 : 0) + (Array.isArray(remote) ? remote.length : 0);
-      const body = parseConferenceTelemetry({ type: CALL_TELEMETRY_TYPE, version: 1, widgetId, session, roomId, sequence: ++sequence.value,
+      const body = parseConferenceTelemetry({ type: CALL_TELEMETRY_TYPE, version: 1, widgetId, session, roomId, document, sequence: ++sequence.value,
         connected: active, reconnecting: value(view.reconnecting$) === true, participants: list.map(p => p.data), complete: memberCount <= TELEMETRY_LIMIT,
-        e2eeEnabled: enabled, metrics });
+        e2eeEnabled: enabled, metrics: failure ? emptyConferenceMetrics() : metrics, failure });
       if (body) host.parent.postMessage(body, url.origin);
     };
     const schedule = () => { if (!stopped && !scheduled) scheduled = setTimeout(() => { try { emit(); } catch { stop(); } }, 200); };
@@ -134,6 +135,20 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     const heartbeat = setInterval(() => { try { if (!current()) stop(); else schedule(); } catch { stop(); } }, 1000), stats = setInterval(() => { void gather().catch(stop); }, 2000);
     cleanups.push(() => clearInterval(heartbeat), () => clearInterval(stats));
     host.addEventListener('pagehide', stop); cleanups.push(() => host.removeEventListener('pagehide', stop));
+    const bind = (event: MessageEvent) => {
+      const data = event.data;
+      if (!current() || event.source !== host.parent || event.origin !== url.origin || !data || typeof data !== 'object' || Object.keys(data).length !== 6 ||
+          data.type !== CALL_TELEMETRY_BIND || data.version !== 1 || data.widgetId !== widgetId || data.session !== session || data.roomId !== roomId || !telemetryNonce(data.document)) return;
+      document = data.document; if (failure) { try { emit(); } catch { stop(); } } else schedule();
+    };
+    host.addEventListener('message', bind); cleanups.push(() => host.removeEventListener('message', bind));
+    const fatal = view.fatalError$?.subscribe?.({ next: (error: unknown) => {
+      if (error === null || error === undefined || failure || !current()) return;
+      try { failure = conferenceFailure(error); emit(); } catch { stop(); }
+    }, error: () => {} });
+    if (fatal) cleanups.push(() => fatal.unsubscribe());
+    // Creation can happen well after iframe load, once the user joins the call.
+    host.parent.postMessage({ type: CALL_TELEMETRY_READY, version: 1, widgetId, session, roomId }, url.origin);
     schedule(); void gather().catch(stop);
   } catch { stop(); for (const dispose of cleanups) { try { dispose(); } catch { /* no call-side effects */ } } }
   return view;

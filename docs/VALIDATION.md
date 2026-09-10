@@ -2,6 +2,38 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Voice channels, roles and current call investigation
+
+Voice channels now have an audio-only entry screen and a persistent call panel with
+native membership, avatars, speaking rings and measured media statistics. The
+embedded observer reads existing attested participants and tracks; it does not
+start another capture or connection. Unknown encryption or missing statistics are
+shown explicitly. The role editor now separates appearance, permissions and
+assignments, and typed channel creation retains partial setup for retry.
+See [voice telemetry](CONFERENCE_TELEMETRY.md), [roles](ROLE_MANAGEMENT.md) and
+[channel creation](CHANNEL_CREATION.md) for their implementation limits.
+
+Checkpoint `40b8e17` passed 313 browser tests and the actual isolated
+Chromium/coturn allocation, invalid-credential rejection and cleanup. Its native
+stack also passed fresh OpenID exchange through both token formats for two ordinary
+users and actual public SFU grant validation. The [workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34537124466)
+was cancelled by the next push before the complete acceptance sequence finished;
+these observed stages are not a full workflow pass or an actual browser call.
+
+Checkpoint `2362894` passed its build and Node tests; its browser stage reported
+322 passes and 11 failures in outdated conference fixtures and the initial
+telemetry fixture. The updated fixtures exercise current native membership,
+iframe document replacement and the mounted voice panel. The combined follow-up
+is being validated before the next V3 push.
+
+On the user's deployment, token requests now return 200 and the SFU WebSocket
+returns 101. A browser log reports connection success and encryption enabled,
+but the user still sees an error and the call ends on both home and mobile data.
+The missing advertised `set_always_on_screen` widget handler is fixed; upstream
+catches that error, so it is not claimed as the cause of the call ending. An
+obsolete receive-only connection can also log intentional cancellation while a
+replacement connects. The active call failure is still under investigation.
+
 ## Drafts, attachment retries, search, appearance and TURN diagnostics
 
 Checkpoint `42aee72` passed its build, JavaScript and browser stages, but
@@ -23,8 +55,8 @@ combined local checkpoint passed 690 Python tests (15 platform-specific skips),
 509 JavaScript tests and the production build. Migration checks preserve exact
 before-image bytes, call credentials, signing identity and concurrent operator
 edits; repeated initialization leaves the repaired configuration unchanged.
-The new native token exchange and the Docker TURN repair still require a Linux
-workflow run; these local results do not establish deployed calls or media flow.
+The subsequent `40b8e17` Linux run confirmed native token exchange and the
+Docker TURN repair as recorded above. Deployed call/media acceptance remains open.
 
 Checkpoint `7ed3da3` passed its production build, all 492 JavaScript tests and all
 297 browser tests in [Linux CI](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34410554799).
@@ -63,7 +95,7 @@ for the measured scope and remaining limits.
 Controlled transports and RTC boundaries in these local tests do not establish
 new native delivery or external TURN connectivity. The workflow invokes a
 separate disposable real-Chromium/coturn allocation and invalid-credential check;
-successful allocation after the Docker bridge repair is still pending.
+successful allocation after the Docker bridge repair was observed in `40b8e17`.
 
 ## Responsive modals and encrypted history recovery
 

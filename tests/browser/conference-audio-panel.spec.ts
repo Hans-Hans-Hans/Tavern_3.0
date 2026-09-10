@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { routeVoiceAvatar } from './voice-fixture-routes';
 
 const self = '@moderator:local', guest = '@guest:local';
 function audioState(roomId: string, userId: string) {
@@ -7,6 +8,7 @@ function audioState(roomId: string, userId: string) {
     scopes: [{ roomId, name: 'Call room', kind: 'channel' }], enforcement: { status: 'idle', checkedAt: null, devices: 0 } };
 }
 async function fixture(page: Page, configure?: (backend: any) => void, managed = true) {
+  await routeVoiceAvatar(page);
   const backend = { capabilities: { available: false, audioModerationAvailable: true, audioModerationControls: true }, capabilityReads: 0,
     reads: [] as { roomId: string; userId: string; device: string | undefined }[], writes: [] as any[],
     states: new Map<string, ReturnType<typeof audioState>>(),

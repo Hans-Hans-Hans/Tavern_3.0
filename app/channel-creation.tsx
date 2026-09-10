@@ -6,7 +6,7 @@ import { channelKinds, type ChannelKind } from '@/lib/channel-policy';
 import { channelCreationOwner, channelSlowModes, channelTemplates, createTypedChannel, finishChannelCreation, isChannelCreationOwner, type ChannelCreationResult, type ChannelDraft } from '@/lib/channel-creation';
 import './channel-creation.css';
 
-type Props = { serverId?: string; members: { id: string; name: string }[]; policyEnabled: boolean; callsEnabled: boolean; onCreated: (roomId: string) => Promise<unknown> };
+type Props = { serverId?: string; members: { id: string; name: string }[]; policyEnabled: boolean; callsEnabled: boolean; onCreated: (roomId: string, isCurrent: () => boolean) => Promise<unknown> };
 export function ChannelCreationForm(props: Props) {
   const [, refresh] = useState(0);
   useEffect(() => { const stop = onMatrixUpdate(() => refresh(value => value + 1)), timer = setInterval(() => refresh(value => value + 1), 500); return () => { stop(); clearInterval(timer); }; }, []);
@@ -18,7 +18,7 @@ export function ChannelCreationForm(props: Props) {
 }
 function ChannelCreationEditor({ serverId, members, policyEnabled, callsEnabled, onCreated }: Props) {
   const [owner] = useState(channelCreationOwner), live = useRef(true), lock = useRef(false), receipt = useRef<ChannelCreationResult | null>(null);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const current = () => live.current && isChannelCreationOwner(owner);
   const [draft, setDraft] = useState<ChannelDraft>({ name: '', description: '', kind: 'text', slowModeSeconds: 0, serverId, categoryId: '', members: [], icon: channelTemplates.text.icon });
   const [filter, setFilter] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [result, setResult] = useState<ChannelCreationResult | null>(null);
@@ -33,7 +33,7 @@ function ChannelCreationEditor({ serverId, members, policyEnabled, callsEnabled,
       const value = retry && receipt.current ? await finishChannelCreation(receipt.current) : await createTypedChannel(draft);
       if (!current()) return;
       receipt.current = value; setResult({ ...value, errors: [...value.errors], invited: [...value.invited], pendingMembers: [...value.pendingMembers] });
-      if (!value.errors.length) { try { await onCreated(value.roomId); } catch { if (current()) setError('The channel was created, but opening it failed. Use Open channel or find it in All conversations.'); } }
+      if (!value.errors.length) { try { await onCreated(value.roomId, current); } catch { if (current()) setError('The channel was created, but opening it failed. Use Open channel or find it in All conversations.'); } }
     } catch (failure) { if (current()) setError((failure as Error).message); }
     finally { lock.current = false; if (current()) setBusy(false); }
   }
@@ -47,7 +47,7 @@ function ChannelCreationEditor({ serverId, members, policyEnabled, callsEnabled,
     <p className='login-help'>Retrying finishes this same channel. It does not create another room. You can also manage it later from All conversations.</p>
     {error && <p role='alert' className='connect-error'>{error}</p>}
     <div className='product-actions'>{result.errors.length > 0 && <button type='button' className='primary-button' disabled={busy || !validOwner} onClick={() => void submit(true)}>{busy ? 'Finishing…' : 'Retry remaining setup'}</button>}
-      <button type='button' className='secondary-button' disabled={busy || !validOwner} onClick={async () => { if (!current()) return; try { await onCreated(result.roomId); } catch { if (current()) setError('Opening the channel failed. Find it in All conversations.'); } }}>Open channel</button></div>
+      <button type='button' className='secondary-button' disabled={busy || !validOwner} onClick={async () => { if (!current()) return; try { await onCreated(result.roomId, current); } catch { if (current()) setError('Opening the channel failed. Find it in All conversations.'); } }}>Open channel</button></div>
   </section>;
   return <form className='dialog-form channel-creation' aria-label='Create channel' onSubmit={event => { event.preventDefault(); void submit(); }}>
     <fieldset disabled={busy || !validOwner}>

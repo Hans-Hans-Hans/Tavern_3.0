@@ -7,6 +7,7 @@ import { accountArtworkOwner } from '@/lib/api';
 import { callsConfigured, callSnapshot } from '@/lib/calls';
 import { conferenceSnapshot, subscribeConference, openConference, minimizeConference } from '@/lib/conference-session';
 import { attachVoiceChannelView } from '@/lib/voice-channel-view';
+import { readChannelPolicy } from '@/lib/channel-policy';
 import type { ConferenceTelemetry } from '@/lib/conference-telemetry';
 import { CommunityAvatar } from './community-settings';
 import './voice-channel.css';
@@ -44,21 +45,29 @@ export function VoiceChannel({ roomId, name, disabled, onProfile }: { roomId: st
   const root = useRef<HTMLDivElement>(null), session = useSyncExternalStore(subscribeConference, conferenceSnapshot);
   const participants = useConferenceParticipants(disabled ? null : roomId);
   const [busy, setBusy] = useState(false);
+  const joinOwner = useRef<object | null>(null), joining = useRef(false);
+  useEffect(() => {
+    const identity = {}; joinOwner.current = identity; joining.current = false; setBusy(false);
+    return () => { if (joinOwner.current === identity) { joinOwner.current = null; joining.current = false; } };
+  }, [roomId, disabled]);
   useLayoutEffect(() => root.current ? attachVoiceChannelView(roomId, root.current) : undefined, [roomId]);
   useEffect(() => {
     if (conferenceSnapshot().roomId === roomId) minimizeConference(false);
     return () => { if (conferenceSnapshot().roomId === roomId) minimizeConference(true); };
   }, [roomId]);
   async function join() {
-    const client = getMatrixClient(), owner = accountArtworkOwner(); setBusy(true);
+    if (disabled || joining.current || !joinOwner.current) return;
+    const identity = joinOwner.current, client = getMatrixClient(), owner = accountArtworkOwner(), actor = client?.getUserId(), device = client?.getDeviceId(), room = client?.getRoom(roomId);
+    const current = () => joinOwner.current === identity && getMatrixClient() === client && accountArtworkOwner() === owner && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getRoom(roomId) === room;
+    joining.current = true; setBusy(true);
     try {
       if (!await callsConfigured()) throw new Error('Voice calls are not configured. Ask your administrator to enable calls.');
-      if (getMatrixClient() !== client || accountArtworkOwner() !== owner || client?.getRoom(roomId)?.getMyMembership() !== 'join') return;
+      if (!current() || client?.getRoom(roomId)?.getMyMembership() !== 'join' || readChannelPolicy(roomId).kind !== 'voice') return;
       const direct = callSnapshot().call;
       if (direct && direct.state !== 'ended') throw new Error('Finish the direct call before joining this voice channel.');
       openConference(roomId);
-    } catch (error) { if (getMatrixClient() === client && accountArtworkOwner() === owner) toast.error((error as Error).message); }
-    finally { setBusy(false); }
+    } catch (error) { if (current()) toast.error((error as Error).message); }
+    finally { if (joinOwner.current === identity) { joining.current = false; setBusy(false); } }
   }
   return <div ref={root} className="voice-channel" aria-label={'Voice channel ' + name}>
     <div className="voice-channel-welcome"><span className="voice-channel-symbol"><Headphones size={32}/></span><h2>{name}</h2><p>A place to talk. Join with your microphone; your camera stays off.</p>
@@ -73,7 +82,7 @@ export function VoiceChannel({ roomId, name, disabled, onProfile }: { roomId: st
 
 export function VoiceRoster({ roomId, telemetry, onProfile }: { roomId: string; telemetry: ConferenceTelemetry | null; onProfile: (userId: string) => void }) {
   const peers = telemetry?.participants || [];
-  const encrypted = telemetry?.e2eeEnabled === true && peers.every(peer => peer.encrypted !== false && peer.e2eeEnabled !== false);
+  const encrypted = telemetry?.complete === true && telemetry.e2eeEnabled === true && peers.length > 0 && peers.every(peer => peer.encrypted === true && peer.e2eeEnabled === true);
   const unencrypted = telemetry?.e2eeEnabled === false || peers.some(peer => peer.encrypted === false || peer.e2eeEnabled === false);
   const metrics = telemetry?.metrics;
   return <div className="voice-connected" aria-label="Connected voice participants">

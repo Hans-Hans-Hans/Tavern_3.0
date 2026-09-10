@@ -14,6 +14,12 @@ export function mountFixture() {
   const rooms = new Map<string, Room>(), sessions = new Map();
   for (const [id, name] of [['!channel:local', 'Call room'], ['!other:local', 'Other call'], ['!selected:local', 'Selected text channel']]) {
     const room = new Room(id, client, me, {}); room.name = name; room.updateMyMembership('join' as any);
+    room.currentState.setStateEvents([
+      new MatrixEvent({ type: 'm.room.create', room_id: id, state_key: '', sender: me, event_id: '$create' + id, content: { room_version: '12', 'm.federate': false } }),
+      new MatrixEvent({ type: 'm.room.encryption', room_id: id, state_key: '', sender: me, event_id: '$encryption' + id, content: { algorithm: 'm.megolm.v1.aes-sha2' } }),
+      new MatrixEvent({ type: 'm.room.power_levels', room_id: id, state_key: '', sender: me, event_id: '$power' + id, content: { users: { [me]: 100 }, events: { 'org.matrix.msc3401.call.member': 0 } } }),
+      new MatrixEvent({ type: 'io.tavern.channel', room_id: id, state_key: '', sender: me, event_id: '$kind' + id, content: { version: 1, kind: 'text', slowModeSeconds: 0, archived: false } }),
+    ]);
     room.currentState.setStateEvents([['@moderator:local', 'Moderator'], ['@guest:local', 'Guest']].map(([userId, displayname]) => new MatrixEvent({
       type: 'm.room.member', room_id: id, sender: userId, state_key: userId, event_id: '$' + id + userId,
       content: { membership: 'join', displayname },

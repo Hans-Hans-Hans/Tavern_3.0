@@ -17,11 +17,15 @@ class Behavior {
   set(value) { this.value = value; for (const observer of this.listeners) observer.next(value); }
 }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-function fixture(context) {
+function fixture(context, autoBind = true) {
   context.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
   const messages = [], ends = [], host = new EventTarget();
   host.location = { href: 'https://tavern.test/element-call/index.html#?' + new URLSearchParams({ widgetId: widget, tavernTelemetry: nonce, roomId, parentUrl: 'https://tavern.test' }) };
-  host.parent = { postMessage: (body, origin) => messages.push({ body, origin }) };
+  host.parent = { postMessage: (body, origin) => {
+    if (body.type === protocol.CALL_TELEMETRY_READY && autoBind) {
+      const event = new Event('message'); Object.assign(event, { source: host.parent, origin, data: { ...body, type: protocol.CALL_TELEMETRY_BIND, document: 'document-1234-4567-8901-abcdefgh1234' } }); host.dispatchEvent(event);
+    } else if (body.type !== protocol.CALL_TELEMETRY_READY) messages.push({ body, origin });
+  } };
   const room = { roomId, membership: 'join', getMyMembership() { return this.membership; }, getMember: user => ({ membership: 'join', name: user === '@me:local' ? 'Me' : 'Remote member', getMxcAvatarUrl: () => 'mxc://local/avatar' }) };
   room.client = { getUserId: () => '@me:local', getDeviceId: () => 'LOCAL', getHomeserverUrl: () => 'https://tavern.test', getRoom: () => room };
   let packets = 90, lost = 10, reads = 0;
@@ -30,7 +34,7 @@ function fixture(context) {
   Object.assign(participant, { identity: 'backend-attested', isLocal: false, isSpeaking: false, getTrackPublication: source => source === 'microphone' ? audio : undefined });
   const connection = { livekitRoom: { state: 'connected', isE2EEEnabled: true } };
   const member = { userId: '@remote:local', membership$: new Behavior({ userId: '@remote:local', deviceId: 'REMOTE', rtcBackendIdentity: 'backend-attested' }), participant: { value$: new Behavior(participant) }, connection$: new Behavior(connection) };
-  const view = { localMatrixLivekitMember$: new Behavior(null), remoteMatrixLivekitMembers$: new Behavior([member]), connected$: new Behavior(true), reconnecting$: new Behavior(false) };
+  const view = { localMatrixLivekitMember$: new Behavior(null), remoteMatrixLivekitMembers$: new Behavior([member]), connected$: new Behavior(true), reconnecting$: new Behavior(false), fatalError$: new Behavior(null) };
   const scope = { onEnd: callback => ends.push(callback) };
   context.after(() => { for (const end of ends) end(); });
   return { host, room, member, participant, connection, audio, track, view, scope, messages, ends, reads: () => reads, advancePackets: () => { packets += 95; lost += 5; } };
@@ -141,4 +145,48 @@ test('protocol rejects unknown fields, identities, booleans, nonfinite metrics a
   for (const mutate of [v => { v.token = 'never'; }, v => { v.metrics.rttMs = NaN; }, v => { v.participants[0].speaking = 1; }, v => { v.participants[0].avatarMxc = 'https://external.invalid/profile'; }, v => { v.participants = Array(129).fill(v.participants[0]); }, v => { v.participants.push(v.participants[0]); }]) {
     const value = structuredClone(good); mutate(value); assert.equal(protocol.parseConferenceTelemetry(value), null);
   }
+});
+
+test('producer waits for a strictly bound parent document challenge and ignores forged rebinding', async context => {
+  const f = fixture(context, false); attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host); await flush(); context.mock.timers.tick(200);
+  assert.equal(f.messages.length, 0);
+  const data = { type: protocol.CALL_TELEMETRY_BIND, version: 1, widgetId: widget, session: nonce, roomId, document: 'document-1234-4567-8901-abcdefgh1234' };
+  const bind = (patch = {}, origin = 'https://tavern.test', source = f.host.parent) => { const event = new Event('message'); Object.assign(event, { data: { ...data, ...patch }, origin, source }); f.host.dispatchEvent(event); context.mock.timers.tick(200); };
+  bind({}, 'https://other.invalid'); bind({}, 'https://tavern.test', {}); bind({ session: 'oldowner-1234-4567-8901-abcdefgh1234' }); bind({ document: '' }); bind({ token: 'not-allowed' });
+  assert.equal(f.messages.length, 0);
+  bind(); assert.equal(f.messages.at(-1).body.document, data.document);
+  const replacement = 'reloaded-1234-4567-8901-abcdefgh1234'; bind({ document: replacement });
+  assert.equal(f.messages.at(-1).body.document, replacement);
+  const before = f.messages.length; f.ends[0](); bind(); assert.equal(f.messages.length, before);
+});
+
+test('actual pinned Element Call errors project only fixed safe diagnostic categories', () => {
+  const map = JSON.parse(readFileSync(new URL('../node_modules/@element-hq/element-call-embedded/dist/assets/index-DPkEeOAp.js.map', import.meta.url), 'utf8'));
+  const source = map.sourcesContent[map.sources.findIndex(name => name.endsWith('/src/utils/errors.ts'))];
+  const exports = {}, deps = { i18next: { t: key => key }, './i18n': { i18nKey: key => key } };
+  const output = ts.transpileModule(source.replaceAll('import.meta.env.VITE_PRODUCT_NAME', '"Element Call"'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
+  new Function('exports', 'require', output.outputText)(exports, name => { assert.ok(name in deps, name); return deps[name]; });
+  const matrix = Object.assign(new Error('secret Matrix response and URL'), { name: 'MatrixError', errcode: 'M_FORBIDDEN', httpStatus: 403 });
+  assert.deepEqual(protocol.conferenceFailure(new exports.FailToGetOpenIdToken(matrix)), { code: 'OPEN_ID_ERROR', cause: 'MatrixError', status: 403, reason: null, matrixCode: 'M_FORBIDDEN' });
+  assert.deepEqual(protocol.conferenceFailure(new exports.LivekitConnectionError({ reasonName: 'Cancelled', message: 'secret JWT' })), { code: 'SFU_ERROR', cause: null, status: null, reason: 'Cancelled', matrixCode: null });
+  assert.deepEqual(protocol.conferenceFailure(new exports.UnknownCallError(new TypeError('secret URL and stack'))), { code: 'UNKNOWN_ERROR', cause: 'TypeError', status: null, reason: null, matrixCode: null });
+  const unsafe = { code: 'secret-code', localisedMessageValues: { reason: 'secret-reason' }, cause: { name: 'secret-name', status: '403', errcode: 'secret-token', message: 'secret-data' } }; unsafe.cause.cause = unsafe.cause;
+  const result = protocol.conferenceFailure(unsafe); assert.equal(JSON.stringify(result).includes('secret'), false); assert.equal(result.code, 'UNKNOWN_ERROR'); assert.equal(result.status, null);
+});
+
+test('only the active fatal observable sends immediately before teardown and retires its old subscriptions', context => {
+  const f = fixture(context); attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host);
+  const obsolete = f.view.fatalError$;
+  f.view = { ...f.view, fatalError$: new Behavior(null) };
+  attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host);
+  const before = f.messages.length; obsolete.set({ code: 'SFU_ERROR', localisedMessageValues: { reason: 'Cancelled' } });
+  assert.equal(f.messages.length, before); assert.equal(obsolete.listeners.size, 0);
+  f.view.fatalError$.set({ code: 'INTERNAL_MEMBERSHIP_MANAGER', cause: Object.assign(new Error('private response'), { name: 'MatrixError', errcode: 'M_FORBIDDEN', httpStatus: 403 }) });
+  assert.equal(f.messages.length, before + 1, 'fatal evidence must not wait for the 200ms telemetry coalescer');
+  const fatal = f.messages.at(-1).body;
+  assert.equal(fatal.failure.code, 'INTERNAL_MEMBERSHIP_MANAGER'); assert.deepEqual(fatal.participants, []); assert.equal(fatal.connected, false);
+  for (const extra of [{ message: 'secret' }, { reason: 'secret' }, { status: '403' }, { code: 'M_FORBIDDEN' }, { matrixCode: 'secret' }]) assert.equal(protocol.parseConferenceTelemetry({ ...fatal, failure: { ...fatal.failure, ...extra } }), null);
+  f.ends.at(-1)(); f.view.fatalError$.set({ code: 'UNKNOWN_ERROR' }); context.mock.timers.tick(400);
+  assert.equal(f.messages.length, before + 1); assert.equal(f.view.fatalError$.listeners.size, 0);
+  assert.equal(JSON.stringify(fatal).includes('private response'), false);
 });

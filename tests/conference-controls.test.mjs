@@ -5,9 +5,9 @@ import { loadTs } from './load-ts.mjs';
 globalThis.location = { origin: 'https://tavern.test' };
 
 function setup() {
-  let api;
+  let api, telemetry;
   class WidgetApi extends EventEmitter {
-    constructor() { super(); api = this; this.controls = { audio_enabled: true, video_enabled: false }; this.transport = { reply: async () => {}, send: async (action, patch) => { this.lastAction = action; if (action === 'io.element.device_mute' && !this.unavailable) Object.assign(this.controls, patch); return this.controls; } }; }
+    constructor() { super(); api = this; this.controls = { audio_enabled: true, video_enabled: false }; this.transport = { reply: async (_event, response) => { this.lastReply = response; }, send: async (action, patch) => { this.lastAction = action; if (action === 'io.element.device_mute' && !this.unavailable) Object.assign(this.controls, patch); return this.controls; } }; }
     setViewedRoomId() {}
     stop() { this.stopped = true; }
   }
@@ -15,13 +15,14 @@ function setup() {
   const conference = loadTs('../lib/conference.ts', {
     './matrix-media': loadTs('../lib/matrix-media.ts', {}),
     './conference-url': loadTs('../lib/conference-url.ts', {}),
-    './conference-telemetry': { observeConferenceTelemetry: () => () => {} },
+    './conference-telemetry': { observeConferenceTelemetry: options => { telemetry = options; return () => {}; } },
     './media-session': { claimMedia() {}, releaseMedia() {} },
     'matrix-js-sdk': { ClientEvent: enums, EventType: enums, MatrixEventEvent: enums, RoomEvent: enums, RoomStateEvent: enums },
     'matrix-widget-api': { ClientWidgetApi: WidgetApi, Widget: class {}, WidgetDriver: class {}, WidgetEventCapability: {}, EventDirection: {}, MatrixCapabilities: {}, OpenIDRequestState: {} },
   });
-  const client = new EventEmitter(); Object.assign(client, { getRoom: () => ({ loadMembersIfNeeded: async () => {}, currentState: { maySendStateEvent: () => true } }), getCrypto: () => ({ isEncryptionEnabledInRoom: async () => true }), _unstable_getRTCTransports: async () => [{}], getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', getHomeserverUrl: () => 'https://tavern.test' });
-  return { conference, client, api: () => api };
+  const room = { getMyMembership: () => 'join', loadMembersIfNeeded: async () => {}, currentState: { maySendStateEvent: () => true } };
+  const client = new EventEmitter(); Object.assign(client, { getRoom: () => room, getCrypto: () => ({ isEncryptionEnabledInRoom: async () => true }), _unstable_getRTCTransports: async () => [{}], getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', getHomeserverUrl: () => 'https://tavern.test' });
+  return { conference, client, room, api: () => api, telemetry: () => telemetry };
 }
 
 test('conference dock uses native widget controls and reports confirmed device state', async () => {
@@ -52,5 +53,41 @@ test('embedded version discovery uses the public native URL while the authentica
   assert.equal(params.get('baseUrl'), 'https://tavern.test');
   assert.equal(client.getHomeserverUrl(), 'https://tavern.test/api/matrix');
   assert.equal(params.get('accessToken'), null);
+  await controls();
+});
+
+test('voice mount requests audio-only startup and stops accepting observations after native room replacement', async () => {
+  const { conference, client, room, telemetry } = setup(), iframe = { src: '' };
+  const controls = await conference.mountConference(client, '!room:local', iframe, () => {}, undefined, undefined, true, undefined, { voiceOnly: true });
+  assert.equal(new URLSearchParams(new URL(iframe.src).hash.slice(2)).get('intent'), 'start_call_voice');
+  assert.equal(telemetry().isCurrent(), true);
+  client.getRoom = () => ({ ...room });
+  assert.equal(telemetry().isCurrent(), false);
+  await controls();
+});
+
+test('telemetry ownership includes the captured homeserver and mount cancellation', async () => {
+  const { conference, client, telemetry } = setup(), iframe = { src: '' }, controller = new AbortController();
+  const controls = await conference.mountConference(client, '!room:local', iframe, () => {}, controller.signal, undefined, true);
+  client.getHomeserverUrl = () => 'https://another.test';
+  assert.equal(telemetry().isCurrent(), false);
+  client.getHomeserverUrl = () => 'https://tavern.test';
+  controller.abort();
+  assert.equal(telemetry().isCurrent(), false);
+  await controls();
+});
+
+test('persistent widget honors its advertised always-on-screen action without closing or remounting', async () => {
+  const { conference, client, api } = setup(), iframe = { src: '' }; let closed = 0;
+  const controls = await conference.mountConference(client, '!room:local', iframe, () => closed++, undefined, undefined, true);
+  const url = iframe.src;
+  for (const value of [true, false]) {
+    let handled = false;
+    api().emit('action:set_always_on_screen', { preventDefault() { handled = true; }, detail: { data: { value } } });
+    assert.equal(handled, true); assert.deepEqual(api().lastReply, { success: true });
+    assert.equal(closed, 0); assert.equal(iframe.src, url);
+  }
+  api().emit('action:set_always_on_screen', { preventDefault() {}, detail: { data: { value: 'true' } } });
+  assert.deepEqual(api().lastReply, { success: false });
   await controls();
 });

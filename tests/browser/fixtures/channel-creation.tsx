@@ -32,6 +32,14 @@ export function mountFixture() {
     invite: async (id: string, target: string) => { w.writes.push(['invite', id, target]); states[id].push(ev('m.room.member', { membership: 'invite' }, target)); },
   };
   const root = createRoot(document.getElementById('root')!);
-  w.render = (serverId = '!server:local') => root.render(<div style={{ maxWidth: 600, margin: 'auto', padding: 12 }}><ChannelCreationForm serverId={serverId} policyEnabled={w.policyEnabled !== false} callsEnabled={w.callsEnabled !== false} members={[{ id: '@owner:local', name: 'Owner' }, { id: '@peer:local', name: 'Peer' }]} onCreated={async id => { w.opened.push(id); }}/></div>);
+  w.render = (serverId = '!server:local') => {
+    const form = <div style={{ maxWidth: 600, margin: 'auto', padding: 12 }}><ChannelCreationForm serverId={serverId} policyEnabled={w.policyEnabled !== false} callsEnabled={w.callsEnabled !== false} members={[{ id: '@owner:local', name: 'Owner' }, { id: '@peer:local', name: 'Peer' }]} onCreated={async (id, isCurrent) => {
+      w.openCurrent = isCurrent;
+      if (w.holdOpen) await new Promise<void>(resolve => { w.resolveOpen = resolve; });
+      if (isCurrent()) w.opened.push(id);
+      w.openFinished = true;
+    }}/></div>;
+    root.render(new URLSearchParams(location.search).has('strict') ? <React.StrictMode>{form}</React.StrictMode> : form);
+  };
   w.render();
 }
