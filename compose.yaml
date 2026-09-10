@@ -247,7 +247,7 @@ services:
     profiles: [calls]
     image: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
     environment:
-      LIVEKIT_URL: wss://${TAVERN_DOMAIN}/livekit/sfu
+      LIVEKIT_URL: ${RTC_AUTH_LIVEKIT_URL:-wss://${TAVERN_DOMAIN}/livekit/sfu}
       LIVEKIT_KEY_FROM_FILE: /config/livekit_key
       LIVEKIT_SECRET_FROM_FILE: /config/livekit_secret
       LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TAVERN_DOMAIN}
