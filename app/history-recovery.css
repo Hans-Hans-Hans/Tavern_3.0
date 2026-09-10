@@ -1,5 +1,6 @@
-.history-recovery-banner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--accent);color:var(--accent-foreground);flex-shrink:0}
+.history-recovery-banner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--muted);color:var(--foreground);flex-shrink:0}
 .history-recovery-banner>div{flex:1 1 240px;min-width:0}
 .history-recovery-banner strong{font-size:13px}
 .history-recovery-banner p{font-size:12px;margin:4px 0 0;overflow-wrap:anywhere}
 .history-recovery-banner button{white-space:normal}
+.history-recovery-banner>.history-recovery-actions{display:flex;align-items:center;justify-content:flex-end;flex:0 1 auto;gap:12px}

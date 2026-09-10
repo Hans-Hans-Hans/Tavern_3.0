@@ -2,6 +2,21 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Returning sign-ins and direct-message persistence
+
+The current recovery change passed 14 browser cases using the real Matrix SDK
+and Rust/WASM store, 18 security/backup Node cases, and five reminder UI cases.
+It reuses only a locally retained key matching the current native backup and
+preserves existing target keys and signing identities. Reminder dismissal survives
+reload and changes when backup configuration changes. This does not recreate lost
+keys or prove recovery of a production account with no remaining keys.
+
+The DM account-data change passed 31 focused account/DM/read-state Node cases.
+New DM classification reads the native account-data endpoint, merges and confirms
+the saved mapping instead of overwriting it from the SDK's stale cache. Existing
+rooms and history are preserved. Matrix account data has no cross-device compare
+and swap; precisely concurrent writes can still use last-write-wins semantics.
+
 ## Voice channels, roles and current call investigation
 
 Voice channels now have an audio-only entry screen and a persistent call panel with

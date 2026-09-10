@@ -1,5 +1,6 @@
 import { createOrResumeBackup, discoverBackup } from './backup';
 import { recoverLocalHistory, type LocalHistoryRecovery } from './local-history-recovery';
+import { accountArtworkOwner } from './api';
 import type { MatrixClient } from 'matrix-js-sdk';
 import { CryptoEvent, VerificationPhase, VerificationRequestEvent, VerifierEvent, decodeRecoveryKey,
   type CryptoCallbacks, type GeneratedSecretStorageKey, type VerificationRequest, type Verifier, type ShowSasCallbacks } from 'matrix-js-sdk/lib/crypto-api';
@@ -21,8 +22,8 @@ let history: { busy: boolean; checked: boolean; local: LocalHistoryRecovery | nu
 export function historyRecoverySnapshot() { return history; }
 export function securitySessionId() { return `${sessionEpoch}:${client?.getUserId() || ''}:${client?.getDeviceId() || ''}`; }
 function owner(c: MatrixClient) {
-  const epoch = sessionEpoch, user = c.getUserId(), device = c.getDeviceId();
-  const current = () => c === client && epoch === sessionEpoch && c.getUserId() === user && c.getDeviceId() === device;
+  const epoch = sessionEpoch, user = c.getUserId(), device = c.getDeviceId(), base = c.getHomeserverUrl(), crypto = c.getCrypto(), account = accountArtworkOwner();
+  const current = () => c === client && epoch === sessionEpoch && c.getUserId() === user && c.getDeviceId() === device && c.getHomeserverUrl() === base && c.getCrypto() === crypto && accountArtworkOwner() === account;
   return { current, check: () => { if (!current()) throw new Error('Your signed-in session changed. Retry from the current session.'); } };
 }
 const generatedOwners = new WeakMap<GeneratedSecretStorageKey, ReturnType<typeof owner>>();

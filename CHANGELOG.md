@@ -6,6 +6,9 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Automatic reuse of a matching encrypted-history backup key retained in this browser, with a dismissible recovery reminder that waits for the automatic check.
+- Fresh native direct-message list merging and confirmation, preventing a stale client cache from discarding earlier DMs when starting another conversation.
+
 - Audio-only voice channel pages with participant avatars, live speaking rings, measured ping/jitter/loss, explicit encryption status and a persistent call while browsing.
 - Typed channel creation with category placement, purpose/icon presets, explicit member invitations and retry of partial setup without creating duplicate rooms.
 - Searchable server role creation, color/emoji previews, grouped permissions, role duplication and searchable member assignments with concurrent-save protection.

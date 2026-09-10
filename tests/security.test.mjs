@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 function fixture({identity=false,storage=false,backup=false}={}) {
-  const calls=[],cache={};let authenticated=false,failSigning=false,metadata=storage?['key',{algorithm:'m.secret_storage.v1.aes-hmac-sha2',mac:'mac',iv:'iv'}]:null;
-  const api=loadTs('../lib/security.ts',{'./local-history-recovery':{recoverLocalHistory:async()=>({keys:0,stores:0,skipped:0,limited:false,supported:true})},'./backup':{discoverBackup:async()=>backup?{version:'1'}:null,createOrResumeBackup:async()=>{backup=true;}},'matrix-js-sdk/lib/crypto-api':{CryptoEvent:{},VerificationPhase:{Cancelled:5,Done:6},VerificationRequestEvent:{Change:'change'},VerifierEvent:{ShowSas:'sas',Cancel:'cancel'},decodeRecoveryKey:s=>{if(s!=='valid')throw new Error('Invalid key');return new Uint8Array(32).fill(7);}}});
+  const calls=[],cache={},session={account:{},base:'https://local/api/matrix'};let authenticated=false,failSigning=false,metadata=storage?['key',{algorithm:'m.secret_storage.v1.aes-hmac-sha2',mac:'mac',iv:'iv'}]:null;
+  const api=loadTs('../lib/security.ts',{'./api':{accountArtworkOwner:()=>session.account},'./local-history-recovery':{recoverLocalHistory:async()=>({keys:0,stores:0,skipped:0,limited:false,supported:true})},'./backup':{discoverBackup:async()=>backup?{version:'1'}:null,createOrResumeBackup:async()=>{backup=true;}},'matrix-js-sdk/lib/crypto-api':{CryptoEvent:{},VerificationPhase:{Cancelled:5,Done:6},VerificationRequestEvent:{Change:'change'},VerifierEvent:{ShowSas:'sas',Cancel:'cancel'},decodeRecoveryKey:s=>{if(s!=='valid')throw new Error('Invalid key');return new Uint8Array(32).fill(7);}}});
   const crypto={
     isCrossSigningReady:async()=>identity,
     userHasCrossSigningKeys:async()=>identity,
@@ -16,9 +16,9 @@ function fixture({identity=false,storage=false,backup=false}={}) {
     getActiveSessionBackupVersion:async()=>backup?'1':null,
     isSecretStorageReady:async()=>!!metadata,getDeviceVerificationStatus:async()=>({isVerified:()=>authenticated}),isKeyBackupTrusted:async()=>({matchesDecryptionKey:authenticated&&backup,trusted:authenticated}),
   };
-  const client={getCrypto:()=>crypto,getUserId:()=>'@alice:test',getDeviceId:()=>'A',on(){},off(){},secretStorage:{getKey:async()=>metadata,getDefaultKeyId:async()=>'key',checkKey:async()=>true}};
+  const client={getCrypto:()=>crypto,getUserId:()=>'@alice:test',getDeviceId:()=>'A',getHomeserverUrl:()=>session.base,on(){},off(){},secretStorage:{getKey:async()=>metadata,getDefaultKeyId:async()=>'key',checkKey:async()=>true}};
   api.initializeSecurity(client);
-  return{api,client,crypto,calls,cache,setFailSigning:v=>failSigning=v};
+  return{api,client,crypto,calls,cache,session,setFailSigning:v=>failSigning=v};
 }
 test('existing public identity and secret storage block fresh setup without mutations',async()=>{
   for(const value of [{identity:true},{storage:true},{backup:true}]){const f=fixture(value);await assert.rejects(f.api.generateRecoveryKey());assert.equal(f.calls.length,0);}
@@ -69,4 +69,13 @@ test('a generated recovery key cannot configure a replacement signed-in account'
  f.api.initializeSecurity({...f.client,getUserId:()=>'@bob:test',getDeviceId:()=>'B'});
  await assert.rejects(f.api.setupRecovery(key,'old account password'),/session changed/);assert.equal(f.calls.length,0);
  key.privateKey.fill(0);
+});
+
+test('same-client API generation or homeserver replacement retires encryption status reads',async()=>{
+  for(const replacement of ['account','base']){
+    const f=fixture({backup:true});let release;f.crypto.isCrossSigningReady=()=>new Promise(resolve=>release=resolve);
+    const pending=f.api.securityStatus();
+    if(replacement==='account')f.session.account={};else f.session.base='https://replacement.invalid/api/matrix';
+    release(true);await assert.rejects(pending,/session changed/);
+  }
 });

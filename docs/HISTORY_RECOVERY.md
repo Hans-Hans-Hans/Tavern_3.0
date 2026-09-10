@@ -12,11 +12,24 @@ checks encryption stores retained from earlier sign-ins and copies available
 message keys into the current device. Messages retry decryption automatically.
 The original stores, device identities and backup versions are preserved.
 
-Open **History recovery** above the conversation for the result. Use **Check this
+When an earlier local store also contains the key for the current encrypted
+backup, Tavern reuses it automatically. The backup version, algorithm and public
+key must match the server, and a key already present on the current device is
+preserved. This lets ordinary sign-ins in the same browser regain backup access
+without entering the recovery key again. It does not transfer signing keys or
+automatically verify a new device.
+
+Open **Settings → Privacy → History recovery** for the result. Use **Check this
 browser for history keys** to retry after closing other Tavern tabs. A browser
 profile or hostname change uses different local storage: repeat this check in
 each original browser. Private browsing data and cleared site data cannot be
 reconstructed by this check.
+
+The history reminder waits for the automatic browser check. It stays hidden when
+backup recovery is available, even if device identity verification remains
+unfinished. You can dismiss it; that preference is remembered for this account
+and homeserver until its backup configuration changes. The recovery controls
+remain available in Settings.
 
 ## On a new browser or device
 
@@ -42,6 +55,8 @@ Local browser tests use the installed Matrix SDK and its real Rust/WASM crypto
 store: an event fails decryption on a new device, then decrypts after importing
 the old device's saved keys. They also check account isolation, old-store
 preservation, busy-tab handling and cancellation after a session change. Recovery
+tests also use real cached backup keys to check version/public-key matching,
+backup rotation and concurrent key arrival without replacing existing keys. Recovery
 UI tests separately cover wrong keys, full-history restoration by default, and
 clearing entered secrets after a session change. See [VALIDATION.md](VALIDATION.md)
 for native server test results.

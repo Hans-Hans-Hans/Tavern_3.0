@@ -15,8 +15,12 @@ export function HistoryRecovery() {
 function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
   const [status, setStatus] = useState<Awaited<ReturnType<typeof securityStatus>> | null>(null);
   const [history, setHistory] = useState(historyRecoverySnapshot), [error, setError] = useState(''), [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const reminderKey = 'tavern.history-reminder.v1:' + JSON.stringify([client.getHomeserverUrl(), client.getUserId()]);
+  const reminderVersion = status ? JSON.stringify([status.serverBackupVersion, status.recoveryConfigured]) : null;
   useEffect(() => {
     let active = true, pending = false, again = false;
+    setStatus(null); setError(''); setOpen(false); setDismissed(null);
     const refresh = async () => {
       if (pending) { again = true; return; }
       pending = true;
@@ -32,13 +36,23 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
     void refresh(); const off = subscribeSecurity(() => { setHistory(historyRecoverySnapshot()); void refresh(); });
     return () => { active = false; off(); };
   }, [client]);
-  const protectedHistory = status?.identity && status.verified && status.backupVersion && status.canRestoreBackup;
-  const needsAttention = !protectedHistory || history.error || history.local?.skipped || history.local?.limited;
+  useEffect(() => {
+    try { setDismissed(localStorage.getItem(reminderKey)); } catch { /* Reminders still work without browser storage. */ }
+  }, [reminderKey, client]);
+  // Signing-key availability is separate from possession of the matching
+  // history-backup key. Do not ask users to recover an already readable backup,
+  // or flash a warning while the automatic local recovery is still running.
+  const needsAttention = !!status && history.checked && !history.busy && !status.canRestoreBackup && dismissed !== reminderVersion;
+  const remindLater = () => {
+    if (getMatrixClient() !== client || !reminderVersion) return;
+    setDismissed(reminderVersion);
+    try { localStorage.setItem(reminderKey, reminderVersion); } catch { /* Dismiss for this mounted view. */ }
+  };
   return <>
     {needsAttention && <aside className='history-recovery-banner' aria-label='Encrypted history recovery'>
-      <div><strong>{history.busy ? 'Checking saved history keys…' : status?.serverBackupVersion ? 'Unlock your encrypted history' : 'Protect your encrypted history'}</strong>
-        <p>{error || history.error || (history.busy ? 'Looking for keys from earlier sign-ins in this browser.' : history.local?.keys ? `Recovered ${history.local.keys} saved message keys in this browser. Set up or unlock recovery to keep history available on other devices.` : status?.serverBackupVersion ? 'Use your recovery key or verify this device to restore older messages.' : 'Save a recovery key so older messages remain available after signing in again or using another device.')}</p>
-      </div><button className='secondary-button' onClick={() => setOpen(true)}>History recovery</button>
+      <div><strong>{history.local?.keys ? 'Keep history available on your other devices' : status?.serverBackupVersion ? 'Older messages may need recovery' : 'Keep a backup of your messages'}</strong>
+        <p>{error || history.error || (history.local?.keys ? `Recovered ${history.local.keys} saved message keys in this browser.` : status?.serverBackupVersion ? 'Use your recovery key or verify this device if older messages are locked.' : 'Set up a recovery key once to protect history when you change devices.')} You can continue messaging. Recovery is always available in Settings → Privacy.</p>
+      </div><div className='history-recovery-actions'><button className='secondary-button' onClick={() => setOpen(true)}>History recovery</button><button className='text-button' onClick={remindLater}>Dismiss reminder</button></div>
     </aside>}
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className='tavern-dialog settings-dialog'><DialogHeader><DialogTitle>Recover and protect your messages</DialogTitle><DialogDescription>Message history is encrypted. Your account password alone cannot unlock keys from other devices.</DialogDescription></DialogHeader>
       <SecurityCenter/><DeviceManager/>

@@ -15,7 +15,7 @@ export function mountFixture() {
   w.Notification = class { static permission = 'granted'; closed = false; onclick: any; constructor(public title: string, public options: any) { w.notices.push(this); } close() { this.closed = true; } };
   const peer = { userId: '@private-caller:local', name: 'Private caller name' };
   const room = { roomId: '!dm:local', name: 'Private room name', isSpaceRoom: () => false, getMyMembership: () => 'join', getJoinedMembers: () => [peer], currentState: { getStateEvents: (type: string) => type === 'm.space.parent' ? [] : null } };
-  w.fixtureClient = { getUserId: () => '@me:local', getIgnoredUsers: () => w.ignored || [], getRooms: () => [room], getRoom: (id: string) => id === '!dm:local' ? room : null, getAccountData: (key: string) => w.accounts[key] ? { getContent: () => w.accounts[key] } : null };
+  w.fixtureClient = { getUserId: () => '@me:local', getDeviceId: () => 'ACTIVITY-DEVICE', getHomeserverUrl: () => location.origin + '/api/matrix', getIgnoredUsers: () => w.ignored || [], getRooms: () => [room], getRoom: (id: string) => id === '!dm:local' ? room : null, getAccountData: (key: string) => w.accounts[key] ? { getContent: () => w.accounts[key] } : null };
   w.media = { audioInput: '', videoInput: '', audioOutput: '', outputVolume: 1, noiseSuppression: true, echoCancellation: true, autoGainControl: true, deafened: false, pushToTalk: false };
   w.ring = (id: string) => { w.call = { callId: id, roomId: '!dm:local', state: 'ringing', direction: 'inbound', getOpponentMember: () => peer }; w.callListeners.forEach((fn: any) => fn()); };
   w.emitContacts = () => { w.streams.filter((stream: any) => !stream.closed).forEach((stream: any) => stream.onmessage?.({ data: 'changed' })); };

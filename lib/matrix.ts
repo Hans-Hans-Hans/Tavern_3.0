@@ -3,6 +3,7 @@
 import { readInstanceConfig } from './instance';
 import { markRoomsRead, roomReadCounts, watchRoomReadCounts } from './read-state';
 import { isPrivateDiscussion } from './conversation-routing';
+import { addDirectMessage, directRoomId, readDirectMessageMap } from './dm-account-data';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
 import { readJoinedRoom } from './room-read-scope';
@@ -121,7 +122,7 @@ export function mutateMatrixAccountData(owner:MatrixClient,key:string,mutate:(ol
   current();let value:any;
   try{value=await owner.http.authedRequest('GET' as any,'/user/'+encodeURIComponent(actor!)+'/account_data/'+encodeURIComponent(key));}
   catch(error){if((error as any)?.errcode!=='M_NOT_FOUND')throw error;value={};}
-  current();await (owner as any).setAccountData(key,mutate(value||{}));current();notify();
+  current();await (owner as any).setAccountData(key,mutate(value));current();notify();
  });
  accountQueues.set(key,task);return task;
 }
@@ -257,15 +258,27 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  }
  if(action==='create'){
   const direct=p.kind==='dm',invite=safeStrings(p.members).filter(id=>id!==me),generation=accountArtworkOwner();
+  const device=c.getDeviceId(),homeserver=c.getHomeserverUrl(),current=()=>{if(client!==c||c.getUserId()!==me||c.getDeviceId()!==device||c.getHomeserverUrl()!==homeserver||accountArtworkOwner()!==generation)throw new Error('Your account changed. Reopen Messages before continuing.');};
   const parent=!direct&&p.serverId?roomRequired(p.serverId):null;
   if(parent&&(!parent.isSpaceRoom()||!parent.currentState.maySendStateEvent('m.space.child',me)))throw new Error('You cannot add channels to this server.');
   const via=[me.slice(me.indexOf(':')+1)];
-  if(direct&&!p.group&&invite.length<=1){const dm=Object.entries(account('m.direct')).find(([peer])=>peer===(invite[0]||me));const existing=(dm?.[1] as string[]|undefined)?.find(id=>c.getRoom(id)?.getMyMembership()==='join');if(existing)return {id:existing};}
-  const r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0,...((await readInstanceConfig()).serverRolePolicy?{'io.tavern.thread':0}:{})}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});
-  if(direct){await mutateAccount('m.direct',map=>{const next={...map};for(const peer of invite.length?invite:[me])next[peer]=[...safeStrings(next[peer]),r.room_id];return next;},c,generation);}
+  if(direct){const map=await readDirectMessageMap(c,current);if(!p.group&&invite.length<=1){const existing=map[invite[0]||me]?.find(id=>{const room=c.getRoom(id);return room?.getMyMembership()==='join'&&!room.isSpaceRoom()&&!isPrivateDiscussion(room);});if(existing){current();return {id:existing};}}}
+  const instance=await readInstanceConfig();if(direct)current();
+  let r;
+  try{r=await c.createRoom({name:direct?(p.group?safeString(p.name).slice(0,60):invite.length?undefined:'Notes to self'):p.name,topic:p.description||undefined,visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,power_level_content_override:{events:{'org.matrix.msc3401.call.member':0,...(instance.serverRolePolicy?{'io.tavern.thread':0}:{})}},is_direct:direct,invite,creation_content:{'m.federate':false},initial_state:[...(parent?[{type:'m.space.parent',state_key:parent.roomId,content:{via,canonical:true}}]:[]),{type:'m.room.encryption',state_key:'',content:{algorithm:'m.megolm.v1.aes-sha2'}},{type:'m.room.history_visibility',state_key:'',content:{history_visibility:'joined'}}]});}
+  catch(error){if(!direct)throw error;current();throw new Error('Conversation creation was not confirmed. Check Messages and All conversations before trying again; the room may already exist.');}
+  if(direct){
+   current();if(!directRoomId(r?.room_id))throw new Error('Conversation creation returned an invalid ID. Check All conversations before creating it again.');
+   const peers=invite.length?invite:[me];
+   try{
+    await mutateMatrixAccountData(c,'m.direct',map=>addDirectMessage(map,peers,r.room_id),current);
+    const saved=await readDirectMessageMap(c,current);
+    if(!peers.every(peer=>saved[peer]?.includes(r.room_id)))throw new Error('The Messages list changed on another device before persistence could be confirmed.');
+   }catch(error){current();notify();throw new Error('The conversation was created ('+r.room_id+'), but saving it in Messages was not confirmed. Find it in All conversations before creating another. '+(error as Error).message);}
+  }
   if(parent){try{await c.sendStateEvent(parent.roomId,'m.space.child' as any,{via},r.room_id)}catch{await c.joinRoom(r.room_id);notify();throw new Error('Channel created, but adding it to the server failed. It is available in All conversations.');}}
   // /sync supplies authoritative state; joinRoom makes the new room locally available.
-  await c.joinRoom(r.room_id);notify();return {id:r.room_id};
+  if(direct)current();await c.joinRoom(r.room_id);if(direct)current();notify();return {id:r.room_id};
  }
  if(action==='profile'){await c.setDisplayName(p.name);notify();return {ok:true}}
  if(action==='workspace'){await writeAccount(workspaceKey,{name:p.name});notify();return {ok:true}}

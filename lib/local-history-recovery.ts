@@ -1,18 +1,19 @@
 import type { MatrixClient } from 'matrix-js-sdk';
+import { localBackupRecovery } from './local-backup-recovery';
 
 export const cryptoStorePrefix = (userId: string, deviceId: string) => `harbor-crypto-${userId}-${deviceId}`;
 export const cryptoStoreLock = (userId: string, deviceId: string) => `harbor-matrix-${userId}-${deviceId}`;
 const databaseSuffix = '::matrix-sdk-crypto';
 const maximumStores = 30, maximumKeys = 50000, maximumExportBytes = 32 * 1024 * 1024;
-export type LocalHistoryRecovery = { stores: number; keys: number; skipped: number; limited: boolean; supported: boolean };
+export type LocalHistoryRecovery = { stores: number; keys: number; skipped: number; limited: boolean; supported: boolean; backupKeyRestored?: boolean };
 
 /** The old device is opened offline: no Matrix client, tokens, sync or outgoing
- * requests. Only room keys are copied; signing identities and device trust stay
- * with their original stores. Never delete a source store, even after success. */
+ * requests. Room keys and a server-matched cached backup key can be copied;
+ * signing identities/device trust stay in the source. Never delete a source. */
 export async function recoverLocalHistory(c: MatrixClient, isCurrent: () => boolean): Promise<LocalHistoryRecovery> {
-  const userId = c.getUserId()!, deviceId = c.getDeviceId()!, crypto = c.getCrypto()!;
+  const userId = c.getUserId()!, deviceId = c.getDeviceId()!, crypto = c.getCrypto()!, base = c.getHomeserverUrl();
   const assertOwner = () => {
-    if (!isCurrent() || c.getUserId() !== userId || c.getDeviceId() !== deviceId || c.getCrypto() !== crypto)
+    if (!isCurrent() || c.getUserId() !== userId || c.getDeviceId() !== deviceId || c.getCrypto() !== crypto || c.getHomeserverUrl() !== base)
       throw new Error('Your signed-in session changed. Retry history recovery from the current session.');
   };
   assertOwner();
@@ -27,6 +28,7 @@ export async function recoverLocalHistory(c: MatrixClient, isCurrent: () => bool
   }).sort();
   result.limited = candidates.length > maximumStores;
   if (!candidates.length) return result;
+  const restoreBackup = await localBackupRecovery(c, isCurrent); assertOwner();
   const { initAsync, StoreHandle, OlmMachine, UserId, DeviceId } = await import('@matrix-org/matrix-sdk-crypto-wasm');
   await initAsync(); assertOwner();
   for (const oldDevice of candidates.slice(0, maximumStores)) {
@@ -58,6 +60,8 @@ export async function recoverLocalHistory(c: MatrixClient, isCurrent: () => bool
           await crypto.importRoomKeysAsJson(exported); assertOwner();
           result.keys += Math.min(count, maximumKeys);
         }
+        if (await restoreBackup(machine)) result.backupKeyRestored = true;
+        assertOwner();
         result.stores++;
       } catch {
         assertOwner(); result.skipped++;

@@ -13,7 +13,9 @@ function setup() {
   const source = readFileSync(new URL('../lib/matrix.ts', import.meta.url), 'utf8') + '\nexport function fixtureClient(value:any,moduleSdk:any){client=value;sdk=moduleSdk;}\nexport function fixtureCache(event:any){eventCache.set(event.getId(),event);}';
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = {}, noop = new Proxy({}, { get: () => () => {} });
-  const dependencies = { './api': api, './instance': { readInstanceConfig: async () => ({ serverRolePolicy: false }) } };
+  const dependencies = { './api': api, './instance': { readInstanceConfig: async () => ({ serverRolePolicy: false }) },
+    './dm-account-data': loadTs('../lib/dm-account-data.ts', {}), './self-profile': { nativeSelfProfile: () => ({ name: 'Bob' }), clearSelfProfile() {} },
+    './read-state': { roomReadCounts: () => ({ unread: 0, mentions: 0 }) } };
   new Function('require', 'exports', 'sessionStorage', compiled)(name => dependencies[name] || noop, module, { removeItem() {} });
   const attach = f => {
     f.member(f.room, 'join'); module.fixtureClient(f.client, sdk);
@@ -61,5 +63,66 @@ test('a delayed native DM creation cannot capture a replacement account when it 
     api.setAccountDevice('B'); api.setAccountDevice('A'); const replacement = replaceClient ? dmRequestsFixture() : f; if (replaceClient) attach(replacement);
     gate.resolve(); await result;
     assert.equal(replacement.calls.some(call => call.method === 'PUT' && call.path.endsWith('/account_data/m.direct')), false); assert.equal(f.calls.some(call => call.path.startsWith('/join/')), false);
+  }
+});
+
+test('sender DM creation preserves current server mappings missing from cache and all DMs survive a fresh SDK bootstrap', async () => {
+  const { f, module, attach } = setup();
+  f.mapping['@other-device:local'] = ['!retained:local'];
+  f.add('!retained:local', { membership: 'join' });
+  let creates = 0;
+  f.client.createRoom = async () => { creates++; f.add('!created:local', { membership: 'join' }); f.mapping['@during-create:local'] = ['!also-retained:local']; return { room_id: '!created:local' }; };
+  assert.deepEqual(await module.matrixApi('create', { kind: 'dm', members: ['@new-peer:local'] }), { id: '!created:local' });
+  assert.equal(creates, 1); assert.deepEqual(f.mapping['@other-device:local'], ['!retained:local']); assert.deepEqual(f.mapping['@during-create:local'], ['!also-retained:local']);
+  assert.deepEqual(f.mapping['@new-peer:local'], ['!created:local']);
+  const reloaded = dmRequestsFixture(); reloaded.mapping = structuredClone(f.mapping); reloaded.accountData('m.direct', reloaded.mapping);
+  reloaded.add('!retained:local', { membership: 'join' }); reloaded.add('!created:local', { membership: 'join' }); reloaded.add('!also-retained:local', { membership: 'join' }); attach(reloaded);
+  const result = await module.matrixApi('bootstrap');
+  for (const id of ['!retained:local', '!created:local', '!also-retained:local']) assert.equal(result.conversations.find(room => room.id === id)?.kind, 'dm');
+});
+
+test('sender fresh mapping lookup avoids duplicate creation and rejects malformed native lists without mutation', async () => {
+  const { f, module } = setup(); let creates = 0;
+  f.client.createRoom = async () => { creates++; throw new Error('Should not create'); };
+  f.mapping['@already:local'] = ['!retained:local']; f.add('!retained:local', { membership: 'join' });
+  assert.deepEqual(await module.matrixApi('create', { kind: 'dm', members: ['@already:local'] }), { id: '!retained:local' });
+  assert.equal(creates, 0);
+  for (const value of [null, [], { '@broken:local': 'not-an-array' }]) {
+    f.mapping = value; await assert.rejects(module.matrixApi('create', { kind: 'dm', members: ['@new:local'] }), /list is invalid/);
+  }
+  assert.equal(creates, 0); assert.equal(f.calls.some(call => call.method === 'PUT'), false);
+});
+
+test('DM creation ambiguity and conflicting native readback never retry creation or report persistence success', async () => {
+  for (const outcome of ['ambiguous-create', 'mapping-replaced', 'invalid-created-id']) {
+    const { f, module } = setup(); let creates = 0;
+    f.client.createRoom = async () => {
+      creates++; if (outcome === 'ambiguous-create') throw new Error('Transport response lost');
+      f.add('!created:local', { membership: 'join' }); return { room_id: outcome === 'invalid-created-id' ? '' : '!created:local' };
+    };
+    const request = f.client.http.authedRequest.bind(f.client.http);
+    f.client.http.authedRequest = async (...args) => { const value = await request(...args); if (args[0] === 'PUT' && args[1].endsWith('/account_data/m.direct')) f.mapping = {}; return value; };
+    await assert.rejects(module.matrixApi('create', { kind: 'dm', members: ['@new:local'] }), /not confirmed|invalid ID/);
+    assert.equal(creates, 1); assert.equal(f.calls.some(call => call.path.startsWith('/join/')), false);
+  }
+});
+
+test('a malformed native mapping appearing during DM creation is not coerced to an empty list or overwritten', async () => {
+  const { f, module } = setup();
+  f.client.createRoom = async () => { f.add('!created:local', { membership: 'join' }); f.mapping = null; return { room_id: '!created:local' }; };
+  await assert.rejects(module.matrixApi('create', { kind: 'dm', members: ['@new:local'] }), /list is invalid/);
+  assert.equal(f.mapping, null); assert.equal(f.calls.some(call => call.method === 'PUT'), false);
+});
+
+test('fresh DM reads and classification retain exact device and homeserver ownership through awaits', async () => {
+  for (const phase of ['lookup', 'classification']) for (const kind of ['device', 'homeserver']) {
+    const { f, module } = setup(); let creates = 0, reads = 0;
+    f.client.createRoom = async () => { creates++; f.add('!created:local', { membership: 'join' }); return { room_id: '!created:local' }; };
+    f.beforeGet = () => { reads++; if (reads === (phase === 'lookup' ? 1 : 2)) {
+      if (kind === 'device') f.client.getDeviceId = () => 'REPLACED'; else f.client.getHomeserverUrl = () => 'https://replaced.invalid';
+    } };
+    await assert.rejects(module.matrixApi('create', { kind: 'dm', members: ['@new:local'] }), /account changed/);
+    assert.equal(creates, phase === 'lookup' ? 0 : 1); assert.equal(f.calls.some(call => call.method === 'PUT'), false);
+    assert.equal(f.calls.some(call => call.path.startsWith('/join/')), false);
   }
 });
