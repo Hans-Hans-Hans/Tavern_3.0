@@ -4,6 +4,28 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Drafts, attachment retries, search, appearance and TURN diagnostics
 
+Checkpoint `42aee72` passed its build, JavaScript and browser stages, but
+[the complete workflow failed](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34469150619)
+before native acceptance: the isolated TURN fixture failed at `port-binding`,
+and five invitation tests lacked the fresh-state method now required by the
+native role module. The TURN fixture now verifies its owned internal Docker
+bridge endpoint directly; invitation fixtures supply the actual state contract
+and regressions for concurrent publication migration. Neither fix weakens
+production authorization or the required allocation result.
+
+The call-authentication repair uses a private issuer-to-SFU URL and rewrites
+only validated responses to the public WebSocket URL. Actual local HTTP tests
+cover both token formats, rejected foreign/malformed URLs and separate safe
+OpenID/room-creation diagnostics. The new operator diagnostic also tests actual
+HTTP and TLS failure, bounded responses, read-only credential validation and
+suppression of secret-bearing data. After the additive OpenID migration, the
+combined local checkpoint passed 690 Python tests (15 platform-specific skips),
+509 JavaScript tests and the production build. Migration checks preserve exact
+before-image bytes, call credentials, signing identity and concurrent operator
+edits; repeated initialization leaves the repaired configuration unchanged.
+The new native token exchange and the Docker TURN repair still require a Linux
+workflow run; these local results do not establish deployed calls or media flow.
+
 Checkpoint `7ed3da3` passed its production build, all 492 JavaScript tests and all
 297 browser tests in [Linux CI](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34410554799).
 Its first isolated TURN allocation fixture failed after four seconds; the original
@@ -39,9 +61,9 @@ See [drafts](DRAFTS.md), [attachment retries](ATTACHMENT_RETRIES.md),
 for the measured scope and remaining limits.
 
 Controlled transports and RTC boundaries in these local tests do not establish
-new native delivery or external TURN connectivity. The workflow now invokes a
+new native delivery or external TURN connectivity. The workflow invokes a
 separate disposable real-Chromium/coturn allocation and invalid-credential check;
-its first Linux execution is pending.
+successful allocation after the Docker bridge repair is still pending.
 
 ## Responsive modals and encrypted history recovery
 

@@ -18,6 +18,12 @@ validates the original generated configuration and keeps the credentials.
 The overlay removes published TURN/SFU ports and makes the media network
 internal. The SFU HTTP endpoint remains reachable by the API inside Docker.
 Startup checks its exact audio-capability response before browser probes begin.
+The token issuer reaches `chat.example.test:443` through a private Docker alias
+on the CI proxy, with normal TLS verification against this run's certificate.
+The nonroot test proxy has an additional 443 listener and an explicit network
+namespace setting allowing that port; its host mapping stays loopback-only.
+This exercises the production Matrix discovery and OpenID routes without public
+DNS, external media, or disabling certificate checks in the issuer.
 The TURN service retains `cap_drop: ALL`, `no-new-privileges` and a read-only
 filesystem, with only `NET_BIND_SERVICE` added. The pinned
 [coturn image](https://github.com/coturn/coturn/blob/docker/4.17.2-r0/docker/coturn/debian/Dockerfile)
@@ -32,6 +38,16 @@ See the issuer's [configuration](https://github.com/element-hq/lk-jwt-service/bl
 and [health probe](https://github.com/element-hq/lk-jwt-service/blob/v0.6.0/healthcheck/main.go).
 The independent rollback project explicitly disables both call flags and uses
 the production init entrypoint. This setup adds no production validation exception.
+
+`scripts/smoke-rtc-auth.mjs` uses the two ordinary accounts and their freshly
+created encrypted CI conversation. It verifies the native room, membership and
+device identities, then exchanges a fresh native OpenID token through each
+legacy and modern gateway endpoint for each account. Each returned token must
+name the exact public WebSocket URL and expected room/device scope, and the real
+SFU must accept it at its validation-only endpoint. An invalid OpenID token must
+be rejected. No participant joins or captures media; bearer credentials stay out
+of request URLs and failure output. This probe exercises the private room-creation
+request that process health checks could not verify.
 
 `scripts/smoke-call-audio.mjs` proves actual Synapse authorization: independent
 mute/deafen role grants, native and custom hierarchy, all canonical ancestors,

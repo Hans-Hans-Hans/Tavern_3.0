@@ -2,26 +2,62 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loopbackPort, removeOwnedTurnResource, requireTurnAllocationCi, runTurnDocker, turnContainerArguments, turnFailureSummary } from '../scripts/smoke-turn-allocation.mjs';
+import { isolatedTurnEndpoint, removeOwnedTurnResource, requireTurnAllocationCi, runTurnDocker, turnContainerArguments, turnFailureSummary } from '../scripts/smoke-turn-allocation.mjs';
 test('actual allocation fixture requires explicit disposable Linux CI', () => {
   const env = { GITHUB_ACTIONS: 'true', TAVERN_CI_SMOKE: 'true' };
   requireTurnAllocationCi(env, 'linux');
   for (const changed of [{}, { GITHUB_ACTIONS: 'true' }, { TAVERN_CI_SMOKE: 'true' }, { ...env, GITHUB_ACTIONS: '1' }]) assert.throws(() => requireTurnAllocationCi(changed, 'linux'));
   assert.throws(() => requireTurnAllocationCi(env, 'win32'));
 });
-test('only a single loopback ephemeral binding is accepted', () => {
-  assert.equal(loopbackPort('127.0.0.1:43210\n'), 43210);
-  for (const value of ['0.0.0.0:43210', '[::]:43210', '127.0.0.1:80', '127.0.0.1:65536', '127.0.0.1:43210\n0.0.0.0:43210']) assert.throws(() => loopbackPort(value));
-});
-test('coturn is constrained to its fresh owner, loopback listener and denied peer destinations', () => {
+test('coturn stays on its fresh internal network without published ports and with denied peer destinations', () => {
   const nonce = 'a'.repeat(24), name = 'tavern-turn-ci-' + nonce, args = turnContainerArguments(name, name + '-network', nonce, 'b'.repeat(64));
-  assert.deepEqual(args.filter((_, i) => args[i - 1] === '-p'), ['127.0.0.1::3478/tcp']);
+  assert.equal(args.includes('-p'), false); assert.equal(args.includes('--publish'), false);
   assert.equal(args.includes('--read-only'), true); assert.equal(args[args.indexOf('--cap-drop') + 1], 'ALL');
   assert.equal(args[args.indexOf('--cap-add') + 1], 'NET_BIND_SERVICE'); assert.equal(args[args.indexOf('--entrypoint') + 1], '/usr/bin/turnserver');
   assert.equal(args.includes('-v'), false); assert.equal(args.includes('--privileged'), false);
   assert.equal(args.includes('--denied-peer-ip=0.0.0.0-255.255.255.255'), true); assert.equal(args.includes('--min-port=49160'), true); assert.equal(args.includes('--max-port=49164'), true);
   assert.throws(() => turnContainerArguments('production', name + '-network', nonce, 'b'.repeat(64)));
   assert.throws(() => turnContainerArguments(name, 'shared-network', nonce, 'b'.repeat(64)));
+});
+
+function endpointFixture() {
+  const nonce = 'a'.repeat(24), name = 'tavern-turn-ci-' + nonce, networkName = name + '-network', networkId = 'b'.repeat(64), containerId = 'c'.repeat(64);
+  return {
+    expected: { nonce, name, networkName, networkId, containerId },
+    network: { Id: networkId, Name: networkName, Driver: 'bridge', Scope: 'local', Internal: true, EnableIPv6: false, Labels: { 'io.tavern.ci.turn-allocation': nonce },
+      IPAM: { Config: [{ Subnet: '172.25.0.0/16' }] }, Containers: { [containerId]: { Name: name, IPv4Address: '172.25.0.2/16', IPv6Address: '' } } },
+    container: { Id: containerId, Name: '/' + name, Running: true, Owner: nonce, PortBindings: {},
+      Networks: { [networkName]: { NetworkID: networkId, IPAddress: '172.25.0.2', IPPrefixLen: 16, GlobalIPv6Address: '' } } },
+  };
+}
+
+test('the host uses only the fresh coturn endpoint on its confirmed internal bridge', () => {
+  const f = endpointFixture();
+  assert.deepEqual(isolatedTurnEndpoint(f.network, f.container, f.expected), { address: '172.25.0.2', port: 3478 });
+  f.container.PortBindings = null;
+  assert.equal(isolatedTurnEndpoint(f.network, f.container, f.expected).port, 3478);
+  f.network.Options = { 'com.docker.network.bridge.gateway_mode_ipv4': 'nat' };
+  assert.equal(isolatedTurnEndpoint(f.network, f.container, f.expected).address, '172.25.0.2');
+});
+
+test('endpoint inspection rejects foreign ownership, other networks, published ports and ambiguous routing', () => {
+  const mutations = [
+    f => { f.network.Id = 'f'.repeat(64); }, f => { f.container.Id = 'f'.repeat(64); },
+    f => { f.network.Internal = false; }, f => { f.network.Driver = 'host'; },
+    f => { f.network.Labels['io.tavern.ci.turn-allocation'] = 'other'; }, f => { f.container.Owner = 'other'; },
+    f => { f.network.Containers.extra = { Name: 'production' }; }, f => { f.container.Networks.production = {}; },
+    f => { f.container.Running = false; }, f => { f.container.PortBindings = { '3478/tcp': [{ HostIp: '0.0.0.0', HostPort: '3478' }] }; },
+    f => { f.network.Options = { 'com.docker.network.bridge.gateway_mode_ipv4': 'isolated' }; },
+    f => { f.network.IPAM.Config[0].Subnet = '172.26.0.0/16'; },
+    f => { f.container.Networks[f.expected.networkName].NetworkID = 'f'.repeat(64); },
+    f => { f.network.Containers[f.expected.containerId].IPv4Address = '172.25.0.3/16'; },
+  ];
+  for (const change of mutations) { const f = endpointFixture(); change(f); assert.throws(() => isolatedTurnEndpoint(f.network, f.container, f.expected)); }
+  for (const address of ['127.0.0.1', '0.0.0.0', '8.8.8.8', '169.254.1.2', '::1', 'production.local']) {
+    const f = endpointFixture(); f.container.Networks[f.expected.networkName].IPAddress = address;
+    f.network.Containers[f.expected.containerId].IPv4Address = address + '/16';
+    assert.throws(() => isolatedTurnEndpoint(f.network, f.container, f.expected));
+  }
 });
 
 test('fresh image progress can exhaust the real child output bound, while the fixture requests quiet pull output', async () => {

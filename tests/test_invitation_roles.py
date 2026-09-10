@@ -46,12 +46,28 @@ class InvitationRoleTests(unittest.IsolatedAsyncioTestCase):
         self.joined = asyncio.Event()
         self.create_content = {'type': 'm.space', 'm.federate': False}
         self.module = self.model.TavernPolicy({}, SimpleNamespace(register_third_party_rules_callbacks=lambda **kwargs: None))
+        self.native_role_reads = 0
+        self.before_module_state = None
         original = self.service.matrix
 
         def policy_state(native):
             return [*copy.deepcopy(native),
                     {'type': 'm.room.create', 'state_key': '', 'sender': '@owner:test', 'content': copy.deepcopy(self.create_content)},
                     {'type': self.model.POLICY, 'state_key': '', 'sender': '@owner:test', 'event_id': '$roles-' + str(self.revision), 'content': copy.deepcopy(self.policy)}]
+
+        async def get_room_state(identity):
+            self.native_role_reads += 1
+            if self.before_module_state:
+                callback, self.before_module_state = self.before_module_state, None
+                await callback()
+            room = self.rooms[identity]
+            native = [{'type': 'm.room.power_levels', 'state_key': '', 'content': room['powers']}]
+            native += [{'type': 'm.room.member', 'state_key': user, 'content': {'membership': membership}} for user, membership in room['members'].items()]
+            return {(event['type'], event['state_key']): SimpleNamespace(**event) for event in policy_state(native)}
+
+        # The real public ModuleApi reads a new immutable state snapshot. Keep
+        # that authority boundary when the deployed callback refreshes roles.
+        self.module.api.get_room_state = get_room_state
 
         async def matrix(method, path, body=None, token=None, expected=True):
             if path.startswith('/_synapse/admin/v1/users/') and path.endswith('/login') and self.before_role_login and self.rooms['!room:test']['members'].get('@bob:test') == 'join':
@@ -99,6 +115,37 @@ class InvitationRoleTests(unittest.IsolatedAsyncioTestCase):
 
     async def accept(self, invitation, cookie):
         return await self.request('POST', '/api/invitations/redeem', {'token': invitation['token']}, cookie)
+
+    async def test_default_role_assignment_preserves_versioned_publication_policy(self):
+        from synapse_modules.conference_publication import migration, MARKER, PUBLICATION
+        self.policy = migration(self.policy)
+        _, invitation = await self.create_invitation(defaultRoleIds=['reader'])
+        bob = await self.add_user('bob')
+        response = await self.accept(invitation, bob)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual(self.policy[MARKER], 1)
+        self.assertTrue(set(PUBLICATION) <= set(self.policy['roles'][0]['permissions']))
+        self.assertEqual(self.policy['members']['@bob:test'], ['reader'])
+        self.assertGreater(self.native_role_reads, 0)
+
+    async def test_native_publication_migration_during_role_callback_rejects_stale_assignment(self):
+        from synapse_modules.conference_publication import migration, MARKER
+        _, invitation = await self.create_invitation(defaultRoleIds=['reader'])
+        bob = await self.add_user('bob')
+        async def migrate():
+            self.policy = migration(self.policy)
+            self.revision += 1
+        self.before_module_state = migrate
+        response = await self.accept(invitation, bob)
+        self.assertEqual(response.status, 409, await response.text())
+        self.assertEqual((await response.json())['errcode'], 'INVITATION_ROLES_PENDING')
+        self.assertEqual(self.policy[MARKER], 1)
+        self.assertNotIn('@bob:test', self.policy['members'])
+        self.assertFalse(self.role_writes)
+        resumed = await self.accept(invitation, bob)
+        self.assertEqual(resumed.status, 200, await resumed.text())
+        self.assertEqual(self.policy[MARKER], 1)
+        self.assertEqual(self.policy['members']['@bob:test'], ['reader'])
 
     async def test_default_roles_assign_as_issuer_after_join_and_remain_idempotent(self):
         _, invitation = await self.create_invitation(defaultRoleIds=['reader', 'helper'])

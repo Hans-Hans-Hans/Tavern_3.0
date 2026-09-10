@@ -20,6 +20,12 @@ services:
     ports: !reset []
   coturn:
     ports: !reset []
+  rtc-auth:
+    environment:
+      # Trust this run's certificate; retain normal hostname/TLS verification.
+      SSL_CERT_FILE: /ci/tls/ca-bundle.pem
+    volumes:
+      - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
   tavern-api:
     environment:
       INTEGRATIONS_ENABLED: 'true'
@@ -91,10 +97,17 @@ services:
   ci-proxy:
     image: tavern:check
     entrypoint: [nginx, -c, /ci/nginx.conf, -g, 'daemon off;']
+    # Allow the nonroot test proxy to serve standard private HTTPS discovery.
+    # The host still publishes only the existing loopback 443 mapping.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: '443'
     volumes:
       - ./scripts/ci-nginx.conf:/ci/nginx.conf:ro
       - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
-    networks: [proxy]
+    networks:
+      proxy: {}
+      private:
+        aliases: [chat.example.test]
     ports: [127.0.0.1:443:8443]
     read_only: true
     tmpfs: ["/tmp:size=16m,mode=1777"]

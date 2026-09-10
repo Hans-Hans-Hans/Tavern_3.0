@@ -48,6 +48,7 @@ class RtcGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.issuer_hook = self.native_hook = None
         self.openid_subject = '@alice:test'
         self.issuer_result = None
+        self.issuer_status = 200
         self.participants = []
         self.sfu_calls = []
         self.sfu_hook = None
@@ -87,7 +88,7 @@ class RtcGatewayTests(unittest.IsolatedAsyncioTestCase):
             if self.issuer_hook:
                 await self.issuer_hook()
             if self.issuer_result is not None:
-                return web.json_response(self.issuer_result)
+                return web.json_response(self.issuer_result, status=self.issuer_status)
             if request.path == '/sfu/get':
                 identity = '@alice:test:' + value['device_id']
             else:
@@ -250,6 +251,66 @@ class RtcGatewayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status, 503)
             self.assertNotIn('jwt', await response.text())
             self.assertEqual(self.rows(), [])
+
+    async def test_private_issuer_urls_return_only_the_public_authenticated_signaling_url(self):
+        for method in ('get_token', 'sfu/get'):
+            body = self.body if method == 'get_token' else {'room': ROOM, 'device_id': self.profile['deviceId'], 'openid_token': self.body['openid_token']}
+            subject = self.identity if method == 'get_token' else '@alice:test:' + self.profile['deviceId']
+            for url in ('http://livekit:7880', 'ws://livekit:7880'):
+                self.issuer_result = {'url': url, 'jwt': signed(subject)}
+                response = await self.token(body, method)
+                self.assertEqual(response.status, 200, await response.text())
+                result = await response.json()
+                self.assertEqual(result['url'], ORIGIN.replace('https:', 'wss:') + '/livekit/sfu')
+                self.assertEqual(decode_jwt(result['jwt'], KEY, SECRET)['sub'], subject)
+                self.assertEqual((await self.authorize(result['jwt'])).status, 204)
+
+    async def test_internal_url_allowlist_does_not_accept_redirects_credentials_or_foreign_scopes(self):
+        for url in ('http://livekit:7880/', 'http://livekit:7880/rtc', 'http://livekit:7881',
+                    'http://livekit:7880?token=secret', 'http://livekit:7880#fragment',
+                    'http://user:password@livekit:7880', 'http://livekit.evil.invalid:7880',
+                    None, [], {}, 7880):
+            self.issuer_result = {'url': url, 'jwt': signed(self.identity)}
+            response = await self.token()
+            self.assertEqual(response.status, 503)
+            text = await response.text()
+            if isinstance(url, str):
+                self.assertNotIn(url, text)
+            self.assertEqual(self.rows(), [])
+        self.issuer_result = {'url': 'http://livekit:7880', 'jwt': signed('foreign-device')}
+        self.assertEqual((await self.token()).status, 503)
+        self.assertEqual(self.rows(), [])
+
+    async def test_native_openid_404_is_distinguished_without_reflecting_upstream_payload(self):
+        async def missing(request, payload):
+            if request.path.endswith('/openid/userinfo'):
+                return web.Response(text='private-upstream-detail', status=404)
+        self.native_hook = missing
+        with self.assertLogs('tavern.api.rtc', level='WARNING') as logs:
+            response = await self.token()
+        self.assertEqual(response.status, 503)
+        body = await response.json()
+        self.assertEqual(body['errcode'], 'CALL_OPENID_UNAVAILABLE')
+        self.assertIn('HTTP 404', body['error'])
+        self.assertEqual(self.issuer_calls, [])
+        self.assertNotIn('fixture-openid-token', str(logs.output))
+        self.assertNotIn('private-upstream-detail', str(logs.output) + str(body))
+
+    async def test_issuer_room_creation_and_openid_errors_have_safe_distinct_diagnostics(self):
+        for status, value, code in (
+            (500, {'errcode': 'M_UNKNOWN', 'error': 'Unable to create room on SFU'}, 'CALL_SFU_ROOM_CREATION_FAILED'),
+            (401, {'errcode': 'M_UNAUTHORIZED', 'error': 'private-token-or-query'}, 'CALL_ISSUER_OPENID_REJECTED'),
+            (500, {'errcode': 'private-token-or-query', 'error': 'private-token-or-query'}, 'CALL_ISSUER_UNAVAILABLE'),
+        ):
+            self.issuer_status, self.issuer_result = status, value
+            with self.assertLogs('tavern.api.rtc', level='WARNING') as logs:
+                response = await self.token()
+            body = await response.json()
+            self.assertEqual(response.status, 403 if status == 401 else 503)
+            self.assertEqual(body['errcode'], code)
+            self.assertEqual(self.rows(), [])
+            self.assertNotIn('private-token-or-query', str(logs.output) + str(body))
+            self.assertNotIn('fixture-openid-token', str(logs.output) + str(body))
 
     async def test_origin_alternate_routes_duplicate_and_conflicting_token_sources_are_denied(self):
         token = await self.mint()

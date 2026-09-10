@@ -14,6 +14,7 @@ import { dmRequestsSmoke } from './smoke-dm-requests.mjs';
 import { invitationPrivacySmoke } from './smoke-invitation-privacy.mjs';
 import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
 import { callAudioSmoke } from './smoke-call-audio.mjs';
+import { rtcAuthSmoke } from './smoke-rtc-auth.mjs';
 import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
@@ -133,10 +134,11 @@ try {
   console.log('PASS: two ordinary accounts sign in and administrator endpoints reject their sessions.');
   // Create the encrypted test fixture through the same authenticated native
   // Matrix gateway; actual sending/decryption below uses the production UI/SDK.
-  const created = await api(alice, '/_matrix/client/v3/createRoom', { name: 'CI encrypted conversation', preset: 'private_chat', invite: [bobSession.userId], creation_content: { 'm.federate': false }, initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }] }, true);
+  const created = await api(alice, '/_matrix/client/v3/createRoom', { name: 'CI encrypted conversation', preset: 'private_chat', invite: [bobSession.userId], creation_content: { 'm.federate': false }, power_level_content_override: { events: { 'org.matrix.msc3401.call.member': 0 } }, initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }] }, true);
   assert.equal(created.status, 200, JSON.stringify(created.data)); const roomId = created.data.room_id;
   assert.equal((await api(bob, '/_matrix/client/v3/join/' + encodeURIComponent(roomId), {}, true)).status, 200);
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
+  await rtcAuthSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
   const text = 'Encrypted CI proof ' + randomBytes(12).toString('hex');
   console.log('Ready to send an encrypted message from the production composer.');
   await alice.getByRole('textbox', { name: 'Message CI encrypted conversation', exact: true }).fill(text);

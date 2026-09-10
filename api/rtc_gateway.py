@@ -39,6 +39,27 @@ CHECK_WORKERS = 8
 CHECK_TIMEOUT = 38
 PENDING_AUDIT_INTERVAL = 3600
 LOG = logging.getLogger('tavern.api.rtc')
+INTERNAL_SFU_URLS = frozenset(('http://livekit:7880', 'ws://livekit:7880'))
+
+
+def upstream_failure(stage, status, value=None):
+    """Keep native tokens, URLs and untrusted upstream error text out of output."""
+    denied_status = 403 if status in (400, 401, 403) else 503
+    if stage == 'openid':
+        code = 'CALL_OPENID_UNAVAILABLE' if denied_status == 503 else 'CALL_OPENID_REJECTED'
+        message = ('Matrix OpenID verification returned HTTP ' + str(status) +
+                   '. Check that Synapse has its OpenID listener enabled and has been restarted.') if denied_status == 503 else 'Matrix did not accept the call verification token. Rejoin the call to request a fresh token.'
+    elif status == 500 and isinstance(value, dict) and value.get('errcode') == 'M_UNKNOWN' and value.get('error') == 'Unable to create room on SFU':
+        code = 'CALL_SFU_ROOM_CREATION_FAILED'
+        message = 'The token issuer could not create the conference on LiveKit. Check its internal LiveKit URL and shared credentials.'
+    elif stage == 'issuer' and status == 401:
+        code = 'CALL_ISSUER_OPENID_REJECTED'
+        message = 'The token issuer could not verify your Matrix OpenID token. Check public Matrix discovery and OpenID reachability from the calls container.'
+    else:
+        code = 'CALL_ISSUER_UNAVAILABLE'
+        message = 'The call token issuer returned HTTP ' + str(status) + '. Check the call service configuration.'
+    LOG.warning('Call authorization failed: stage=%s status=%s category=%s', stage, status, code)
+    return APIError(denied_status, message, code)
 
 
 def constrained_media(snapshot):
@@ -186,7 +207,9 @@ class RtcGateway:
         except (ClientError, asyncio.TimeoutError):
             raise denied('The current conference permissions could not be checked.', 503) from None
 
-    async def json_request(self, method, url, **kwargs):
+    async def json_request(self, method, url, *, stage='issuer', **kwargs):
+        if stage not in ('issuer', 'openid'):
+            raise ValueError('Unknown call authorization stage')
         try:
             async with self.service.http.request(method, url, allow_redirects=False, timeout=ClientTimeout(total=8), **kwargs) as response:
                 raw = bytearray()
@@ -194,12 +217,20 @@ class RtcGateway:
                     raw.extend(chunk)
                     if len(raw) > 65536:
                         raise denied('The call service response could not be verified.', 503)
+                if response.status != 200:
+                    try:
+                        value = json.loads(raw, object_pairs_hook=unique_object)
+                    except (ValueError, UnicodeError):
+                        value = None
+                    raise upstream_failure(stage, response.status, value)
                 value = json.loads(raw, object_pairs_hook=unique_object)
-                if response.status != 200 or not isinstance(value, dict):
-                    raise denied('The call service did not authorize this request.', 403 if response.status in (400, 401, 403) else 503)
+                if not isinstance(value, dict):
+                    raise denied('The call service response could not be verified.', 503)
                 return value
         except (ClientError, asyncio.TimeoutError, ValueError, UnicodeError):
-            raise denied('The call service is temporarily unavailable.', 503) from None
+            message = 'Matrix OpenID verification is temporarily unavailable.' if stage == 'openid' else 'The call token issuer is temporarily unavailable.'
+            LOG.warning('Call authorization transport failed: stage=%s', stage)
+            raise denied(message, 503) from None
 
     async def token(self, request):
         service = self.service
@@ -216,7 +247,7 @@ class RtcGateway:
             raise denied()
         service.store.rate('rtc-token:' + session['user_id'], 20, 60)
         # The origin is deployment-controlled, never OpenID discovery input.
-        native = await self.json_request('GET', service.config.synapse_url + '/_matrix/federation/v1/openid/userinfo', params={'access_token': data['openid_token']['access_token']})
+        native = await self.json_request('GET', service.config.synapse_url + '/_matrix/federation/v1/openid/userinfo', stage='openid', params={'access_token': data['openid_token']['access_token']})
         if native.get('sub') != session['user_id']:
             raise denied()
         service.require_session(request)
@@ -227,7 +258,12 @@ class RtcGateway:
         result = await self.json_request('POST', 'http://rtc-auth:8080/' + method, json=data)
         claims = decode_jwt(result.get('jwt'), key, secret)
         alias = room_alias(identity)
-        if result.get('url') != service.config.public_url.replace('https://', 'wss://', 1) + '/livekit/sfu' or claims['sub'] != sfu_identity or claims['video']['room'] != alias:
+        public_sfu_url = service.config.public_url.replace('https://', 'wss://', 1) + '/livekit/sfu'
+        # v0.6.0 uses LIVEKIT_URL for both private CreateRoom RPCs and its response.
+        # Accept only this stack's fixed internal SFU or the exact legacy public
+        # address. Browsers always receive the authenticated public signaling URL.
+        issuer_url = result.get('url')
+        if not isinstance(issuer_url, str) or issuer_url not in INTERNAL_SFU_URLS | {public_sfu_url} or claims['sub'] != sfu_identity or claims['video']['room'] != alias:
             raise denied('The call service returned an unexpected conference scope.', 503)
         try:
             baseline = grant_permissions(claims['video'])
@@ -266,7 +302,7 @@ class RtcGateway:
                 audio_last_muted=excluded.audio_last_muted,next_check=0''',
                 (alias, sfu_identity, identity, session['user_id'], session['device_id'], member, session['id'], now, session['expires'], json.dumps(baseline, separators=(',', ':')),
                  int(audio.effective['muted'])))
-        return web.json_response({'url': result['url'], 'jwt': token}, headers={'Cache-Control': 'no-store'})
+        return web.json_response({'url': public_sfu_url, 'jwt': token}, headers={'Cache-Control': 'no-store'})
 
     async def authorize(self, request):
         service = self.service

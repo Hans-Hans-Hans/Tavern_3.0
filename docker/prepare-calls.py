@@ -38,7 +38,7 @@ def prepare():
         'turn_servers':[{'host':args.turn_domain,'port':3478,'protocol':'udp','secret':turn_secret,'ttl':3600}]},
         'room':{'auto_create':False},'keys':{key:secret},'logging':{'level':'warn'}}
     (data/'calls/livekit.yaml').write_text(json.dumps(livekit,indent=2)+'\n')
-    (data/'calls/jwt.env').write_text(f'LIVEKIT_URL=wss://{domain}/livekit/sfu\nLIVEKIT_KEY={key}\nLIVEKIT_SECRET={secret}\nLIVEKIT_FULL_ACCESS_HOMESERVERS={domain}\n')
+    (data/'calls/jwt.env').write_text(f'LIVEKIT_URL=http://livekit:7880\nLIVEKIT_KEY={key}\nLIVEKIT_SECRET={secret}\nLIVEKIT_FULL_ACCESS_HOMESERVERS={domain}\n')
     config.update({'turn_uris':[f'turn:{args.turn_domain}:3478?transport=udp',f'turn:{args.turn_domain}:3478?transport=tcp'],
         'turn_shared_secret':turn_secret,'turn_user_lifetime':'1h','turn_allow_guests':False,'max_event_delay_duration':'24h',
         'matrix_rtc':{'transports':[{'type':'livekit','livekit_service_url':f'https://{domain}/livekit/jwt'}]}})

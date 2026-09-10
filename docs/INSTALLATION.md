@@ -202,6 +202,9 @@ issuer and LiveKit HTTP services private and use the shipped gateway routes;
 see [conference authorization](RTC_AUTHORIZATION.md) for removal timing and
 service-outage limits. Raw issuer logs are disabled because upstream transport
 errors can contain credentials; the account API records sanitized diagnostics.
+The issuer uses `RTC_AUTH_LIVEKIT_URL=http://livekit:7880` internally; browsers
+receive the public HTTPS host's WebSocket address. For call authorization errors,
+use the [read-only call diagnostic and upgrade instructions](CALL_AUTHENTICATION.md).
 
 | Public ports forwarded to Docker host | Purpose |
 |---|---|

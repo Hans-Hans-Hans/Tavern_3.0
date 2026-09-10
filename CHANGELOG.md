@@ -6,6 +6,7 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Read-only call-service diagnostics with bounded checks of OpenID, issuer health, LiveKit credentials and optional public HTTPS discovery.
 - Bounded administrator server/channel hierarchy with native metadata, reciprocal relationship status, explicit expansion and revision-checked pages.
 - Encrypted attachment retry copies with per-file delivery checkpoints, explicit retry/cancel controls, stable native transaction content and rejection of malformed acknowledgements.
 - Account-owned per-conversation/thread drafts with navigation indicators and revision-safe clearing after acknowledged sends.
@@ -56,6 +57,8 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Fixed
 
+- Calls create LiveKit rooms through the private service address and return the authenticated public WebSocket URL to browsers. Existing call configurations gain a missing Synapse OpenID listener without rotating credentials; authorization errors identify the failing stage.
+- Isolated TURN acceptance connects to a verified internal Docker bridge endpoint, and invitation test fixtures implement the native fresh-state API used by current role enforcement.
 - Room administration rejects retired sessions after awaited reads and before a streamed block confirmation can mutate native state; duplicate parent/child graph paths respect display limits.
 - Native smoke readiness handles optional onboarding that disappears when saved account data finishes loading, while still rejecting an unusable persistent dialog.
 - Search indexing and history exports continue through empty filtered pages, retain the requested room during older-event decryption, and reject stale identity/membership results before output or storage.

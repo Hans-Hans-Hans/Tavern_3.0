@@ -37,6 +37,7 @@ services:
     environment:
       LIVEKIT_JWT_BIND: ''
       LIVEKIT_JWT_PORT: ''
+      LIVEKIT_URL: ${RTC_AUTH_LIVEKIT_URL:-http://livekit:7880}
     networks: [private, media]
     read_only: true
     cap_drop: [ALL]

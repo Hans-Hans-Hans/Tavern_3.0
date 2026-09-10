@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Idempotent Compose provisioning. Existing homeserver identity always wins."""
 import ipaddress
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -216,8 +218,67 @@ def install_policy(root, config, integrations=False, audio_moderation=False):
         pending_config.replace(original)
 
 
+def client_openid_resources(config):
+    """Validate without mutation, then return only client resources needing OpenID."""
+    listeners = config.get('listeners', [])
+    if not isinstance(listeners, list):
+        raise ConfigurationError('Synapse listeners are invalid; restore the current configuration before enabling calls.')
+    found, pending = False, []
+    for listener in listeners:
+        if not isinstance(listener, dict) or not isinstance(listener.get('resources', []), list):
+            raise ConfigurationError('Synapse listener resources are invalid; configuration was not changed.')
+        for resource in listener.get('resources', []):
+            if not isinstance(resource, dict) or not isinstance(resource.get('names'), list) or any(not isinstance(name, str) for name in resource['names']):
+                raise ConfigurationError('Synapse listener resource names are invalid; configuration was not changed.')
+            if 'client' in resource['names']:
+                found = True
+                if 'openid' not in resource['names']:
+                    pending.append(resource['names'])
+    if not found:
+        raise ConfigurationError('Calls require an existing Synapse client listener; configuration was not changed.')
+    return pending
+
+
+def migrate_existing_call_openid(root, config, resources):
+    if not resources:
+        return
+    original = root / 'synapse/homeserver.yaml'
+    before = original.read_bytes()
+    if yaml.safe_load(before) != config:
+        raise ConfigurationError('Synapse configuration changed during call validation. Retry without replacing the existing configuration.')
+    backup = original.with_name('homeserver.before-openid-v1.yaml')
+    if backup.exists() and backup.read_bytes() != before:
+        backup = original.with_name('homeserver.before-openid-v1.' + hashlib.sha256(before).hexdigest() + '.yaml')
+    # read_bytes/decode avoids newline normalization: this is the exact before
+    # image, including operator comments. write_new never replaces any backup.
+    write_new(backup, before.decode('utf-8'), 0o640)
+    if backup.read_bytes() != before:
+        raise ConfigurationError('The OpenID migration backup could not be verified; configuration was not changed.')
+    own(backup, 991)
+    for names in resources:
+        names.append('openid')
+    pending = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n', dir=original.parent, delete=False) as handle:
+            pending = Path(handle.name)
+            previous_stat = original.stat()
+            os.chmod(pending, stat.S_IMODE(previous_stat.st_mode))
+            if hasattr(os, 'geteuid') and os.geteuid() == 0:
+                os.chown(pending, previous_stat.st_uid, previous_stat.st_gid)
+            handle.write(json.dumps(config, indent=2) + '\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        if original.read_bytes() != before:
+            raise ConfigurationError('Synapse configuration changed during OpenID migration; the new operator configuration was preserved.')
+        pending.replace(original)
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+
+
 def provision_calls(root, config, domain, turn_domain, public_ip):
     call_dir = root / 'calls'
+    openid_resources = client_openid_resources(config)
     # Legacy prepare-calls.py stores credentials in livekit.yaml and jwt.env.
     livekit_path = call_dir / 'livekit.yaml'
     turn_path = call_dir / 'turnserver.conf'
@@ -234,6 +295,11 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
         if len(keys) != 1:
             raise ConfigurationError('Expected one existing LiveKit key; review call credential migration manually.')
         key, secret = next(iter(keys.items()))
+        # Reject mismatched existing sidecars before creating any missing one.
+        for name, expected in (('livekit_key', key), ('livekit_secret', secret)):
+            path = call_dir / name
+            if path.exists() and path.read_text().strip() != expected:
+                raise ConfigurationError('LiveKit credential files differ. Restore the matching files without rotating credentials.')
         write_new(call_dir / 'livekit_key', key + '\n', 0o644)
         write_new(call_dir / 'livekit_secret', secret + '\n', 0o644)
         if (call_dir / 'livekit_key').read_text().strip() != key or (call_dir / 'livekit_secret').read_text().strip() != secret:
@@ -245,6 +311,7 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
         # Keep private sidecars and all existing credential bytes untouched.
         for path in (livekit_path, call_dir / 'livekit_key', call_dir / 'livekit_secret'):
             os.chmod(path, 0o644)
+        migrate_existing_call_openid(root, config, openid_resources)
         return
     turn_secret = private_secret(call_dir / 'turn_secret')
     key = private_secret(call_dir / 'livekit_key')
@@ -277,10 +344,8 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
     config.setdefault('experimental_features', {}).update({'msc3266_enabled': True, 'msc4143_enabled': True, 'msc4222_enabled': True})
     config['rc_message'] = {'per_second': 0.5, 'burst_count': 30}
     config['rc_delayed_event_mgmt'] = {'per_second': 1, 'burst_count': 20}
-    for listener in config.get('listeners', []):
-        for resource in listener.get('resources', []):
-            if 'client' in resource.get('names', []) and 'openid' not in resource['names']:
-                resource['names'].append('openid')
+    for names in openid_resources:
+        names.append('openid')
     temporary = root / 'synapse/homeserver.yaml.pending'
     temporary.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
     temporary.replace(root / 'synapse/homeserver.yaml')

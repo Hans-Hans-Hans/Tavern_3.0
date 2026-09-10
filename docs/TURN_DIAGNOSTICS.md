@@ -38,14 +38,24 @@ RTC connection boundary is controlled; they do not claim real TURN reachability.
 
 `scripts/smoke-turn-allocation.mjs` is a separate Linux GitHub Actions fixture. It
 creates a uniquely owned internal Docker network and pinned coturn container,
-publishes only an ephemeral loopback TCP listener, uses temporary random HMAC
-credentials, bounds relay ports and denies all peer destinations. Real Chromium
-runs the production diagnostic helper against it and checks both allocation and
+publishes no host ports, uses temporary random HMAC credentials, bounds relay
+ports and denies all peer destinations. It verifies the exact newly created
+network/container IDs, ownership labels, internal bridge scope, sole membership,
+private IPv4 subnet/address and absence of port publishing. The Linux CI host
+then connects directly to that verified bridge endpoint. Real Chromium runs the
+production diagnostic helper against it and checks both allocation and
 invalid-credential rejection. The container, network, browser and HTTP fixture
 are closed afterward. No production account, configuration or volume is used.
 
-The first Linux CI execution failed with a generic error, so isolated allocation
-acceptance remains unverified. The fixture now pulls the image quietly: verbose
+The first Linux CI execution failed with a generic error. Later stage diagnostics
+identified a running TURN container with no Docker published port. Internal
+networks skip [Moby's published-port setup](https://github.com/moby/moby/blob/v28.5.1/libnetwork/endpoint.go#L661).
+Docker documents [host access to an internal bridge](https://docs.docker.com/engine/network/port-publishing/#gateway-modes),
+which the fixture now uses without adding an external container network.
+The next Linux run must prove allocation through that path; acceptance remains
+unverified locally because this workspace has no Docker daemon.
+
+The fixture also pulls the image quietly: verbose
 pull progress can exhaust its bounded child-process output buffer before startup.
 Failures report only a fixed stage and reason, optional container state/exit/OOM
 status, and fixed browser outcome/capture/close counts. They expose no command,
