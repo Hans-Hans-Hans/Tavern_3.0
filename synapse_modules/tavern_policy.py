@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
+    from conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
@@ -22,6 +23,7 @@ try:
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
+    from synapse_modules.conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from synapse_modules.call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
     from synapse_modules.private_thread import PrivateThreadPolicy, SETTINGS as PRIVATE_SETTINGS
@@ -38,7 +40,7 @@ except ImportError:
 
 POLICY = "io.tavern.roles"
 LAYOUT = "io.tavern.server.layout"
-PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "mute_members", "deafen_members", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
+PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "speak", "video", "screen_share", "mute_members", "deafen_members", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
 CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server", "manage_nicknames"}
 
 
@@ -142,7 +144,7 @@ def valid_policy(policy):
             for target, permissions in targets.items():
                 if not isinstance(target, str) or (target not in ids if kind == "roles" else not target.startswith("@")) or not isinstance(permissions, Mapping) or not set(permissions) <= CHANNEL_PERMISSIONS or any(value not in (-1, 0, 1) or isinstance(value, bool) for value in permissions.values()):
                     return False
-    return True
+    return valid_publication_version(policy)
 
 
 def user_roles(policy, user):
@@ -159,6 +161,8 @@ def permissions(policy, user, room_id=None, category_id=None):
         return set(PERMISSIONS)
     roles = user_roles(policy, user)
     result = set().union(*(set(role["permissions"]) for role in roles))
+    if PUBLICATION_VERSION not in policy:
+        result.update(PUBLICATION)
     if category_id is None:
         category_id = getattr(policy, '_category_by_room', {}).get(room_id)
     stages = [policy.get('categoryOverrides', {}).get(category_id, {}), policy.get("overrides", {}).get(room_id, {})]
@@ -180,7 +184,7 @@ def permissions(policy, user, room_id=None, category_id=None):
 
 
 def may_edit_policy(previous, proposed, actor):
-    if not valid_policy(proposed) or proposed["owner"] != previous["owner"]:
+    if not valid_policy(proposed) or proposed["owner"] != previous["owner"] or not may_transition_publication(previous, proposed, actor):
         return False
     if actor == previous["owner"]:
         return True
@@ -373,6 +377,19 @@ class TavernPolicy:
             if temporary_ban_active(state_events, event.sender, now) or any(temporary_ban_active(parent, event.sender, now) for _, _, parent in policies):
                 return True, None
         if event.type == POLICY:
+            # Versioned publication policy must be monotonic and written against
+            # current native state, including after earlier callback awaits.
+            fresh_role_state = await self.api.get_room_state(event.room_id)
+            if (PUBLICATION_VERSION in event.content or PUBLICATION_VERSION in content(state_events, POLICY)
+                    or PUBLICATION_VERSION in content(fresh_role_state, POLICY)):
+                if 'io.tavern.previous_event' not in event.content:
+                    return False, None
+                state_events = fresh_role_state
+                powers = content(state_events, 'm.room.power_levels')
+                threshold = powers.get('events', {}).get(POLICY, powers.get('state_default', 50))
+                if (type(threshold) is not int or content(state_events, 'm.room.member', event.sender).get('membership') != 'join'
+                        or native_member_power(state_events, event.sender) < threshold):
+                    return False, None
             create = state_events.get(("m.room.create", ""))
             if getattr(event, "state_key", None) != "" or not create or create.content.get("type") != "m.space" or create.content.get("m.federate", True):
                 return False, None
@@ -383,6 +400,8 @@ class TavernPolicy:
                     return False, None
             old = content(state_events, POLICY)
             if not old:
+                if PUBLICATION_VERSION in event.content:
+                    return False, None  # Enable ordinary roles, then migrate atomically.
                 return bool(valid_policy(event.content) and event.sender == create.sender and event.content["owner"] == create.sender and may_assign_native_members({}, event.content, state_events, event.sender)), None
             if not valid_policy(old):
                 return False, None

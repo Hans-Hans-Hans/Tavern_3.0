@@ -1,0 +1,16 @@
+.admin-hierarchy-node { min-width: 0; margin-block: 1rem; }
+.admin-hierarchy-node h4 { margin-block: .5rem; }
+.admin-hierarchy-node code, .admin-hierarchy-node dd, .admin-hierarchy-node strong { overflow-wrap: anywhere; }
+.admin-hierarchy-metadata { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: .35rem 1rem; }
+.admin-hierarchy-metadata dt { color: var(--muted); }
+.admin-hierarchy-metadata dd { min-width: 0; margin: 0; }
+.admin-hierarchy-links { list-style: none; padding: 0; }
+.admin-hierarchy-links > li { min-width: 0; margin-block: 1rem; }
+.admin-hierarchy-links > li > code { display: block; margin-block: .35rem; }
+.admin-hierarchy-links .admin-hierarchy-node { padding-inline-start: 6px; margin-inline-start: 4px; border-inline-start: 1px solid var(--border); }
+.admin-hierarchy-node .product-actions { flex-wrap: wrap; }
+.admin-hierarchy-node button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .admin-hierarchy-metadata { grid-template-columns: minmax(0, 1fr); }
+  .admin-hierarchy-metadata dd { margin-block-end: .45rem; }
+}

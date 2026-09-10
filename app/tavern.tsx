@@ -108,6 +108,7 @@ const TemporaryBans = deferredPanel('Temporary bans', () => import('./temporary-
 const BulkModeration = deferredPanel('Bulk moderation', () => import('./bulk-moderation').then(m => ({ default: m.BulkModeration })));
 const GroupMessage = deferredPanel('Group messages', () => import('./group-message').then(m => ({ default: m.GroupMessage })));
 const MessageSearch = deferredPanel('Message search', () => import('./message-search').then(m => ({ default: m.MessageSearch })));
+const MessageHistoryPanel = deferredPanel('Message context', () => import('./message-history').then(m => ({ default: m.MessageHistoryPanel })));
 type Member = {
     id: string;
     name: string;
@@ -218,6 +219,26 @@ export function Workspace() {
     const [forwarding,setForwarding]=useState<Msg|null>(null);
     const [privateRoom, setPrivateRoom] = useState(''), [privateFocus, setPrivateFocus] = useState<{id:string;request:number}|null>(null);
     const navigationGeneration=useRef(0);
+    const [historySelection, setHistorySelection] = useState<{
+        roomId: string; eventId: string; request: number; client: ReturnType<typeof getMatrixClient>;
+        actor: string | null | undefined; device: string | null | undefined; base: string | undefined;
+        account: ReturnType<typeof accountArtworkOwner>; room: ReturnType<NonNullable<ReturnType<typeof getMatrixClient>>['getRoom']>;
+    } | null>(null);
+    const activeHistorySelection = useRef(historySelection); activeHistorySelection.current = historySelection;
+    function currentHistorySelection(target: typeof historySelection) {
+        return !!target && activeHistorySelection.current === target && navigationGeneration.current === target.request && getMatrixClient() === target.client &&
+            accountArtworkOwner() === target.account && target.client?.getUserId() === target.actor && target.client?.getDeviceId() === target.device &&
+            target.client?.getHomeserverUrl() === target.base && target.client?.getRoom(target.roomId) === target.room && target.room?.getMyMembership() === 'join';
+    }
+    const historyTarget = currentHistorySelection(historySelection) ? historySelection : null;
+    useEffect(() => { if (historySelection && !historyTarget) setHistorySelection(null); }, [historySelection, historyTarget]);
+    useEffect(() => {
+        const check = () => { const target = activeHistorySelection.current; if (target && !currentHistorySelection(target)) setHistorySelection(null); };
+        const stop = onMatrixUpdate(check), timer = window.setInterval(check, 250);
+        window.addEventListener('tavern:signout', check);
+        return () => { stop(); clearInterval(timer); window.removeEventListener('tavern:signout', check); };
+    }, []);
+    function closeMessageHistory(target: typeof historySelection) { if (target && activeHistorySelection.current === target) { navigationGeneration.current++; setHistorySelection(null); } }
     const threadScroll=useRef<HTMLDivElement|null>(null);
     const [unreadStart,setUnreadStart]=useState<string|null>(null),[focusMessage,setFocusMessage]=useState<{id:string;request:number}|null>(null);
     useEffect(() => { let active = true; readInstanceConfig().then(config => { if (active && config.homeserverUrl)
@@ -255,7 +276,7 @@ export function Workspace() {
     const [selectedServer, setSelectedServer] = useState('all');
     const [reminder,setReminder]=useState<{roomId:string;eventId:string}|null>(null);
     const [reportTarget,setReportTarget]=useState<ReportTarget|null>(null);
-    const [media,setMedia]=useState<{items:MediaAttachment[];index:number}|null>(null);
+    const [media,setMedia]=useState<{items:MediaAttachment[];index:number;isCurrent?:()=>boolean}|null>(null);
     const [profileRoom,setProfileRoom]=useState('');
     const [profileUser, setProfileUser] = useState(''), [confirmAction, setConfirmAction] = useState<{title:string;description:string;run:()=>Promise<unknown>}|null>(null), [confirmBusy,setConfirmBusy] = useState(false);
     const [instanceAdmin,setInstanceAdmin] = useState(false);
@@ -375,8 +396,18 @@ export function Workspace() {
         if(isPrivateDiscussion(getMatrixClient()?.getRoom(roomId))){openPrivateDiscussion(roomId,eventId);return;}
         select(roomId);setModal('');if(!eventId)return;
         if(pendingRoom.current===roomId){pendingEvent.current=eventId;return;}
-        const request=navigationGeneration.current;
-        void resolveMatrixMessage(roomId,eventId).then(message=>message.parent_id?resolveMatrixMessage(roomId,message.parent_id):message).then(message=>{if(request===navigationGeneration.current)openThread(message);}).catch(e=>{if(request===navigationGeneration.current)toast.error(e.message);});
+        const request=navigationGeneration.current, client=getMatrixClient(), account=accountArtworkOwner(), actor=client?.getUserId(), device=client?.getDeviceId(), base=client?.getHomeserverUrl(), room=client?.getRoom(roomId)??null;
+        const current=()=>request===navigationGeneration.current&&getMatrixClient()===client&&accountArtworkOwner()===account&&client?.getUserId()===actor&&client?.getDeviceId()===device&&client?.getHomeserverUrl()===base&&client?.getRoom(roomId)===room&&room?.getMyMembership()==='join';
+        void resolveMatrixMessage(roomId,eventId).then(async message=>{
+            if(!current())return;
+            if(message.parent_id){const root=await resolveMatrixMessage(roomId,message.parent_id);if(current())openThread(root);return;}
+            setHistorySelection({roomId,eventId,request,client,account,actor,device,base,room});
+        }).catch(e=>{if(current())toast.error(e.message);});
+    }
+    function replyInThread(message:Msg) {
+        if(!message.parent_id){openThread(message);return;}
+        const request=navigationGeneration.current,client=getMatrixClient(),account=accountArtworkOwner();
+        void resolveMatrixMessage(message.conversation_id,message.parent_id).then(root=>{if(request===navigationGeneration.current&&getMatrixClient()===client&&accountArtworkOwner()===account)openThread(root);}).catch(e=>{if(request===navigationGeneration.current)toast.error(e.message);});
     }
     const go = (v: string) => { navigationGeneration.current++;setPrivateRoom('');setDetail(false);setView(v); setThread(null); setOpenMobile(false); };
     async function act(action: string, p: any) { try {
@@ -468,16 +499,18 @@ export function Workspace() {
       {label:'Copy user ID',run:()=>copyText(id)},
       {label:'Report user',visible:isManagedAccount()&&id!==me?.id,run:()=>setReportTarget({kind:'user',targetId:id,roomId})},
     ];}
-    function messageCard(m: Msg, inThread = false) {
+    function messageCard(m: Msg, inThread = false, context?: {messages:Msg[];current:()=>boolean}) {
+        if(context&&!context.current())return null;
         const messageServer=currentServer?.roomIds.includes(m.conversation_id)?currentServer:data?.servers?.find(s=>s.roomIds.includes(m.conversation_id));
         const authorName=serverNicknameForRoom(m.conversation_id,m.author_id,messageServer?.id)??m.author_name;
         if(isUserBlocked(m.author_id))return null;
         const privateMessage=isPrivateDiscussion(getMatrixClient()?.getRoom(m.conversation_id));
         const permissions=privateMessage?privateThreadMessagePermissions(m.conversation_id,m.author_id):messagePermissions(m.conversation_id,m.author_id);
-        const gallery = (privateMessage ? [m] : inThread ? [thread,...replies].filter(Boolean) as Msg[] : messages).flatMap(item=>item.attachments.map(attachment=>({...attachment,messageUrl:messageLink(item)})));
+        const gallery = (context?.messages || (privateMessage ? [m] : inThread ? [thread,...replies].filter(Boolean) as Msg[] : messages)).flatMap(item=>item.attachments.map(attachment=>({...attachment,messageUrl:messageLink(item)})));
+        const previewAttachment=(id:string)=>{if(context&&!context.current())return;setMedia({items:gallery,index:gallery.findIndex(file=>file.id===id),...(context?{isCurrent:context.current}:{})});};
         const replyAllowed=!privateMessage&&permissions.send&&!threadReplyRestriction(m.conversation_id,m.parent_id||m.id,m.lastActivity);
         const actions:ContextAction[]=[
-          {label:'Reply in thread',visible:replyAllowed,run:()=>openMessage(m.conversation_id,m.parent_id||m.id)},
+          {label:'Reply in thread',visible:replyAllowed,run:()=>replyInThread(m)},
           {label:'React with 👍',visible:permissions.react,run:()=>act('react',{id:m.id,emoji:'👍'})},
           {label:m.saved?'Remove bookmark':'Save message',run:()=>act('save',{id:m.id})},
           {label:m.pinned?'Unpin':'Pin message',visible:permissions.pin,run:()=>act('pin',{id:m.id})},
@@ -491,7 +524,7 @@ export function Workspace() {
         ];
         return <ActionMenu key={m.id} actions={actions}><article tabIndex={0} className={'message ' + (prefs.compact ? 'compact ' : '') + (m.author_id === me?.id ? 'own' : '')} key={m.id} id={'message-' + m.id}>
   <ActionMenu actions={userActions(m.author_id,m.conversation_id)}><QuickProfile roomId={m.conversation_id} userId={m.author_id} serverId={messageServer?.id} onOpenFull={()=>openProfile(m.author_id,m.conversation_id)} onMessage={()=>void startDm(m.author_id)}><button aria-label={'View '+authorName+' profile'}><CommunityAvatar roomId={m.conversation_id} userId={m.author_id} serverId={messageServer?.id} fallback={authorName}/></button></QuickProfile></ActionMenu><div className='message-content'><div className='message-meta'><strong>{authorName}</strong>{messageServer&&<ServerRoleBadges serverId={messageServer.id} userId={m.author_id}/>} {m.author_id === me?.id && <span className='you-label'>you</span>}<time dateTime={new Date(m.created_at).toISOString()}>{new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>{m.edited_at && <span className='edited'>edited</span>}{m.pinned === 1 && <Pin size={13} className='pin-mark'/>}{view !== 'channel' && !inThread && <button className='source-channel' onClick={() => select(m.conversation_id)}>#{m.conversation_name}</button>}</div>
-  <WebhookMessageLabel value={m.webhook}/><div className='message-body'>{editing?.id===m.id?<form className='inline-message-edit' onSubmit={e=>{e.preventDefault();void act('edit',{id:m.id,body:editBody}).then(()=>setEditing(null)).catch(()=>{});}}><textarea autoFocus aria-label='Edit message text' value={editBody} onChange={e=>setEditBody(e.target.value)} maxLength={8000} onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setEditing(null);}else if(shouldSendOnKey({...e,isComposing:e.nativeEvent.isComposing},textMedia.enterToSend)){e.preventDefault();e.currentTarget.form?.requestSubmit();}}}/><div className='product-actions'><button className='primary-button' disabled={!editBody.trim()}>Save</button><button className='secondary-button' type='button' onClick={()=>setEditing(null)}>Cancel</button></div></form>:<RichMessage text={m.body} renderText={text=><ServerEmojiText text={text} serverId={messageServer?.id}/>}/>}</div>{!editing&&<LinkPreviews text={m.body}/>} {m.attachments.length > 0 && <div className='attachments'>{m.attachments.map(a => <ActionMenu key={a.id} actions={[{label:'Preview',run:()=>setMedia({items:gallery,index:gallery.findIndex(f=>f.id===a.id)})},{label:'Download',run:()=>downloadMatrixFile(a)},{label:'Copy filename',run:()=>copyText(a.name)},{label:'Remind me',run:()=>setReminder({roomId:m.conversation_id,eventId:m.id})},{label:'Copy message link',run:()=>copyText(messageLink(m))},{label:'Save message',run:()=>act('save',{id:m.id})}]}><button className='file-card' onClick={() => setMedia({items:gallery,index:gallery.findIndex(f=>f.id===a.id)})}>{textMedia.inlineImages&&a.thumbnail?<AttachmentThumbnail preview={a.thumbnail} name={a.name}/>:<span className='file-icon'><FileText size={22}/></span>}<span><strong>{a.name}</strong><small>{bytes(a.size)} · Preview</small></span><Download size={16}/></button></ActionMenu>)}</div>}
+  <WebhookMessageLabel value={m.webhook}/><div className='message-body'>{editing?.id===m.id?<form className='inline-message-edit' onSubmit={e=>{e.preventDefault();void act('edit',{id:m.id,body:editBody}).then(()=>setEditing(null)).catch(()=>{});}}><textarea autoFocus aria-label='Edit message text' value={editBody} onChange={e=>setEditBody(e.target.value)} maxLength={8000} onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setEditing(null);}else if(shouldSendOnKey({...e,isComposing:e.nativeEvent.isComposing},textMedia.enterToSend)){e.preventDefault();e.currentTarget.form?.requestSubmit();}}}/><div className='product-actions'><button className='primary-button' disabled={!editBody.trim()}>Save</button><button className='secondary-button' type='button' onClick={()=>setEditing(null)}>Cancel</button></div></form>:<RichMessage text={m.body} renderText={text=><ServerEmojiText text={text} serverId={messageServer?.id}/>}/>}</div>{!editing&&<LinkPreviews text={m.body}/>} {m.attachments.length > 0 && <div className='attachments'>{m.attachments.map(a => <ActionMenu key={a.id} actions={[{label:'Preview',run:()=>previewAttachment(a.id)},{label:'Download',run:()=>downloadMatrixFile(a)},{label:'Copy filename',run:()=>copyText(a.name)},{label:'Remind me',run:()=>setReminder({roomId:m.conversation_id,eventId:m.id})},{label:'Copy message link',run:()=>copyText(messageLink(m))},{label:'Save message',run:()=>act('save',{id:m.id})}]}><button className='file-card' onClick={() => previewAttachment(a.id)}>{textMedia.inlineImages&&a.thumbnail?<AttachmentThumbnail preview={a.thumbnail} name={a.name}/>:<span className='file-icon'><FileText size={22}/></span>}<span><strong>{a.name}</strong><small>{bytes(a.size)} · Preview</small></span><Download size={16}/></button></ActionMenu>)}</div>}
   <ReactionBar roomId={m.conversation_id} eventId={m.id} reactions={m.reactions} canReact={permissions.react} onProfile={id=>openProfile(id,m.conversation_id)}/>
   {!privateMessage && !inThread && <DraftThreadLink roomId={m.conversation_id} rootId={m.id} replies={m.replies} onOpen={() => openThread(m)}/>}
   </div><div className='message-actions'>
@@ -595,7 +628,7 @@ export function Workspace() {
     } }}><label>Workspace label<input value={workspaceName} onChange={e => setWorkspaceName(e.target.value)} maxLength={60} disabled={!!data?.preview} required/></label><div className='notice'><LockKeyhole size={19}/><p>This label is your personal name for this homeserver. Each Matrix room has its own membership and permissions. New Tavern rooms are encrypted and invite-only.</p></div><button className='primary-button' disabled={!!data?.preview}>Save Tavern label</button><button type='button' className='secondary-button' onClick={() => setModal('invite')}><Users size={16}/>Invite members</button></form></TabsContent><TabsContent value='about'><div className='settings-section about-tavern'><span className='about-logo'><Beer size={36}/></span><h2>Tavern <span>0.4.0</span></h2><InstallTavern/><button className='secondary-button' onClick={()=>{setModal('');setTimeout(openWelcomeTour,0);}}>Getting started tour</button><p>A home for your conversations.</p><div className='release-note'><strong>Working in this release</strong><p>Encrypted messaging, servers and channels, threads, files, verified identities, recovery, calls, conferences, tasks, notes, polls, notifications, and self-hosted webhooks.</p></div><div className='release-note'><strong>Your instance</strong><p>Manage your password, verified email, two-step verification, contacts, and profiles from Settings. Administrators manage users, reports, email, backups, and releases from Admin.</p></div><small>Powered by the Matrix protocol and matrix-js-sdk. Live sync comes directly from your homeserver. Search indexes decrypted history privately on this device. Calls require the configured media services. See the release notes and validation guide for deployment checks.</small></div></TabsContent></Tabs>}
  </DialogContent></Dialog>
  {isManagedAccount()&&<RedeemInvite onJoined={roomId=>{void loadBootstrap().then(()=>select(roomId));}}/>}<ReportDialog target={reportTarget} onClose={()=>setReportTarget(null)}/>
- {media&&<MediaViewer items={media.items} index={media.index} onChange={index=>setMedia({...media,index})} onClose={()=>setMedia(null)}/>}
+ {media&&<MediaViewer items={media.items} index={media.index} isCurrent={media.isCurrent} onChange={index=>setMedia({...media,index})} onClose={()=>setMedia(null)}/>}
  <ActivityNotifications onOpenContacts={()=>openSettings('social')}/>
  <MemberRolesDialog onChanged={loadBootstrap}/>
  <ServerNicknameDialog onChanged={loadBootstrap}/>
@@ -608,6 +641,7 @@ export function Workspace() {
  <AlertDialog open={!!confirmAction} onOpenChange={open=>{if(!open&&!confirmBusy)setConfirmAction(null);}}><AlertDialogContent className='tavern-dialog'><AlertDialogHeader><AlertDialogTitle>{confirmAction?.title}</AlertDialogTitle><AlertDialogDescription>{confirmAction?.description}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={confirmBusy}>Cancel</AlertDialogCancel><button className='primary-button delete-confirm' disabled={confirmBusy} onClick={async()=>{setConfirmBusy(true);try{await confirmAction?.run();setConfirmAction(null);}catch(e:any){toast.error(e.message);}finally{setConfirmBusy(false);}}}>Confirm</button></AlertDialogFooter></AlertDialogContent></AlertDialog>
  <Dialog open={modal==='dmRequests'} onOpenChange={open=>{if(!open)setModal('');}}><DialogContent className='tavern-dialog'><DialogHeader><DialogTitle>Message requests</DialogTitle><DialogDescription>Choose whether to accept, decline or block an incoming conversation invitation.</DialogDescription></DialogHeader><DmRequests onOpen={async roomId=>{const owner=getMatrixClient(),account=accountArtworkOwner();await loadBootstrap();if(getMatrixClient()===owner&&accountArtworkOwner()===account){select(roomId);setModal('');}}}/></DialogContent></Dialog>
  <Dialog open={modal==='privateDiscussions'} onOpenChange={open=>{if(!open)setModal('');}}><DialogContent className='tavern-dialog'><DialogHeader><DialogTitle>Your private discussions</DialogTitle><DialogDescription>Only rooms you joined or were invited to appear here.</DialogDescription></DialogHeader><PrivateDiscussionList onOpen={openPrivateDiscussion}/></DialogContent></Dialog>
+ <Sheet open={!!historyTarget} onOpenChange={open=>{if(!open)closeMessageHistory(historyTarget);}}><SheetContent className='thread-sheet message-history-sheet'><SheetHeader><SheetTitle>Message context</SheetTitle><SheetDescription>Read surrounding messages in this conversation.</SheetDescription></SheetHeader>{historyTarget&&<MessageHistoryPanel key={historyTarget.roomId+':'+historyTarget.eventId+':'+historyTarget.request} roomId={historyTarget.roomId} eventId={historyTarget.eventId} isCurrent={()=>currentHistorySelection(historyTarget)} onClose={()=>closeMessageHistory(historyTarget)} onLatest={()=>{if(currentHistorySelection(historyTarget)){nearBottom.current=true;select(historyTarget.roomId);void loadMessages(true);}}} renderMessage={(message,items,current)=>messageCard(message,true,{messages:items,current})}/>}</SheetContent></Sheet>
  <Sheet open={!!privateRoom} onOpenChange={open=>{if(!open)closePrivateDiscussion();}}><SheetContent className='thread-sheet private-discussion-sheet'><SheetHeader><SheetTitle>Private discussion</SheetTitle><SheetDescription>A separate encrypted conversation for its invited members.</SheetDescription></SheetHeader>{privateRoom&&<PrivateThreadPanel key={(me?.id||'')+':'+privateRoom} roomId={privateRoom} focusId={privateFocus} onClose={closePrivateDiscussion} onOpenSource={openMessage} onMember={openProfile} renderMessage={message=>messageCard(message,true)} renderComposer={(onSent,disabled)=>{const room=getMatrixClient()?.getRoom(privateRoom),binding=privateThreadBinding(room),server=data?.servers?.find(s=>s.roomIds.includes(binding?.source_room_id||''));return <Composer key={(me?.id||'')+':private:'+privateRoom} conversation={privateRoom} name={readPrivateThreadSettings(room).title} serverId={server?.id} shareTyping={prefs.typing&&!prefs.focus} disabled={disabled} members={(room?.getJoinedMembers()||[]).map(member=>({id:member.userId,name:member.name,role:'member'}))} onSent={onSent}/>;}}/>}</SheetContent></Sheet>
  <Sheet open={!!thread&&!privateRoom} onOpenChange={v => { if (!v)
         setThread(null); }}><SheetContent className='thread-sheet'><SheetHeader><SheetTitle>{thread ? readThreadPolicy(thread.conversation_id,thread.id).title || thread.forum?.title || 'Thread' : 'Thread'} <span>#{thread?.conversation_name}</span>{thread&&<DraftIndicator roomId={thread.conversation_id} parent={thread.id} label={'Draft reply in '+thread.conversation_name}/>}</SheetTitle><SheetDescription>Keep this conversation together.</SheetDescription></SheetHeader> {thread&&<ThreadSettings key={thread.id} roomId={thread.conversation_id} rootId={thread.id} authorId={thread.author_id} enabled={rolePolicyEnabled} onChanged={loadBootstrap}/>}{thread&&<ThreadTools roomId={thread.conversation_id} rootId={thread.id} authorId={thread.author_id} replies={replies} onChanged={refreshThreadReplies}/>}<div className='thread-scroll' ref={threadScroll}>{thread&&<PrivateThreadLauncher key={thread.conversation_id+':'+thread.id} sourceRoomId={thread.conversation_id} sourceEventId={thread.id} onOpen={openPrivateDiscussion}/>}{thread && messageCard(thread, true)}<div className='date-divider'><span>{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</span></div><MessageList key={thread?.id} items={replies} scroll={threadScroll} render={message=>messageCard(message,true)}/>{!replies.length && <p className='thread-empty'>Be the first to reply.</p>}</div>{thread && <Composer serverId={currentServer?.id} shareTyping={prefs.typing&&!prefs.focus} onEditLatest={()=>{const last=replies.filter(m=>m.author_id===me?.id).at(-1);if(last){setEditing(last);setEditBody(last.body);}}} key={(me?.id||'preview')+':'+thread.id} conversation={thread.conversation_id} parent={thread.id} name='this thread' members={data?.members || []} onSent={async () => { await refreshThreadReplies(); if(currentThreadView())await loadMessages(true); }}/>}</SheetContent></Sheet>

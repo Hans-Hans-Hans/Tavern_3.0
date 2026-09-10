@@ -1,0 +1,11 @@
+.message-history-sheet { display: flex; flex-direction: column; min-height: 0; }
+.message-history-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.message-history-controls { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: .5rem; margin-block: .5rem; }
+.message-history-controls button { white-space: normal; }
+.message-history-panel > p { flex-shrink: 0; margin-block: .35rem; }
+.message-history-scroll { flex: 1; min-height: 80px; overflow: auto; overscroll-behavior: contain; }
+.message-history-target { box-shadow: inset 3px 0 var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+@media (max-height: 500px) {
+  .message-history-panel > .login-help { display: none; }
+  .message-history-controls { gap: .25rem; margin-block: .25rem; }
+}

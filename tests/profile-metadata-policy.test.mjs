@@ -5,7 +5,7 @@ import { profileMetadataFixture } from './fixtures/profile-metadata.mjs';
 
 function setup() {
   const f = profileMetadataFixture(), matrix = { getMatrixClient: () => f.client };
-  const roles = loadTs('../lib/roles.ts', { './matrix': matrix });
+  const roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   const channels = loadTs('../lib/channel-administration.ts', { './matrix': matrix, './roles': roles });
   f.api = loadTs('../lib/profile-metadata-policy.ts', { './matrix': matrix, './channel-administration': channels });
   f.community = loadTs('../lib/community.ts', { './matrix': matrix, './roles': roles, './profile-metadata-policy': f.api, './server-nickname': { serverNicknameForRoom: () => null }, './matrix-media': {}, './response-image': {}, './server-branding': {}, './self-profile': { nativeSelfProfile: () => ({ name: 'Global owner', avatar: '' }) } });

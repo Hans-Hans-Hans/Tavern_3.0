@@ -16,7 +16,7 @@ function fixture(managed = true) {
   f.client = { getUserId: () => f.actor, getRoom: id => f.rooms[id], roomState: async id => { f.reads.push(id); if (f.beforeRead) await f.beforeRead(id); return f.rooms[id].values.map(({ type, state_key, content, sender }) => ({ type, state_key, content: structuredClone(content), sender })); }, sendStateEvent: async (...args) => { f.writes.push(args); if (f.afterWrite) await f.afterWrite(args); }, kick: async (...args) => f.writes.push(['kick', ...args]), ban: async (...args) => f.writes.push(['ban', ...args]), unban: async (...args) => f.writes.push(['unban', ...args]) };
   f.active = f.client;
   const matrix = { getMatrixClient: () => f.active };
-  f.roles = loadTs('../lib/roles.ts', { './matrix': matrix });
+  f.roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   f.policy = { ...f.roles.defaultRolePolicy('@owner:test'), roles: [{ id: 'everyone', name: 'Member', position: 0, permissions: [] }, { id: 'moderator', name: 'Moderator', position: 10, permissions: ['manage_channels', 'kick', 'ban'] }], members: { '@moderator:test': ['moderator'], '@peer:test': ['moderator'] } };
   if (managed) { f.server.put('io.tavern.roles', f.policy); f.server.put('m.space.child', { via: ['test'] }, '!room:test'); f.room.put('m.space.parent', { via: ['test'], canonical: true }, '!server:test'); }
   f.api = loadTs('../lib/channel-administration.ts', { './matrix': matrix, './roles': f.roles });

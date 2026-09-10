@@ -41,6 +41,11 @@ PENDING_AUDIT_INTERVAL = 3600
 LOG = logging.getLogger('tavern.api.rtc')
 
 
+def constrained_media(snapshot):
+    return (any(snapshot.effective[key] for key in ('muted', 'deafened'))
+            or not all(snapshot.publication[key] for key in ('speak', 'video', 'screen_share')))
+
+
 def denied(message='The conference authorization is invalid.', status=403):
     return APIError(status, message, 'CALL_ACCESS_DENIED')
 
@@ -241,10 +246,10 @@ class RtcGateway:
             authority = await self.authority(session, identity)
             service.require_session(request)
             audio = authority.audio
-            constrained = any(audio.effective[key] for key in ('muted', 'deafened'))
+            constrained = constrained_media(audio)
             if constrained and not support:
                 raise denied('The running SFU audio restrictions could not be verified.', 503)
-            permission = project(baseline, audio.effective['muted'], audio.effective['deafened'])
+            permission = project(baseline, audio.effective['muted'], audio.effective['deafened'], audio.publication)
             token = sign_claims(projected_claims(claims, permission), secret) if constrained else result['jwt']
             now, db = time.time(), service.store.db
             existing = db.execute('SELECT * FROM rtc_admissions WHERE room_alias=? AND identity=?', (alias, sfu_identity)).fetchone()
@@ -308,17 +313,17 @@ class RtcGateway:
             service.require_session(request)
             try:
                 flags = authority.audio.effective
-                if (flags['muted'] or flags['deafened']) and not support:
+                if constrained_media(authority.audio) and not support:
                     raise denied('The running SFU audio restrictions could not be verified.', 503)
                 candidate = grant_permissions(claims['video'])
                 # Old deployments have no safe baseline to restore; only an
                 # unrestricted pre-upgrade connection can use that old row.
                 if not row['audio_baseline']:
-                    if flags['muted'] or flags['deafened']:
+                    if constrained_media(authority.audio):
                         raise denied()
                 else:
                     baseline = stored_permissions(json.loads(row['audio_baseline']))
-                    if not attenuated(candidate, project(baseline, flags['muted'], flags['deafened'])):
+                    if not attenuated(candidate, project(baseline, flags['muted'], flags['deafened'], authority.audio.publication)):
                         raise denied('This call token predates current audio permissions. Rejoin the call.')
             except (ValueError, TypeError):
                 raise denied() from None
@@ -358,21 +363,21 @@ class RtcGateway:
         db, alias, identity = self.service.store.db, row['room_alias'], row['identity']
         flags, snapshot = authority.audio.effective, authority.audio
         if not row['audio_baseline']:
-            if flags['muted'] or flags['deafened']:
+            if constrained_media(snapshot):
                 return False  # Safe restoration needs a fresh managed token.
             return True
         try:
             baseline = stored_permissions(json.loads(row['audio_baseline']))
-            desired = project(baseline, flags['muted'], flags['deafened'])
+            desired = project(baseline, flags['muted'], flags['deafened'], snapshot.publication)
         except (ValueError, TypeError):
             return False
         if not audio_enabled():
             # Restrictions cannot be ignored because the deployment flag changed.
-            return not (flags['muted'] or flags['deafened'])
+            return not constrained_media(snapshot)
         try:
             await self.moderator.audio_support()
         except APIError:
-            return not (flags['muted'] or flags['deafened'])
+            return not constrained_media(snapshot)
         # Recheck after the capability lookup, including native availability.
         fresh = await self.current_authority(row)
         if fresh is None:
@@ -400,18 +405,16 @@ class RtcGateway:
         # Same-value external source-mask writes do not increment the pinned
         # participant version either. Never broaden an observed publication
         # mask in place; clearing a mute can require a fresh managed join.
-        video_sources = {'camera', 'screen_share'}
         observed_sources = set(observed['canPublishSources'] or SOURCES)
         ceiling = set(baseline['canPublishSources'] or SOURCES)
-        if flags['muted']:
-            sources = ceiling & observed_sources & video_sources
-            desired['canPublishSources'] = sorted(sources)
-            if not sources:
-                desired['canPublish'] = False
-        else:
-            desired['canPublishSources'] = observed['canPublishSources']
-            if clearing_mute and (ceiling - observed_sources) & (set(SOURCES) - video_sources):
-                rejoin_needed = True
+        wanted_sources = set(desired['canPublishSources'] or SOURCES) if desired['canPublish'] else set()
+        sources = ceiling & observed_sources & wanted_sources
+        desired['canPublishSources'] = [] if sources == set(SOURCES) else sorted(sources)
+        if not sources:
+            desired['canPublish'] = False
+        if ((clearing_mute or snapshot.publication['managed'])
+                and (wanted_sources - observed_sources or wanted_sources and not observed['canPublish'])):
+            rejoin_needed = True
         if flags['muted'] and row['audio_last_muted'] != 1:
             # Retain only that a mute may have been applied through an ambiguous
             # response. This bit permits a rejoin warning, never a grant increase.

@@ -46,12 +46,34 @@ def stored_permissions(value):
     return grant_permissions(video)
 
 
-def project(baseline, muted, deafened):
+def publication_sources(publication):
+    if not isinstance(publication, dict) or any(type(publication.get(key)) is not bool for key in ('speak', 'video', 'screen_share')):
+        raise ValueError('Invalid publication restrictions')
+    if all(publication[key] for key in ('speak', 'video', 'screen_share')):
+        return None  # Preserve unrestricted UNKNOWN-source legacy clients.
+    allowed = set()
+    if publication['speak']:
+        allowed.add('microphone')
+    if publication['video']:
+        allowed.add('camera')
+    if publication['screen_share']:
+        allowed.add('screen_share')
+        if publication['speak']:
+            allowed.add('screen_share_audio')
+    return allowed
+
+
+def project(baseline, muted, deafened, publication=None):
     if type(muted) is not bool or type(deafened) is not bool:
         raise ValueError('Invalid audio restriction')
     result = stored_permissions(baseline)
+    allowed = set(result['canPublishSources'] or SOURCES)
+    source_limit = publication_sources(publication) if publication is not None else None
+    if source_limit is not None:
+        allowed &= source_limit
     if muted:
-        allowed = set(result['canPublishSources'] or SOURCES) & {'camera', 'screen_share'}
+        allowed &= {'camera', 'screen_share'}
+    if muted or source_limit is not None:
         result['canPublishSources'] = sorted(allowed)
         if not allowed:
             result['canPublish'] = False

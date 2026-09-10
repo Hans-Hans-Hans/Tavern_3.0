@@ -18,7 +18,7 @@ function fixture() {
   const rooms = [server, source, voice], writes = [];
   const client = { getUserId: () => '@member:local', getRooms: () => rooms, getRoom: id => rooms.find(room => room.roomId === id), roomState: async id => { beforeRead?.(); return structuredClone(rooms.find(room => room.roomId === id).state.map(({ type, state_key, content, event_id }) => ({ type, state_key, content, event_id }))); }, sendStateEvent: async (...args) => writes.push(args) };
   currentClient = client;
-  const matrix = { getMatrixClient: () => currentClient }, roles = loadTs('../lib/roles.ts', { './matrix': matrix });
+  const matrix = { getMatrixClient: () => currentClient }, roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   const lib = loadTs('../lib/server-afk.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': matrix, './roles': roles, './channel-administration': { canEditConversationState: () => authority, checkedConversationState: async () => { if (!authority) throw new Error('Permission changed'); return currentClient; } } });
   return { lib, server, source, voice, saved, writes, stateEvent, deny: () => { authority = false; }, beforeRead: fn => { beforeRead = fn; }, changeAccount: () => { currentClient = { ...client }; } };
 }

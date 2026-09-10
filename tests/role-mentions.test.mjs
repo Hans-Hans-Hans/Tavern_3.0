@@ -7,7 +7,7 @@ import { privateFixture } from './fixtures/private-thread.mjs';
 const tokens = loadTs('../lib/role-mention-token.ts', {});
 function setup() {
   const f = privateFixture(); let active = true;
-  const matrix = { getMatrixClient: () => f.client }, roles = loadTs('../lib/roles.ts', { './matrix': matrix });
+  const matrix = { getMatrixClient: () => f.client }, roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   const privateThreads = loadTs('../lib/private-threads.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': matrix, './roles': roles });
   const markdown = loadTs('../lib/message-markdown.ts', { 'markdown-it': { default: MarkdownIt }, './role-mention-token': tokens });
   const api = loadTs('../lib/role-mentions.ts', { './message-markdown': markdown, './roles': roles, './private-threads': privateThreads, './role-mention-token': tokens });

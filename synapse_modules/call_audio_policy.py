@@ -10,10 +10,12 @@ import re
 import time
 
 try:
+    from conference_publication import MARKER as PUBLICATION_VERSION
     from channel_policy import value, timeout_active
     from temporary_ban import active as banned
     from member_state import member_state_keys
 except ImportError:
+    from synapse_modules.conference_publication import MARKER as PUBLICATION_VERSION
     from synapse_modules.channel_policy import value, timeout_active
     from synapse_modules.temporary_ban import active as banned
     from synapse_modules.member_state import member_state_keys
@@ -322,7 +324,9 @@ class AudioModerationPolicy:
         if before != link_fingerprint(latest, event.sender):
             return False
         for scope in latest:
-            if any(kind == AUDIO for kind, _ in scope.state):
+            role_policy = value(scope.state, self.model.POLICY)
+            if (any(kind == AUDIO for kind, _ in scope.state) or PUBLICATION_VERSION in role_policy
+                    or (self.model.POLICY, '') in scope.state and not self.model.valid_policy(role_policy)):
                 create = scope.state.get(('m.room.create', ''))
                 if (not create or create.sender != event.sender
                         or value(scope.state, 'm.room.member', event.sender).get('membership') != 'join'):

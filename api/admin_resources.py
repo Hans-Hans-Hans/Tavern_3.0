@@ -25,12 +25,21 @@ def room_identity(request):
     return native_room_id(value)
 
 
+async def current_admin(service, request, original):
+    current = await service.require_admin(request)
+    service.require_session(request)
+    if current['id'] != original['id']:
+        raise APIError(401, 'Your administrator session changed. Reopen room administration.')
+    return current
+
+
 async def rooms(request):
     service = request.app["service"]
     session = await service.require_admin(request)
     start = max(0, int(request.query.get("from", "0")))
     search = text_value(request.query.get("search", ""), 200)
     value = await service.matrix("GET", "/_synapse/admin/v1/rooms?limit=50&from=" + str(start) + "&search_term=" + quote(search, safe=""), token=service.store.open(session["token"]))
+    await current_admin(service, request, session)
     return web.json_response(value)
 
 
@@ -40,6 +49,7 @@ async def room_detail(request):
     identity = room_identity(request)
     path, token = "/_synapse/admin/v1/rooms/" + quote(identity, safe=""), service.store.open(session["token"])
     detail, membership, blocked = await asyncio.gather(service.matrix("GET", path, token=token), service.matrix("GET", path + "/members", token=token), service.matrix("GET", path + "/block", token=token))
+    await current_admin(service, request, session)
     offset = max(0, int(request.query.get("memberFrom", "0")))
     # Synapse's member endpoint itself is unpaginated; keep browser results bounded.
     members = membership.get("members", [])
@@ -52,6 +62,7 @@ async def room_block(request):
     identity, data = room_identity(request), await body_json(request)
     if type(data.get("block")) is not bool or data.get("confirmation") != identity:
         raise APIError(400, "Type the full room ID and choose whether to block new joins.")
+    await current_admin(service, request, session)
     result = await service.matrix("PUT", "/_synapse/admin/v1/rooms/" + quote(identity, safe="") + "/block", {"block": data["block"]}, service.store.open(session["token"]))
     service.audit(session["user_id"], "room_blocked" if data["block"] else "room_unblocked", identity)
     return web.json_response(result)
@@ -263,6 +274,11 @@ async def reconcile(request):
 
 
 def register_routes(app):
+    try:
+        from .admin_hierarchy import register_routes as register_hierarchy
+    except ImportError:
+        from admin_hierarchy import register_routes as register_hierarchy
+    register_hierarchy(app)
     service = app["service"]
     service.uploads = UploadQuota(service)
     app.add_routes([web.get("/api/admin/rooms", rooms), web.get("/api/admin/rooms/{room_id}", room_detail), web.put("/api/admin/rooms/{room_id}/block", room_block),

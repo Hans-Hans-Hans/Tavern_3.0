@@ -20,7 +20,7 @@ function setup() {
   const putFile = f.pendingFiles.set.bind(f.pendingFiles); f.pendingFiles.set = (id, file) => putFile(id, { id, owned: () => true, ...file });
   for (const room of f.client.getRooms()) { room.getJoinedMemberCount = () => room.getJoinedMembers().length; room.hasEncryptionStateEvent = () => true; }
   f.policy.roles[1].mentionable = true; f.policy.roles[1].name = 'Helpers'; f.policy.members[f.member] = ['mod'];
-  const roles = loadTs('../lib/roles.ts', { './matrix': { getMatrixClient: () => f.client } });
+  const roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': { getMatrixClient: () => f.client } });
   const privateThreads = loadTs('../lib/private-threads.ts', { './member-state': loadTs('../lib/member-state.ts', {}), './matrix': { getMatrixClient: () => f.client }, './roles': roles });
   const markdown = loadTs('../lib/message-markdown.ts', { 'markdown-it': { default: MarkdownIt }, './role-mention-token': token });
   const helper = loadTs('../lib/role-mentions.ts', { './message-markdown': markdown, './roles': roles, './private-threads': privateThreads, './role-mention-token': token });

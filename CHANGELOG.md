@@ -6,6 +6,7 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Bounded administrator server/channel hierarchy with native metadata, reciprocal relationship status, explicit expansion and revision-checked pages.
 - Encrypted attachment retry copies with per-file delivery checkpoints, explicit retry/cancel controls, stable native transaction content and rejection of malformed acknowledgements.
 - Account-owned per-conversation/thread drafts with navigation indicators and revision-safe clearing after acknowledged sends.
 - Unified encrypted message/file search, loaded shared-room people and joined server/channel results, bounded history indexing and command-palette query handoff.
@@ -55,6 +56,7 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Fixed
 
+- Room administration rejects retired sessions after awaited reads and before a streamed block confirmation can mutate native state; duplicate parent/child graph paths respect display limits.
 - Native smoke readiness handles optional onboarding that disappears when saved account data finishes loading, while still rejecting an unusable persistent dialog.
 - Search indexing and history exports continue through empty filtered pages, retain the requested room during older-event decryption, and reject stale identity/membership results before output or storage.
 - Staff room details and join-block controls accept native room-version-12 hash IDs while retaining administrator authority, bounded ID validation and exact confirmation.

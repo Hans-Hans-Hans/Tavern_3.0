@@ -47,6 +47,7 @@ class AudioSnapshot:
     policy: object
     local: dict
     effective: dict
+    publication: dict
     revision: str
 
 
@@ -59,6 +60,7 @@ async def audio_snapshot(service, identity, target, current=None, actor=None, mo
         scopes = await policy.scopes(identity, current)
         local = model.audio_flags(current, target)
         effective = model.effective_audio(scopes, target)
+        publication = model.effective_publication(scopes, target, model)
         fingerprint = model.audio_scope_fingerprint(scopes, actor or target, target)
         # These additional current fields govern RTC admission even though they
         # do not authorize an audio-state write. Include them in the shared API
@@ -69,7 +71,7 @@ async def audio_snapshot(service, identity, target, current=None, actor=None, mo
                 item = scope.state.get((kind, ''))
                 call_state.append((scope.room_id, kind, None if item is None else (getattr(item, 'event_id', None), getattr(item, 'sender', None), item.content)))
         revision = hashlib.sha256(json.dumps((fingerprint, call_state), ensure_ascii=True, separators=(',', ':')).encode()).hexdigest()
-        return AudioSnapshot(identity, target, current, scopes, model, policy, local, effective, revision)
+        return AudioSnapshot(identity, target, current, scopes, model, policy, local, effective, publication, revision)
     except (ValueError, AttributeError, TypeError):
         raise APIError(503, 'The current audio restrictions could not be safely checked.', 'CALL_AUDIO_UNAVAILABLE') from None
 
@@ -148,6 +150,7 @@ class CallAudio:
             scopes.append({'roomId': scope.room_id, 'name': name[:200] if isinstance(name, str) and name else scope.room_id,
                            'kind': 'server' if content(scope.state, 'm.room.create').get('type') == 'm.space' else 'channel'})
         return {'roomId': snapshot.room_id, 'userId': snapshot.user_id, 'available': runtime_available,
+                'publication': snapshot.publication,
                 'local': snapshot.local, 'effective': {key: snapshot.effective[key] for key in ('muted', 'deafened')},
                 'permissions': permissions(snapshot, actor), 'eventId': previous(snapshot), 'revision': snapshot.revision,
                 'scopes': scopes, 'enforcement': enforcement or {'status': 'pending', 'checkedAt': None, 'devices': 0}}

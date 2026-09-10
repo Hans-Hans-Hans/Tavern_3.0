@@ -44,6 +44,22 @@ runs the production diagnostic helper against it and checks both allocation and
 invalid-credential rejection. The container, network, browser and HTTP fixture
 are closed afterward. No production account, configuration or volume is used.
 
-That isolated Docker acceptance is pending its first CI execution. It tests
-browser/coturn allocation and authentication separately from the managed-account
-credential-fetch integration; it is not a media end-to-end test.
+The first Linux CI execution failed with a generic error, so isolated allocation
+acceptance remains unverified. The fixture now pulls the image quietly: verbose
+pull progress can exhaust its bounded child-process output buffer before startup.
+Failures report only a fixed stage and reason, optional container state/exit/OOM
+status, and fixed browser outcome/capture/close counts. They expose no command,
+credential, candidate address or raw browser/container error. Success is printed
+only after the allocation, invalid-credential check and all owned cleanup finish.
+An inspection failure alone does not count as successful cleanup: a bounded
+native inventory must confirm absence, or cleanup remains a failure.
+The next Linux run must still pass both real authentication cases.
+
+The fixture uses Docker's documented [quiet image pull](https://docs.docker.com/reference/cli/docker/image/pull/)
+and the pinned image's [direct turnserver binary](https://github.com/coturn/coturn/blob/docker/4.17.2-r0/docker/coturn/debian/Dockerfile),
+with its existing listener, allocation and authentication flags checked against
+the [coturn 4.17.2 option parser](https://github.com/coturn/coturn/blob/4.17.2/src/apps/relay/mainrelay.c).
+Local tests exercise actual bounded child pipes and diagnostic redaction; they
+do not substitute for Docker allocation. This fixture tests browser/coturn
+allocation and authentication separately from the managed-account credential
+fetch. It is not a media end-to-end test.

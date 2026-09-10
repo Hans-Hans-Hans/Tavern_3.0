@@ -5,7 +5,7 @@ import { systemMessagesFixture } from './fixtures/server-system-messages.mjs';
 
 function setup() {
   const f = systemMessagesFixture(), matrix = { getMatrixClient: () => f.client };
-  const roles = loadTs('../lib/roles.ts', { './matrix': matrix });
+  const roles = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': matrix });
   const administration = loadTs('../lib/channel-administration.ts', { './matrix': matrix, './roles': roles });
   f.api = loadTs('../lib/server-system-messages.ts', { './matrix': matrix, './channel-administration': administration, './api': { accountArtworkOwner: () => f.accountOwner, isManagedAccount: () => f.managed, requestApi: (...args) => f.request(...args) } });
   f.draft = { ...f.api.emptySystemMessageSettings(), enabled: true, channelId: f.channel.roomId, hookId: 'notices', leaves: true };

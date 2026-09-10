@@ -52,8 +52,11 @@ async def call_authority(service, session, identity):
     if not await policy.check(probe, current, authority.policies):
         raise APIError(403, 'This channel is archived or calls are currently restricted.', 'CALL_ACCESS_DENIED')
     authority.audio = await audio_snapshot(service, identity, actor, authority.state, model=authority.model)
-    if not audio_enabled() and any(authority.audio.effective[key] for key in ('muted', 'deafened')):
-        raise APIError(403, 'Saved audio restrictions require the configured SFU audio support.', 'CALL_ACCESS_DENIED')
+    if not authority.audio.publication['joined']:
+        raise APIError(403, 'Join every governing server before joining this conference.', 'CALL_ACCESS_DENIED')
+    if not audio_enabled() and (any(authority.audio.effective[key] for key in ('muted', 'deafened'))
+            or not all(authority.audio.publication[key] for key in ('speak', 'video', 'screen_share'))):
+        raise APIError(403, 'Saved conference restrictions require configured SFU media permission support.', 'CALL_ACCESS_DENIED')
     await require_room_eligibility(service, session, identity, authority.state)
     account = account_status(service, actor)
     # Eligibility may perform several remote reads. Do not publish a media grant

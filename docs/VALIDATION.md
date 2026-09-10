@@ -4,6 +4,24 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Drafts, attachment retries, search, appearance and TURN diagnostics
 
+Checkpoint `7ed3da3` passed its production build, all 492 JavaScript tests and all
+297 browser tests in [Linux CI](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34410554799).
+Its first isolated TURN allocation fixture failed after four seconds; the original
+sanitized catch did not identify the stage. The fixture now uses quiet image
+pulling to avoid a locally reproduced 64 KiB child-output overflow and reports only
+allowlisted stage/status/exit information. That mechanism is not confirmed as the
+cause of this run. Allocation remains required; its result is checked after the
+independent native stages so those stages can still collect evidence.
+
+The next admin hierarchy slice passed 22 actual HTTP hierarchy/resource tests,
+eight mounted hierarchy browser tests and four existing administrator browser
+tests, with independent review. Regressions reproduce reciprocal parent/child
+path expansion exceeding the view budget, and a streamed room-block request
+resuming after logout. Direction-aware paths now remain bounded and the retired
+request is denied before native mutation. [Hierarchy scope](ADMIN_HIERARCHY.md)
+distinguishes bounded new state reads from the existing native unpaginated member
+list and from unavailable storage/activity metrics.
+
 The combined frontend checkpoint passed the production build, 492 JavaScript
 tests and all 293 browser tests. Four additional browser tests cover the native
 smoke's optional-onboarding dismissal, including a control that disappears during

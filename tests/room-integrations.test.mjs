@@ -8,7 +8,7 @@ test('webhook controls require joined canonical parents, native power, role gran
   function room(id, space = false) { const events = []; return { roomId: id, name: id, events, membership: 'join', isSpaceRoom: () => space, getMyMembership() { return this.membership; }, currentState: { getStateEvents: (type, key) => key === undefined ? events.filter(e => e.type === type) : events.find(e => e.type === type && e.getStateKey() === key) } }; }
   const channel = room('!channel:test'), server = room('!server:test', true), rooms = new Map([[channel.roomId, channel], [server.roomId, server]]);
   const client = { getUserId: () => me, getRoom: id => rooms.get(id) };
-  const role = loadTs('../lib/roles.ts', { './matrix': { getMatrixClient: () => client } });
+  const role = loadTs('../lib/roles.ts', { './api': { accountArtworkOwner: () => 0 }, './conference-publication': loadTs('../lib/conference-publication.ts', {}), './matrix': { getMatrixClient: () => client } });
   const policy = role.defaultRolePolicy('@owner:test'); policy.roles.push({ id: 'manager', name: 'Manager', position: 10, permissions: ['manage_webhooks'] }); policy.members[me] = ['manager'];
   server.events.push(event(role.rolesEvent, '', policy), event('m.space.child', channel.roomId, { via: ['test'] }));
   const powers = { users: { [me]: 50 }, state_default: 50 };

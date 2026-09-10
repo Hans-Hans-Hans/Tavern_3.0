@@ -14,7 +14,7 @@ def policy():
     return {'version': 1, 'owner': '@owner:local', 'roles': [
         {'id': 'everyone', 'name': 'Member', 'position': 0, 'permissions': ['send_messages', 'add_reactions']},
         {'id': 'mod', 'name': 'Moderator', 'position': 50, 'permissions': ['manage_roles', 'manage_channels', 'kick', 'pin_messages']},
-        {'id': 'admin', 'name': 'Admin', 'position': 90, 'permissions': list(policy_module.PERMISSIONS)},
+        {'id': 'admin', 'name': 'Admin', 'position': 90, 'permissions': list(policy_module.PERMISSIONS - set(policy_module.PUBLICATION))},
     ], 'members': {'@mod:local': ['mod'], '@admin:local': ['admin']}, 'overrides': {}}
 
 def event(kind, sender='@member:local', body=None, key=None, room='!channel:local', eid='$event'):

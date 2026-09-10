@@ -39,6 +39,10 @@ jobs:
           npx playwright install --with-deps chromium
       - run: npm run test:browser
       - name: Verify isolated browser TURN allocation
+        id: turn-allocation
+        # Collect native-stack evidence even if this independent fixture fails.
+        # Its failure is restored by the required final result check below.
+        continue-on-error: true
         env:
           TAVERN_CI_SMOKE: 'true'
         run: node scripts/smoke-turn-allocation.mjs
@@ -151,6 +155,9 @@ jobs:
           docker compose -p tavern-ci exec -T synapse python -c 'from pathlib import Path; import hashlib; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())' > /tmp/tavern-identity-after
           cmp /tmp/tavern-identity-before /tmp/tavern-identity-after
           curl --fail http://127.0.0.1:18081/health
+      - name: Require successful isolated TURN allocation
+        if: always() && steps.turn-allocation.outcome == 'failure'
+        run: exit 1
       - name: Collect stack logs
         if: always()
         env:

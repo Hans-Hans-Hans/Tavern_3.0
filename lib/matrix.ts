@@ -6,6 +6,7 @@ import { isPrivateDiscussion } from './conversation-routing';
 import { readMatrixAttachment } from './attachment-transfer';
 import { resolveJoinedEvent } from './resolve-event';
 import { readJoinedRoom } from './room-read-scope';
+import { JoinedMessageHistory } from './message-history';
 import { loadOlderThreadHistory, readThreadSnapshot, threadHistoryHasOlder } from './thread-history';
 import { discoverThreadParticipants, type ThreadParticipantOptions } from './thread-participants';
 import { disposeCachedImageOwner } from './image-cache';
@@ -326,7 +327,14 @@ export async function importEncryptionKeys(file:File,password:string){
  let data='';try{const {OlmMachine,initAsync}=await import('@matrix-org/matrix-sdk-crypto-wasm');await initAsync();check();const text=await file.text();check();data=OlmMachine.decryptExportedRoomKeys(text,password);check();await crypto.importRoomKeysAsJson(data);check();notify();}finally{data='';}
 }
 
-export async function resolveMatrixMessage(roomId:string,id:string){const c=requireClient(),{room,event}=await resolveJoinedEvent(c,roomId,id,eventCache.get(id),()=>client===c);return normalize(room,event);}
+export async function resolveMatrixMessage(roomId:string,id:string){const c=requireClient(),owner=accountArtworkOwner(),actor=c.getUserId(),device=c.getDeviceId(),homeserver=c.getHomeserverUrl(),{room,event}=await resolveJoinedEvent(c,roomId,id,eventCache.get(id),()=>client===c&&accountArtworkOwner()===owner&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===homeserver);return normalize(room,event);}
+export function createMatrixMessageHistory(roomId:string,eventId:string,current:()=>boolean){
+ const c=requireClient(),room=roomRequired(roomId),owner=accountArtworkOwner();
+ return new JoinedMessageHistory({client:c,room,eventId,current:()=>client===c&&accountArtworkOwner()===owner&&current(),project:events=>{
+  const context={reactions:indexReactions([...events,...allEvents(room)],c.getUserId()),pinned:new Set(safeStrings(room.currentState.getStateEvents('m.room.pinned_events','')?.getContent().pinned)),saved:new Set<string>(savedEvents().map((event:any)=>event.id))};
+  return events.filter(event=>(event.getType()==='m.room.message'||event.isDecryptionFailure())&&!event.isRedacted()&&event.getContent()['m.relates_to']?.rel_type!=='m.replace'&&event.getRelation()?.rel_type!=='m.thread').map(event=>normalize(room,event,context));
+ }});
+}
 
 export async function revokeMatrixDevice(deviceId:string,password:string){
  const c=requireClient();if(deviceId===c.getDeviceId())throw new Error('Use Sign out for this device.');
