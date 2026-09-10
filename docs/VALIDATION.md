@@ -23,16 +23,38 @@ these observed stages are not a full workflow pass or an actual browser call.
 Checkpoint `2362894` passed its build and Node tests; its browser stage reported
 322 passes and 11 failures in outdated conference fixtures and the initial
 telemetry fixture. The updated fixtures exercise current native membership,
-iframe document replacement and the mounted voice panel. The combined follow-up
-is being validated before the next V3 push.
+iframe document replacement and the mounted voice panel. The follow-up passed
+its production build, all 363 browser tests and 556 Node tests. The additional
+actual-bundle return regression passed separately after it was added. The full
+backend suite passed 691 tests, with 15 platform-specific skips.
 
-On the user's deployment, token requests now return 200 and the SFU WebSocket
-returns 101. A browser log reports connection success and encryption enabled,
-but the user still sees an error and the call ends on both home and mobile data.
-The missing advertised `set_always_on_screen` widget handler is fixed; upstream
-catches that error, so it is not claimed as the cause of the call ending. An
-obsolete receive-only connection can also log intentional cancellation while a
-replacement connects. The active call failure is still under investigation.
+The deployed crash was identified as `ReferenceError: return__tavernCallTelemetry
+is not defined`. Inserting the telemetry wrapper at the pinned bundle's
+`return{` boundary joined the helper name to the JavaScript keyword. The fix
+preserves the keyword separator. Its regression examines the actual transformed
+AST and executes the returned view expression; it also rejects the former broken
+output even though that output is syntactically valid JavaScript.
+
+The fix is on V3 at `c3d4f3d` (functional change in `446728f`). After rebuilding
+`tavern-web` and refreshing, the user confirmed the call stays connected for at
+least thirty seconds. Earlier token requests returned 200, signaling returned
+101, and the embedded client reported encryption enabled. This is confirmed
+recovery from the reported crash; two-user audible media and external-network
+acceptance remain separate from that confirmation.
+
+A subsequent report came from the separate direct-message call panel:
+`connecting` in its header, but native connection `failed`, ICE `disconnected`,
+no selected route and zero upload. The administrator's browser TURN test then
+obtained a UDP relay candidate. That proves allocation and authentication from
+that browser, not delivery between two participants. Direct-call acceptance is
+still open; the successful embedded-conference join does not close it.
+
+The advertised `set_always_on_screen` action now receives the host's response.
+Safe active fatal-error details can be copied without raw console logs or tokens.
+A new Linux smoke joins both ordinary accounts through the actual embedded UI,
+requires complete encrypted participant observations for twenty seconds, and
+checks cleanup. It uses synthetic browser devices and an isolated internal SFU
+bridge; execution is pending the current workflow.
 
 ## Drafts, attachment retries, search, appearance and TURN diagnostics
 

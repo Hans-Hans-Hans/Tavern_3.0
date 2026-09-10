@@ -9,7 +9,8 @@ import { requestPeerVerification } from '@/lib/security';
 import { ActionMenu, copyText } from './action-menu';
 import { navigateParticipant, onParticipantNavigation } from '@/lib/participant-navigation';
 import { fullscreenAvailable, pictureInPictureAvailable, releaseVideoPresentation, toggleCallFullscreen, toggleCallPictureInPicture, watchSpeechActivity, type SpeechActivity } from '@/lib/call-presentation';
-import { CallConnectionDetails } from './call-quality';
+import { CallConnectionDetails, useCallConnectionQuality } from './call-quality';
+import { callConnectionPresentation } from '@/lib/call-quality';
 import { CallStreamQuality, useCallStreamQuality } from './call-stream-quality';
 import './calls.css';
 
@@ -111,6 +112,7 @@ export function CallButtons({ roomId, direct, disabled }: { roomId: string; dire
 export function CallPanel() {
   const [{ call, error, media }, setSnapshot] = useState(callSnapshot), [busy, setBusy] = useState(false), [settings, setSettings] = useState(false), [minimized, setMinimized] = useState(false), [talking, setTalking] = useState(false);
   const streamQuality = useCallStreamQuality(call);
+  const connectionQuality = useCallConnectionQuality(call), connection = callConnectionPresentation(connectionQuality);
   const [participantPlayback, setParticipantPlayback] = useState<Record<string, ParticipantPlayback>>({});
   const panel = useRef<HTMLElement>(null), [fullscreen, setFullscreen] = useState(false), [canFullscreen, setCanFullscreen] = useState(false);
   useEffect(() => subscribeCalls(() => setSnapshot(callSnapshot())), []);
@@ -145,6 +147,6 @@ export function CallPanel() {
       <button disabled={busy} aria-label={media.deafened ? 'Hear call again' : 'Deafen call and mute microphone'} aria-pressed={media.deafened} onClick={() => void run(() => setCallMediaSettings({ deafened: !media.deafened }))}><Headphones/></button>
       <button aria-label="Call device settings" aria-expanded={settings} onClick={() => setSettings(value => !value)}><Settings2/></button>
     </div>{media.pushToTalk && <><button className="secondary-button call-ptt" disabled={media.deafened} aria-pressed={talking} onPointerDown={event => { event.currentTarget.setPointerCapture(event.pointerId); void talk(true); }} onPointerUp={() => void talk(false)} onPointerCancel={() => void talk(false)} onLostPointerCapture={() => void talk(false)} onKeyDown={event => { if ((event.code === 'Space' || event.code === 'Enter') && !event.repeat) { event.preventDefault(); void talk(true); } }} onKeyUp={event => { if (event.code === 'Space' || event.code === 'Enter') { event.preventDefault(); void talk(false); } }} onBlur={() => void talk(false)}>{talking ? 'Talking' : 'Hold to talk'}</button><p className="call-control-caption">Hold Space while Tavern is focused, or hold this button. Release to mute.</p></>}</>}
-    {settings && !ended && !minimized && <><DeviceSettings media={media} run={run}/><CallStreamQuality {...streamQuality}/></>}<div className="inline-actions">{peer && !ended && <button className="secondary-button" disabled={busy} onClick={() => void run(() => requestPeerVerification(peer.userId, call.roomId))}>Verify participant identity</button>}</div>{!incoming && !ended && <CallConnectionDetails call={call}/>}<p className='call-control-caption'>Video Picture-in-Picture and fullscreen depend on browser support. Speech indicators measure the existing call audio; no additional microphone is opened.</p>{error && <p className="connect-error" role="alert">{error}</p>}</div>
+    {settings && !ended && !minimized && <><DeviceSettings media={media} run={run}/><CallStreamQuality {...streamQuality}/></>}<div className="inline-actions">{peer && !ended && <button className="secondary-button" disabled={busy} onClick={() => void run(() => requestPeerVerification(peer.userId, call.roomId))}>Verify participant identity</button>}</div>{!incoming && !ended && <><CallConnectionDetails quality={connectionQuality}/>{connection.guidance && <p className="connect-error" role="status">{connection.guidance}</p>}</>}<p className='call-control-caption'>Video Picture-in-Picture and fullscreen depend on browser support. Speech indicators measure the existing call audio; no additional microphone is opened.</p>{error && <p className="connect-error" role="alert">{error}</p>}</div>
   </section>;
 }

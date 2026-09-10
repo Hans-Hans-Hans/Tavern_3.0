@@ -9,6 +9,8 @@ This version is under development and testing on `V3`. These entries describe im
 - Audio-only voice channel pages with participant avatars, live speaking rings, measured ping/jitter/loss, explicit encryption status and a persistent call while browsing.
 - Typed channel creation with category placement, purpose/icon presets, explicit member invitations and retry of partial setup without creating duplicate rooms.
 - Searchable server role creation, color/emoji previews, grouped permissions, role duplication and searchable member assignments with concurrent-save protection.
+- Server and channel management sections that retain drafts while switching panels and fit narrow viewports.
+- Safe active call error details and a two-client embedded conference acceptance probe using synthetic devices.
 
 - Read-only call-service diagnostics with bounded checks of OpenID, issuer health, LiveKit credentials and optional public HTTPS discovery.
 - Bounded administrator server/channel hierarchy with native metadata, reciprocal relationship status, explicit expansion and revision-checked pages.
@@ -60,6 +62,8 @@ This version is under development and testing on `V3`. These entries describe im
 - Production configuration is generated once and retained across restarts. Migration preserves existing Matrix server identity and data.
 
 ### Fixed
+
+- Fixed a call-screen crash caused by joining the telemetry helper name to the `return` keyword in the embedded minified bundle; the actual returned expression now has an execution regression.
 
 - Embedded call discovery now uses the public Matrix URL while authenticated operations stay with the managed parent client; the persistent host also handles its advertised always-on-screen widget action.
 - Voice page joins, call observations and channel creation completion retire when their account, room or navigation changes; iframe reloads reject telemetry from the previous document.
