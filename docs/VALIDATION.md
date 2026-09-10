@@ -54,7 +54,13 @@ Safe active fatal-error details can be copied without raw console logs or tokens
 A new Linux smoke joins both ordinary accounts through the actual embedded UI,
 requires complete encrypted participant observations for twenty seconds, and
 checks cleanup. It uses synthetic browser devices and an isolated internal SFU
-bridge; execution is pending the current workflow.
+bridge. The [c3d4f3d workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34540840500)
+passed 557 Node tests, 363 browser tests, the 691-test Python suite, actual TURN
+allocation, the PWA and gateway checks, native startup, administrator setup,
+ordinary login, both RTC token formats and grant validation. The isolated failed
+update rollback also passed. The new embedded smoke stopped at
+`stage=synthetic-devices`, before opening either widget. This is not an observed
+two-user conference pass; the synthetic-device fixture is being corrected.
 
 ## Drafts, attachment retries, search, appearance and TURN diagnostics
 

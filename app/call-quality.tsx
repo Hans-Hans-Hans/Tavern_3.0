@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { MatrixCall } from 'matrix-js-sdk';
 import { watchCallQuality, type CallQuality } from '@/lib/call-quality';
 import { callSnapshot, subscribeCalls } from '@/lib/calls';
@@ -7,18 +7,21 @@ import { accountArtworkOwner } from '@/lib/api';
 
 const metric = (value: number | null | undefined, unit: string) => value === null || value === undefined ? 'Not reported yet' : value + ' ' + unit;
 export function useCallConnectionQuality(call: MatrixCall | null) {
-  const client = getMatrixClient(), owner = accountArtworkOwner(), actor = client?.getUserId(), device = client?.getDeviceId(), base = client?.getHomeserverUrl?.();
+  const ownerCurrent = useMemo(() => {
+    const client = getMatrixClient(), owner = accountArtworkOwner(), actor = client?.getUserId(), device = client?.getDeviceId(), base = client?.getHomeserverUrl?.();
+    return () => callSnapshot().call === call && getMatrixClient() === client && accountArtworkOwner() === owner
+      && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getHomeserverUrl?.() === base;
+  }, [call]);
   const [sample, setSample] = useState<{ call: MatrixCall; current: () => boolean; quality: CallQuality } | null>(null);
   useEffect(() => {
     setSample(null);
     if (!call) return;
     let alive = true;
-    const current = () => alive && callSnapshot().call === call && getMatrixClient() === client && accountArtworkOwner() === owner
-      && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getHomeserverUrl?.() === base;
+    const current = () => alive && ownerCurrent();
     const unsubscribe = subscribeCalls(() => { if (!current()) setSample(null); });
     const stop = watchCallQuality(call, quality => setSample(current() ? { call, current, quality } : null));
     return () => { alive = false; stop(); unsubscribe(); };
-  }, [call, client, owner, actor, device, base]);
+  }, [call, ownerCurrent]);
   return sample?.call === call && sample.current() ? sample.quality : null;
 }
 

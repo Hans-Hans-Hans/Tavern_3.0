@@ -30,7 +30,7 @@ const fingerprint = createHash('sha256').update(certificate.publicKey.export({ t
 const origin = 'https://chat.example.test';
 const password = () => 'Ci!' + randomBytes(24).toString('base64url');
 const adminPassword = password(), alicePassword = password(), bobPassword = password();
-const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--ignore-certificate-errors-spki-list=' + fingerprint] });
+const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors-spki-list=' + fingerprint] });
 const pages = [], errors = [];
 let conferenceProbe = false;
 async function page() {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { conferenceSmoke, installConferenceObserver, proveConferenceEndpoint, proveConferenceRoom } from '../scripts/smoke-conference.mjs';
+import { conferenceSmoke, inspectSyntheticDevices, installConferenceObserver, proveConferenceEndpoint, proveConferenceRoom } from '../scripts/smoke-conference.mjs';
 
 const origin = 'https://chat.example.test', roomId = '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ';
 const owners = [{ userId: '@cialice:chat.example.test', deviceId: 'CI_ALICE', admin: false }, { userId: '@cibob:chat.example.test', deviceId: 'CI_BOB', admin: false }];
@@ -20,6 +20,20 @@ function nativeState() {
     ...owners.map(owner => ({ type: 'm.room.member', state_key: owner.userId, content: { membership: 'join' } }))];
 }
 const frameUrl = owner => origin + '/element-call/index.html#?' + new URLSearchParams({ widgetId: widget, tavernTelemetry: session, roomId, userId: owner.userId, deviceId: owner.deviceId, baseUrl: origin, perParticipantE2EE: 'true' });
+
+test('pre-capture proof distinguishes private labels, missing and physical devices without exposing names or opening capture', async () => {
+  let captures = 0;
+  const inspect = (devices, secure = true) => runInNewContext('(' + inspectSyntheticDevices.toString() + ')', { isSecureContext: secure, navigator: { mediaDevices: {
+    enumerateDevices: async () => devices, getUserMedia: () => { captures++; throw new Error('No capture permitted'); },
+  } } })();
+  const devices = [{ kind: 'audioinput', label: 'Fake Default Audio Input' }, { kind: 'videoinput', label: 'fake_device_0' }];
+  assert.equal(await inspect(devices), 'synthetic');
+  assert.equal(await inspect(devices.map(value => ({ ...value, label: '' }))), 'unlabeled');
+  assert.equal(await inspect(devices.slice(0, 1)), 'missing');
+  assert.equal(await inspect([...devices, { kind: 'audioinput', label: 'PRIVATE OWNER MICROPHONE' }]), 'unexpected');
+  assert.equal(await inspect(devices, false), 'unavailable');
+  assert.equal(captures, 0);
+});
 
 test('real observer requires the current iframe challenge, both devices and twenty continuous seconds of fresh encrypted audio observations', () => {
   let time = 100; const parentListeners = new Set(), childListeners = new Set();
@@ -85,7 +99,7 @@ function fixture({ synthetic = true, connected = true, beforeApi } = {}) {
     const vm = () => ({ window: { __tavernCiConferenceSmoke: probe }, location: { origin }, document: { querySelector: () => attached ? frame : null }, URL, URLSearchParams });
     page.evaluate = async (fn, args) => {
       if (fn === installConferenceObserver) { probe = { nonce: args.nonce, owns: () => true, read: () => ({ status: connected ? 'ready' : 'encryption', stableMs: 21000, ageMs: 500, packets: 25 }), stop: () => { probe = undefined; actions.push('observer-stop-' + index); } }; return true; }
-      if (fn.toString().includes('enumerateDevices')) return synthetic;
+      if (fn === inspectSyntheticDevices) return synthetic ? 'synthetic' : 'unexpected';
       return runInNewContext('(' + fn.toString() + ')', vm())(args);
     };
     page.getByRole = (_role, { name }) => ({ click: async () => { actions.push(name + '-' + index); attached = name === 'Join conference'; if (name === 'Leave conference') { const event = states.find(event => event.type === 'org.matrix.msc3401.call.member' && event.state_key === '_' + owner.userId + '_' + owner.deviceId + '_m.call'); if (event) event.content = {}; } } });

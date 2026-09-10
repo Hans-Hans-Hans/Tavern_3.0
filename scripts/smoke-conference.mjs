@@ -15,6 +15,19 @@ function requireProof(condition, message) { if (!condition) throw new Error(mess
 const execute = promisify(execFile);
 const dockerRead = async args => (await execute('docker', args, { timeout: 10000, maxBuffer: 1024 * 1024, windowsHide: true })).stdout.trim();
 
+// Evaluate before opening a widget or acquiring any track. Return fixed
+// categories only: device names and IDs must never enter CI diagnostics.
+export async function inspectSyntheticDevices() {
+  if (!globalThis.isSecureContext || !navigator.mediaDevices?.enumerateDevices) return 'unavailable';
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audio = devices.filter(value => value.kind === 'audioinput'), video = devices.filter(value => value.kind === 'videoinput');
+    if (!audio.length || !video.length) return 'missing';
+    if (audio.some(value => !value.label) || video.some(value => !value.label)) return 'unlabeled';
+    return audio.every(value => /^Fake (Default )?Audio Input(?: [0-9]+)?$/i.test(value.label)) && video.every(value => /^fake_device_[0-9]+$/i.test(value.label)) ? 'synthetic' : 'unexpected';
+  } catch { return 'unavailable'; }
+}
+
 export function proveConferenceEndpoint(network, container) {
   const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
   const media = container?.networks?.['tavern-ci_media'];
@@ -108,7 +121,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
   requireProof(alice && bob && alice !== bob && alice.context() !== bob.context(), 'Embedded conference requires independent browser contexts.');
   const owners = new Map([[alice, { ...aliceSession }], [bob, { ...bobSession }]]), nonce = randomUUID(), opened = new Set();
   let deadline = Date.now() + 150000;
-  let stage = 'scope', succeeded = false;
+  let stage = 'scope', succeeded = false, devices = 'unchecked';
   function pageScope(page) {
     let url; try { url = new URL(page.url()); } catch { /* fixed failure below */ }
     requireProof(url?.origin === ORIGIN && new URLSearchParams(url.hash.slice(1)).get('room') === roomId, 'Embedded conference owning page changed.');
@@ -145,12 +158,9 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     for (const page of owners.keys()) await scope(page);
     for (const page of owners.keys()) {
       // Enumerating already-permitted labels never opens a capture device.
-      const synthetic = await run(() => page.evaluate(async () => {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const audio = devices.filter(value => value.kind === 'audioinput'), video = devices.filter(value => value.kind === 'videoinput');
-        return audio.length > 0 && video.length > 0 && audio.every(value => /^Fake (Default )?Audio Input(?: [0-9]+)?$/i.test(value.label)) && video.every(value => /^fake_device_[0-9]+$/i.test(value.label));
-      }), 'synthetic-devices');
-      requireProof(synthetic === true, 'Embedded conference requires Chromium synthetic capture devices and origin-scoped permission.');
+      const synthetic = await run(() => page.evaluate(inspectSyntheticDevices), 'synthetic-devices');
+      devices = ['synthetic', 'missing', 'unlabeled', 'unexpected', 'unavailable'].includes(synthetic) ? synthetic : 'unavailable';
+      requireProof(devices === 'synthetic', 'Embedded conference requires Chromium synthetic capture devices and origin-scoped permission.');
       requireProof(await run(() => page.locator(FRAME).count(), 'initial-frame') === 0, 'Embedded conference must not replace another active call.');
     }
     for (const page of owners.keys()) {
@@ -182,7 +192,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       catch { statuses.push('unavailable'); }
       finally { clearTimeout(timer); }
     }
-    throw new Error('Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ').');
+    throw new Error('Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ', devices=' + devices + ').');
   } finally {
     // Teardown has its own bounded grace period after a connection deadline.
     deadline = Date.now() + 40000;

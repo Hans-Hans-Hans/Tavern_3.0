@@ -47,3 +47,69 @@ test('native video Picture-in-Picture uses the existing live video and preserves
   expect(await page.evaluate(() => (window as any).fixtureStreams.flatMap((stream: MediaStream) => stream.getTracks()).every((track: MediaStreamTrack) => track.readyState === 'live'))).toBe(true);
   expect(await page.evaluate(() => (window as any).fixtureCaptureRequests)).toBe(0); await page.evaluate(() => (window as any).fixtureEndCall());
 });
+
+test('direct-call header shares measurements and reports failed, disconnected and recovered transport truthfully', async ({ page }) => {
+  await fixture(page);
+  const header = page.locator('.call-panel > header small');
+  await expect(header).toHaveText('Connected · Relay route not confirmed');
+  // Presentation-only state/report injection on the existing real peer; this
+  // does not claim the local synthetic connection used an actual TURN service.
+  await page.evaluate(() => {
+    const w = window as any, call = w.fixtureSnapshot.call, peer = call.peerConn;
+    w.qualityReads = 0;
+    call.getCurrentCallStats = async () => { w.qualityReads++; return w.qualityRows; };
+    w.qualityRows = [];
+    w.setQualityState = (connection: string, ice: string) => {
+      Object.defineProperty(peer, 'connectionState', { configurable: true, value: connection });
+      Object.defineProperty(peer, 'iceConnectionState', { configurable: true, value: ice });
+      peer.dispatchEvent(new Event('connectionstatechange'));
+    };
+    w.setQualityState('failed', 'disconnected');
+  });
+  await expect(header).toHaveText('Connection failed');
+  await expect(page.getByRole('status').filter({ hasText: 'successful allocation alone' })).toBeVisible();
+  await page.getByText(/Connection details/).click();
+  await expect(page.locator('.call-connection')).toContainText('Local relay candidates0');
+  await expect(page.locator('.call-connection')).toContainText('Remote ICE candidates0');
+  await expect(page.locator('.call-connection')).toContainText('ICE gatheringcomplete');
+  const before = await page.evaluate(() => (window as any).qualityReads);
+  await page.evaluate(() => (window as any).setQualityState('disconnected', 'disconnected'));
+  await expect(header).toHaveText('Media disconnected');
+  expect(await page.evaluate(() => (window as any).qualityReads)).toBe(before, 'Native transport state does not launch a second getStats poll');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.qualityRows = [{ id: 'transport', type: 'transport', selectedCandidatePairId: 'pair' }, { id: 'pair', type: 'candidate-pair', localCandidateId: 'relay', state: 'succeeded' }, { id: 'relay', type: 'local-candidate', candidateType: 'relay', address: '192.0.2.4' }, { id: 'remote', type: 'remote-candidate', address: '198.51.100.5' }];
+    w.setQualityState('connected', 'connected');
+  });
+  await expect(header).toHaveText('Connected · Relayed encrypted media');
+  await expect(page.locator('.call-connection')).toContainText('Local relay candidates1');
+  await expect(page.getByRole('status').filter({ hasText: 'media connection' })).toHaveCount(0);
+  await expect(page.locator('.call-panel')).not.toContainText('192.0.2.4');
+  expect(await page.evaluate(() => (window as any).fixtureCaptureRequests)).toBe(0);
+  await page.evaluate(() => (window as any).fixtureEndCall());
+});
+
+test('a pending old-call sample cannot replace a new call or new account connection details', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.fixtureSnapshot.call.getCurrentCallStats = () => new Promise(resolve => { w.finishOldQuality = resolve; });
+  });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).finishOldQuality)).toBe('function');
+  await page.evaluate(() => {
+    const w = window as any, old = w.fixtureSnapshot.call;
+    w.fixtureSnapshot = { ...w.fixtureSnapshot, call: { ...old, callId: 'replacement-call', getCurrentCallStats: async () => [] } };
+    for (const notify of w.fixtureListeners) notify();
+  });
+  const header = page.locator('.call-panel > header small');
+  await expect(header).toHaveText('Connected · Relay route not confirmed');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.finishOldQuality([{ id: 'pair', type: 'candidate-pair', nominated: true, state: 'succeeded', localCandidateId: 'relay' }, { id: 'relay', type: 'local-candidate', candidateType: 'relay' }]);
+    w.fixtureClient = { ...w.fixtureClient, getUserId: () => '@replacement:local', getDeviceId: () => 'REPLACEMENT' };
+    w.fixtureSnapshot = { ...w.fixtureSnapshot };
+    for (const notify of w.fixtureListeners) notify();
+  });
+  await expect(header).not.toContainText('Relayed encrypted media');
+  await page.evaluate(() => (window as any).fixtureEndCall());
+});

@@ -19,10 +19,13 @@ function setup(enabled = true) {
     hangup() { this.state = 'ended'; this.emit('hangup'); }
   }
   const call = new Call(), mediaHandler = { restoreMediaSettings() {}, async setMediaInputs() {}, async setAudioSettings() {}, stopUserMediaStream(stream) { stream.getTracks().forEach(track => track.stop()); }, async getUserMediaStream() { return stream; } };
-  const client = new EventEmitter(); Object.assign(client, { getMediaHandler: () => mediaHandler, getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', checkTurnServers: async () => {}, getTurnServers: () => [{ urls: ['turn:turn.local'] }], getRoom: () => ({ hasEncryptionStateEvent: () => true, getMyMembership: () => 'join', getJoinedMemberCount: () => 2 }), createCall: () => call });
+  const room = { hasEncryptionStateEvent: () => true, getMyMembership: () => 'join', getJoinedMemberCount: () => 2 };
+  const client = new EventEmitter(); Object.assign(client, { getMediaHandler: () => mediaHandler, getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', getHomeserverUrl: () => 'https://local/api/matrix', checkTurnServers: async () => true, getTurnServersExpiry: () => Date.now() + 3600000, getTurnServers: () => [{ urls: ['turn:turn.local'], username: 'fixture', credential: 'fixture' }], getRoom: () => room, createCall: () => call });
+  const relay = loadTs('../lib/call-relay.ts', { './turn-diagnostics': loadTs('../lib/turn-diagnostics.ts', {}) });
   const calls = loadTs('../lib/calls.ts', {
     './media-session': ownership,
-    'matrix-js-sdk': { CallEvent: { State: 'state', FeedsChanged: 'feeds', Hangup: 'hangup', Error: 'failure', Replaced: 'replaced' }, CallFeedEvent: { NewStream: 'stream', MuteStateChanged: 'mute' } },
+    'matrix-js-sdk': { CallEvent: { State: 'state', FeedsChanged: 'feeds', Hangup: 'hangup', Error: 'failure', Replaced: 'replaced', PeerConnectionCreated: 'peer-created' }, CallFeedEvent: { NewStream: 'stream', MuteStateChanged: 'mute' }, ClientEvent: { TurnServers: 'turn-servers', TurnServersError: 'turn-error' } },
+    './api': { accountArtworkOwner: () => client }, './call-relay': relay,
     'matrix-js-sdk/lib/webrtc/callFeed': { CallFeed: Feed },
     'matrix-js-sdk/lib/webrtc/callEventTypes': { SDPStreamMetadataPurpose: { Usermedia: 'usermedia' } },
     './instance': { readInstanceConfig: async () => ({ callsEnabled: enabled }) },

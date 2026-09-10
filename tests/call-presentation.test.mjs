@@ -36,6 +36,33 @@ test('ambiguous candidate pairs are not presented as a verified relay route', ()
   ambiguous.push({ id: 'other', type: 'candidate-pair', state: 'succeeded', nominated: true, localCandidateId: 'local', currentRoundTripTime: 0.5 });
   assert.equal(quality.projectCallQuality(ambiguous).quality.localRoute, null);
 });
+test('direct-call status requires a connected peer and observed relay, with truthful failure and recovery', () => {
+  const project = (connection, ice, raw = rows(1000, 1000, 1, 0)) => quality.projectCallQuality(raw, new Map(), connection, ice, 'complete').quality;
+  assert.equal(quality.callConnectionPresentation(null).label, 'Connecting media…');
+  const failed = project('failed', 'disconnected');
+  assert.equal(quality.callConnectionPresentation(failed).label, 'Connection failed');
+  assert.match(quality.callConnectionPresentation(failed).guidance, /successful allocation alone does not confirm/);
+  assert.equal(quality.callConnectionPresentation(project('connected', 'disconnected')).label, 'Media disconnected');
+  assert.equal(quality.callConnectionPresentation(project('connected', 'connected', [])).label, 'Connected · Relay route not confirmed');
+  assert.equal(quality.callConnectionPresentation(project('connected', 'completed')).label, 'Connected · Relayed encrypted media');
+  assert.equal(failed.localCandidates, 1); assert.equal(failed.localRelayCandidates, 1); assert.equal(failed.remoteCandidates, 1); assert.equal(failed.gathering, 'complete');
+  const duplicate = project('failed', 'failed', [...rows(1000, 1, 1, 0), ...rows(1000, 1, 1, 0)]);
+  assert.equal(duplicate.localRelayCandidates, 1, 'A repeated report ID is counted once');
+  assert.equal(quality.projectCallQuality(Array.from({ length: 2001 }, (_, i) => ({ id: String(i), type: 'local-candidate', candidateType: 'relay' }))).quality.localRelayCandidates, null, 'A truncated report must not claim a complete candidate count');
+  assert.equal(quality.projectCallQuality(undefined).quality.localRelayCandidates, null);
+});
+test('peer replacement retires a pending report and native state changes update without a second stats poll', async () => {
+  const peer = state => Object.assign(new EventTarget(), { connectionState: state, iceConnectionState: state, iceGatheringState: 'complete' });
+  const old = peer('connected'), replacement = peer('connecting'), values = []; let complete, reads = 0;
+  const call = { peerConn: old, getCurrentCallStats: () => { reads++; return new Promise(resolve => { complete = resolve; }); } };
+  const stop = quality.watchCallQuality(call, value => values.push(value), 1000);
+  call.peerConn = replacement; complete(rows(1000, 1, 1, 0));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(values.at(-1).connection, 'connecting'); assert.equal(values.at(-1).localRoute, null);
+  old.connectionState = 'failed'; old.dispatchEvent(new Event('connectionstatechange')); assert.equal(values.at(-1).connection, 'connecting');
+  replacement.connectionState = 'failed'; replacement.dispatchEvent(new Event('connectionstatechange')); assert.equal(values.at(-1).connection, 'failed'); assert.equal(reads, 1);
+  stop(); const count = values.length; replacement.dispatchEvent(new Event('connectionstatechange')); assert.equal(values.length, count);
+});
 test('stopping call measurements ignores a pending report and schedules no more work', async () => {
   let complete; const values = [];
   const call = { peerConn: { connectionState: 'connected', iceConnectionState: 'connected' }, getCurrentCallStats: () => new Promise(resolve => { complete = resolve; }) };
