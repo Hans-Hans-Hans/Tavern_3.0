@@ -29,7 +29,7 @@ export function turnFailureSummary(stage, error, observation, container) {
     output.push('relay-stage=' + (['create', 'offer', 'answer', 'connect', 'bytes', 'routes'].includes(relay.stage) ? relay.stage : 'unknown'));
     for (let index = 0; index < 2; index++) {
       const count = relay.counts?.[index], ice = relay.ice?.[index], channel = relay.channels?.[index];
-      output.push('relays' + index + '=' + (Number.isInteger(count) && count >= 0 && count <= 8 ? count : 'invalid'));
+      output.push('candidates' + index + '=' + (Number.isInteger(count) && count >= 0 && count <= 8 ? count : 'invalid'));
       output.push('ice' + index + '=' + (['new', 'checking', 'connected', 'completed', 'failed', 'disconnected', 'closed'].includes(ice) ? ice : 'unknown'));
       output.push('data' + index + '=' + (['connecting', 'open', 'closing', 'closed'].includes(channel) ? channel : 'unknown'));
     }
@@ -93,7 +93,7 @@ export function turnContainerArguments(name, network, nonce, secret, runtime) {
     '--realm=tavern-turn-ci.invalid', '--use-auth-secret', '--static-auth-secret=' + secret, '--fingerprint',
     '--max-allocate-lifetime=60', '--user-quota=4', '--total-quota=8', '--no-cli', '--no-tls', '--no-dtls', '--no-tcp-relay', '--no-multicast-peers',
     '--denied-peer-ip=0.0.0.0-255.255.255.255', '--denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
-    // A documentation-only external address exercises coturn's publicâ†’private
+    // A documentation-only external address exercises coturn's public-to-private
     // mapping without requiring NAT or any public route. The production entry
     // point binds relays and whitelists only this container's exact private IP.
     '--external-ip=198.51.100.1', '--allowed-peer-ip=198.51.100.1',

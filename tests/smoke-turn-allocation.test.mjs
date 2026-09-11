@@ -91,12 +91,12 @@ test('a stalled native relay connection reports only bounded progress and closes
   assert.deepEqual([...outcome.relay.counts], [1, 1]);
   assert.equal(fixture.closed(), true); assert.equal(fixture.restored(), true);
   assert.equal(turnFailureSummary('relay-exchange', null, outcome),
-    'stage=relay-exchange reason=failed result=timeout protocol=unknown captures=0 closed=2 relay-stage=connect relays0=1 ice0=checking data0=connecting relays1=1 ice1=checking data1=connecting');
+    'stage=relay-exchange reason=failed result=timeout protocol=unknown captures=0 closed=2 relay-stage=connect candidates0=1 ice0=checking data0=connecting candidates1=1 ice1=checking data1=connecting');
   const secret = 'PRIVATE-CREDENTIAL-DO-NOT-LOG';
   const hostile = { result: { status: secret }, relay: { stage: secret, counts: [secret, 999], ice: [secret, secret], channels: [secret, secret], sdp: secret }, captures: 0, closed: 2 };
   const summary = turnFailureSummary('relay-exchange', { message: secret }, hostile);
   assert.equal(summary.includes(secret), false);
-  assert.match(summary, /relay-stage=unknown relays0=invalid ice0=unknown data0=unknown relays1=invalid ice1=unknown data1=unknown$/);
+  assert.match(summary, /relay-stage=unknown candidates0=invalid ice0=unknown data0=unknown candidates1=invalid ice1=unknown data1=unknown$/);
 });
 
 function endpointFixture() {
