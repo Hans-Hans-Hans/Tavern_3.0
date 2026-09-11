@@ -27,13 +27,13 @@ test('coturn stays on its fresh internal network without published ports and wit
 });
 
 test('native relay fixture executes the actual production self-IP validation without inventing a fallback script', () => {
-  assert.match(runtime, /hostname -i/); assert.match(runtime, /exec \/usr\/bin\/turnserver "\$@" "--allowed-peer-ip=\$turn_self_ip"/);
+  assert.match(runtime, /hostname -i/); assert.match(runtime, /exec \/usr\/bin\/turnserver "\$@" "--relay-ip=\$turn_self_ip" "--allowed-peer-ip=\$turn_self_ip"/);
   assert.equal(runtime.includes('$$'), false);
   assert.throws(() => coturnRuntimeScript(compose.replace('      - tavern-coturn', '      - unrelated')));
   assert.throws(() => coturnRuntimeScript('unsafe arbitrary script'));
 });
 
-function relayFixture({ candidateType = 'relay', received = 'correct', selectedType = 'relay' } = {}) {
+function relayFixture({ candidateType = 'relay', received = 'correct', selectedType = 'relay', stalled = false } = {}) {
   const peers = [], channels = [], configurations = [], nonce = 'a'.repeat(24);
   const originalCapture = async () => { throw new Error('Physical capture boundary must never run'); };
   const mediaDevices = { getUserMedia: originalCapture, getDisplayMedia: originalCapture };
@@ -50,18 +50,18 @@ function relayFixture({ candidateType = 'relay', received = 'correct', selectedT
     close() { this.readyState = 'closed'; }
   }
   class Peer extends Signal {
-    signalingState = 'stable'; iceGatheringState = 'new';
+    signalingState = 'stable'; iceGatheringState = 'new'; iceConnectionState = 'checking';
     constructor(configuration) { super(); configurations.push(configuration); this.index = peers.length; peers.push(this); }
     createDataChannel(_label, options) { assert.equal(options.negotiated, true); assert.equal(options.id, 0); return new Channel(this.index); }
     async createOffer() { return { type: 'offer', sdp: '' }; }
     async createAnswer() { return { type: 'answer', sdp: '' }; }
     async setLocalDescription(description) { this.localDescription = { ...description, sdp: 'a=candidate:1 1 udp 100 198.51.100.1 49160 typ ' + candidateType }; this.iceGatheringState = 'complete'; }
-    async setRemoteDescription(description) { if (description.type === 'answer') channels.forEach(channel => { channel.readyState = 'open'; channel.emit('open'); }); }
+    async setRemoteDescription(description) { if (description.type === 'answer' && !stalled) channels.forEach(channel => { channel.readyState = 'open'; channel.emit('open'); }); }
     async getStats() { return new Map([['transport', { type: 'transport', selectedCandidatePairId: 'pair' }], ['pair', { state: 'succeeded', localCandidateId: 'local', remoteCandidateId: 'remote' }], ['local', { candidateType: 'relay' }], ['remote', { candidateType: selectedType }]]); }
     close() { this.signalingState = 'closed'; }
   }
   const probe = runInNewContext('(' + exchangeRelayData.toString() + ')', { navigator: { mediaDevices }, RTCPeerConnection: Peer,
-    RTCIceCandidate: class { constructor({ candidate }) { const fields = candidate.split(' '); this.type = fields[7]; this.protocol = fields[2]; this.address = fields[4]; this.port = Number(fields[5]); } }, setTimeout, clearTimeout });
+    RTCIceCandidate: class { constructor({ candidate }) { const fields = candidate.split(' '); this.type = fields[7]; this.protocol = fields[2]; this.address = fields[4]; this.port = Number(fields[5]); } }, setTimeout: (callback, delay) => setTimeout(callback, stalled ? 10 : delay), clearTimeout });
   return { run: () => probe({ address: '172.25.0.2', port: 3478, username: 'temporary', credential: 'NOT-LOGGED', nonce }), configurations,
     closed: () => peers.every(peer => peer.signalingState === 'closed') && channels.every(channel => channel.readyState === 'closed'),
     restored: () => mediaDevices.getUserMedia === originalCapture && mediaDevices.getDisplayMedia === originalCapture };
@@ -77,9 +77,26 @@ test('relay byte proof requires both selected relay pairs and exact exchanged pa
   }
   assert.equal(f.closed(), true); assert.equal(f.restored(), true);
   for (const options of [{ candidateType: 'host' }, { received: 'wrong' }, { selectedType: 'host' }]) {
-    const denied = relayFixture(options); await assert.rejects(denied.run(), /isolated relay byte exchange failed/);
+    const denied = relayFixture(options), outcome = await denied.run();
+    assert.equal(outcome.exchanged, false); assert.equal(outcome.result.status, 'failed');
+    assert.equal(outcome.relay.stage, options.candidateType ? 'offer' : options.received ? 'bytes' : 'routes');
     assert.equal(denied.closed(), true); assert.equal(denied.restored(), true);
   }
+});
+
+test('a stalled native relay connection reports only bounded progress and closes every peer', async () => {
+  const fixture = relayFixture({ stalled: true }), outcome = await fixture.run();
+  assert.equal(outcome.exchanged, false); assert.equal(outcome.result.status, 'timeout');
+  assert.equal(outcome.relay.stage, 'connect');
+  assert.deepEqual([...outcome.relay.counts], [1, 1]);
+  assert.equal(fixture.closed(), true); assert.equal(fixture.restored(), true);
+  assert.equal(turnFailureSummary('relay-exchange', null, outcome),
+    'stage=relay-exchange reason=failed result=timeout protocol=unknown captures=0 closed=2 relay-stage=connect relays0=1 ice0=checking data0=connecting relays1=1 ice1=checking data1=connecting');
+  const secret = 'PRIVATE-CREDENTIAL-DO-NOT-LOG';
+  const hostile = { result: { status: secret }, relay: { stage: secret, counts: [secret, 999], ice: [secret, secret], channels: [secret, secret], sdp: secret }, captures: 0, closed: 2 };
+  const summary = turnFailureSummary('relay-exchange', { message: secret }, hostile);
+  assert.equal(summary.includes(secret), false);
+  assert.match(summary, /relay-stage=unknown relays0=invalid ice0=unknown data0=unknown relays1=invalid ice1=unknown data1=unknown$/);
 });
 
 function endpointFixture() {

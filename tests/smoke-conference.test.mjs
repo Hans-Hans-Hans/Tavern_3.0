@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { conferenceSmoke, inspectSyntheticDevices, installConferenceObserver, proveConferenceEndpoint, proveConferenceRoom } from '../scripts/smoke-conference.mjs';
+import { loadTs } from './load-ts.mjs';
+import { conferenceSmoke, conferenceFailureDiagnostic, conferenceFailureFields, inspectSyntheticDevices, installConferenceObserver, proveConferenceEndpoint, proveConferenceRoom } from '../scripts/smoke-conference.mjs';
 
 const origin = 'https://chat.example.test', roomId = '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ';
 const owners = [{ userId: '@cialice:chat.example.test', deviceId: 'CI_ALICE', admin: false }, { userId: '@cibob:chat.example.test', deviceId: 'CI_BOB', admin: false }];
@@ -41,7 +42,7 @@ test('real observer requires the current iframe challenge, both devices and twen
   const window = { addEventListener: (_type, fn) => parentListeners.add(fn), removeEventListener: (_type, fn) => parentListeners.delete(fn) };
   const frame = { src: frameUrl(owners[0]), contentWindow: child, isConnected: true };
   const install = runInNewContext('(' + installConferenceObserver.toString() + ')', { window, document: { querySelector: () => frame }, location: { origin }, URL, URLSearchParams, performance: { now: () => time } });
-  assert.equal(install({ nonce: 'probe', roomId, owner: owners[0], owners }), true);
+  assert.equal(install({ nonce: 'probe', roomId, owner: owners[0], owners, failureFields: conferenceFailureFields }), true);
   const bind = { type: 'io.tavern.call.telemetry.bind', version: 1, widgetId: widget, session, roomId, document: challenge };
   const payload = sequence => ({ type: 'io.tavern.call.telemetry', version: 1, widgetId: widget, session, roomId, document: challenge, sequence,
     connected: true, reconnecting: false, complete: true, e2eeEnabled: true,
@@ -58,12 +59,21 @@ test('real observer requires the current iframe challenge, both devices and twen
   emit(payload(24)); time += 6000; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'stale');
   emit(payload(25)); assert.equal(window.__tavernCiConferenceSmoke.read().stableMs, 0);
   frame.isConnected = false; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'scope'); frame.isConnected = true;
-  const fatal = payload(26); fatal.failure = { code: 'UNKNOWN_ERROR' }; emit(fatal);
+  const failure = { code: 'UNKNOWN_ERROR', cause: 'ReferenceError', status: null, reason: null, matrixCode: null };
+  const foreignFatal = { ...payload(26), failure };
+  emit(foreignFatal, {}); emit({ ...foreignFatal, document: 'prior_document_1234567890' });
+  assert.notEqual(window.__tavernCiConferenceSmoke.read().status, 'fatal');
+  const fatal = payload(26); fatal.failure = failure; emit(fatal);
+  failure.cause = 'TypeError';
+  assert.equal(window.__tavernCiConferenceSmoke.read().failure.cause, 'ReferenceError');
+  window.__tavernCiConferenceSmoke.read().failure.cause = 'SyntaxError';
+  assert.equal(window.__tavernCiConferenceSmoke.read().failure.cause, 'ReferenceError');
   assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
   childListeners.forEach(fn => fn({ source: window, origin, data: bind }));
   for (let i = 1; i <= 25; i++) { time += 1000; emit(payload(i)); }
   assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
   assert.equal(window.__tavernCiConferenceSmoke.read().stableMs, 0);
+  assert.equal(conferenceFailureDiagnostic(window.__tavernCiConferenceSmoke.read().failure), 'UNKNOWN_ERROR/ReferenceError/none/none/none');
   child.document = {}; assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
   window.__tavernCiConferenceSmoke.stop(); assert.equal(parentListeners.size + childListeners.size, 0); assert.equal(window.__tavernCiConferenceSmoke, undefined);
 });
@@ -90,7 +100,7 @@ async function ci(run) {
   const before = [process.env.TAVERN_CI_SMOKE, process.env.TAVERN_CI_TLS]; process.env.TAVERN_CI_SMOKE = 'true'; process.env.TAVERN_CI_TLS = '/tmp/tavern-ci-tls';
   try { await run(); } finally { ['TAVERN_CI_SMOKE', 'TAVERN_CI_TLS'].forEach((key, i) => { if (before[i] === undefined) delete process.env[key]; else process.env[key] = before[i]; }); }
 }
-function fixture({ synthetic = true, connected = true, beforeApi } = {}) {
+function fixture({ synthetic = true, connected = true, failure, beforeApi } = {}) {
   const actions = [], states = nativeState(), current = owners.map(owner => ({ ...owner })); let dockerCalls = 0;
   const pages = owners.map((owner, index) => {
     const context = {}; let attached = false, probe;
@@ -98,7 +108,7 @@ function fixture({ synthetic = true, connected = true, beforeApi } = {}) {
     const frame = { src: frameUrl(owner) };
     const vm = () => ({ window: { __tavernCiConferenceSmoke: probe }, location: { origin }, document: { querySelector: () => attached ? frame : null }, URL, URLSearchParams });
     page.evaluate = async (fn, args) => {
-      if (fn === installConferenceObserver) { probe = { nonce: args.nonce, owns: () => true, read: () => ({ status: connected ? 'ready' : 'encryption', stableMs: 21000, ageMs: 500, packets: 25 }), stop: () => { probe = undefined; actions.push('observer-stop-' + index); } }; return true; }
+      if (fn === installConferenceObserver) { probe = { nonce: args.nonce, owns: () => true, read: () => ({ status: failure ? 'fatal' : connected ? 'ready' : 'encryption', stableMs: 21000, ageMs: 500, packets: 25, failure }), stop: () => { probe = undefined; actions.push('observer-stop-' + index); } }; return true; }
       if (fn === inspectSyntheticDevices) return synthetic ? 'synthetic' : 'unexpected';
       return runInNewContext('(' + fn.toString() + ')', vm())(args);
     };
@@ -140,4 +150,26 @@ test('owner replacement during lobby preparation cannot join the replacement acc
   const f = fixture({ beforeApi: ({ index, current, actions }) => { if (index === 0 && actions.includes('lobby-0')) current[0] = { ...owners[0], deviceId: 'REPLACED' }; } });
   await assert.rejects(conferenceSmoke(f.args, f.adapters), /Embedded conference failed/);
   assert.equal(f.actions.some(value => /widget-join|Leave conference/.test(value)), false);
+}));
+
+
+test('CI failure categories match the shipped protocol and reject arbitrary data before output', () => {
+  const protocol = loadTs('../lib/conference-telemetry-protocol.ts', {});
+  assert.deepEqual(conferenceFailureFields.code, protocol.CONFERENCE_FAILURE_CODES);
+  const base = { code: 'OPEN_ID_ERROR', cause: 'MatrixError', status: 403, reason: null, matrixCode: 'M_FORBIDDEN' };
+  assert.equal(conferenceFailureDiagnostic(base), 'OPEN_ID_ERROR/MatrixError/403/none/M_FORBIDDEN');
+  for (const patch of [null, {}, 'PRIVATE_CREDENTIAL', { ...base, message: 'PRIVATE_CREDENTIAL' }, ...Object.keys(base).map(key => ({ ...base, [key]: 'PRIVATE_CREDENTIAL' }))]) {
+    assert.equal(conferenceFailureDiagnostic(patch), 'unavailable');
+  }
+  const valid = { type: protocol.CALL_TELEMETRY_TYPE, version: 1, widgetId: widget, session, roomId, document: challenge, sequence: 1, connected: false, reconnecting: false, participants: [], complete: true, e2eeEnabled: null, metrics: protocol.emptyConferenceMetrics(), failure: base };
+  for (const [key, values] of Object.entries(conferenceFailureFields)) for (const value of values) assert.ok(protocol.parseConferenceTelemetry({ ...valid, failure: { ...base, [key]: value } }));
+});
+
+test('orchestration reports the first bounded fatal descriptor and still closes both owning calls', () => ci(async () => {
+  const failure = { code: 'FAILED_TO_START_LIVEKIT', cause: 'ConnectionError', status: null, reason: 'Timeout', matrixCode: null };
+  const f = fixture({ failure });
+  await assert.rejects(conferenceSmoke(f.args, f.adapters), /observations=fatal,fatal, devices=synthetic, failures=FAILED_TO_START_LIVEKIT\/ConnectionError\/none\/Timeout\/none,FAILED_TO_START_LIVEKIT/);
+  assert.deepEqual(f.actions.filter(value => value.startsWith('Leave conference')), ['Leave conference-0', 'Leave conference-1']);
+  const secret = fixture({ failure: { ...failure, reason: 'PRIVATE_CREDENTIAL' } });
+  await assert.rejects(conferenceSmoke(secret.args, secret.adapters), error => error.message.includes('failures=unavailable,unavailable') && !error.message.includes('PRIVATE_CREDENTIAL'));
 }));

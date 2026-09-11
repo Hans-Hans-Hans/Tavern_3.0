@@ -283,8 +283,8 @@ services:
       \ in 0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;; *) fail ;; esac\n    [ \"$$turn_octet\"\
       \ -le 255 ] || fail\n  done\n  [ \"$$1\" -gt 0 ] && [ \"$$1\" -lt 224 ] && [\
       \ \"$$1\" -ne 127 ] || fail\n  [ \"$$1.$$2\" != '169.254' ] || fail\n  printf\
-      \ '%s' \"$$turn_address\"\n)\"\nexec /usr/bin/turnserver \"$$@\" \"--allowed-peer-ip=$$turn_self_ip\"\
-      \n"
+      \ '%s' \"$$turn_address\"\n)\"\nexec /usr/bin/turnserver \"$$@\" \"--relay-ip=$$turn_self_ip\"\
+      \ \"--allowed-peer-ip=$$turn_self_ip\"\n"
     - tavern-coturn
     - -c
     - /config/turnserver.conf

@@ -42,7 +42,7 @@ class CoturnRuntimeTests(unittest.TestCase):
             with self.subTest(address=address):
                 value = self.run_entrypoint(address, extra_args=('--realm=literal room',))
                 self.assertEqual(value.returncode, 0, value.stderr)
-                self.assertEqual(value.stdout.splitlines(), ['-c', '/config/turnserver.conf', '--realm=literal room', '--allowed-peer-ip=' + address.strip()])
+                self.assertEqual(value.stdout.splitlines(), ['-c', '/config/turnserver.conf', '--realm=literal room', '--relay-ip=' + address.strip(), '--allowed-peer-ip=' + address.strip()])
 
     def test_ambiguous_unsafe_noncanonical_and_nonunicast_addresses_never_execute(self):
         for address in ['', '172.23.0.3 172.23.0.4', '172.23.0.3\n172.23.0.4', '::1', '127.0.0.1', '0.0.0.0',

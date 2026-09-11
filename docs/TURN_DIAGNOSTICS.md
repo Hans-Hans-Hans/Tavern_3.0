@@ -1,6 +1,6 @@
 # Browser TURN diagnostics
 
-Open **Admin → Diagnostics → Test TURN allocation**. The test uses the current
+Open **Admin â†’ Diagnostics â†’ Test TURN allocation**. The test uses the current
 account's short-lived authenticated homeserver TURN credentials. It creates a
 relay-only WebRTC connection with a data channel, gathers a relay candidate and
 closes the connection. It does not request microphone, camera or screen access.
@@ -58,8 +58,10 @@ identified a running TURN container with no Docker published port. Internal
 networks skip [Moby's published-port setup](https://github.com/moby/moby/blob/v28.5.1/libnetwork/endpoint.go#L661).
 Docker documents [host access to an internal bridge](https://docs.docker.com/engine/network/port-publishing/#gateway-modes),
 which the fixture now uses without adding an external container network.
-The next Linux run must prove allocation through that path; acceptance remains
-unverified locally because this workspace has no Docker daemon.
+Later Linux checks passed allocation through that path. Checkpoint `a5efbee`
+progressed through allocation and invalid-credential rejection, then failed at
+relay byte exchange. Complete relay acceptance remains open; this workspace has
+no Docker daemon.
 
 The fixture also pulls the image quietly: verbose
 pull progress can exhaust its bounded child-process output buffer before startup.
@@ -70,7 +72,8 @@ only after allocation, invalid-credential rejection, bidirectional relay bytes
 and all owned cleanup finish.
 An inspection failure alone does not count as successful cleanup: a bounded
 native inventory must confirm absence, or cleanup remains a failure.
-The next Linux run must still pass both real authentication cases.
+Every successful run must pass both real authentication cases and the relay
+exchange before the production traffic-helper phase.
 
 The fixture uses Docker's documented [quiet image pull](https://docs.docker.com/reference/cli/docker/image/pull/)
 and the pinned image's [direct turnserver binary](https://github.com/coturn/coturn/blob/docker/4.17.2-r0/docker/coturn/debian/Dockerfile),
@@ -85,7 +88,7 @@ It does not prove a user's public NAT/firewall route or a complete media call.
 
 Tavern's direct Matrix calls require TURN. Successful allocation can coexist
 with denied peer traffic when both participants use the same coturn instance.
-Coturn4.17.2 [rewrites a public peer address to its private mapping](https://github.com/coturn/coturn/blob/4.17.2/src/client/ns_turn_msg.c#L1763)
+Coturn 4.17.2 [rewrites a public peer address to its private mapping](https://github.com/coturn/coturn/blob/4.17.2/src/client/ns_turn_msg.c#L1648)
 before [checking the CreatePermission peer ACL](https://github.com/coturn/coturn/blob/4.17.2/src/server/ns_turn_server.c#L3166).
 The bare `external-ip=PUBLIC_IP` form establishes mappings but does not add the
 private relay address to the allowlist. The explicit public/private form does.
@@ -93,18 +96,30 @@ See the pinned [mapping setup and option parser](https://github.com/coturn/cotur
 Synapse's [coturn instructions](https://element-hq.github.io/synapse/latest/setup/turn/coturn.html)
 therefore exempt the TURN server's own listening address from private-peer denial.
 
-The Compose coturn entrypoint now derives and validates its one current container
-IPv4 address, then adds only `--allowed-peer-ip=THAT_ADDRESS` when starting the
-existing binary. The original readonly configuration, shared secret, external
+The generated configuration has `listening-ip=0.0.0.0` and no explicit relay IP.
+Pinned coturn [copies that listener into its relay list](https://github.com/coturn/coturn/blob/4.17.2/src/apps/relay/mainrelay.c#L3640),
+then [maps the bare public IP back to that wildcard](https://github.com/coturn/coturn/blob/4.17.2/src/apps/relay/mainrelay.c#L3669).
+Adding the private address to the ACL alone therefore leaves an unusable peer mapping.
+
+The Compose coturn entrypoint derives and validates its one current container
+IPv4 address, then adds both `--relay-ip=THAT_ADDRESS` and
+`--allowed-peer-ip=THAT_ADDRESS` when starting the existing binary. The original readonly configuration, shared secret, external
 mapping and private-subnet blocks remain intact. This also applies to existing
 generated configurations after recreating coturn with the updated Compose file;
 configuration regeneration is unnecessary. Multiple, malformed, loopback or
 non-unicast addresses fail startup with a fixed error. No private subnet is
-allowed and `allow-loopback-peers` is not enabled.
+allowed and `allow-loopback-peers` is not enabled. Coturn appends explicit relay
+addresses; hand-written relay lists or public/private mappings require operator
+review and are not rewritten by this generated-configuration repair.
 
 Three actual POSIX-shell regressions verify address validation, failure handling
-and argument preservation. The enhanced Docker byte-exchange phase requires its
-next Linux CI execution; this Windows workspace has no Docker daemon.
+and argument preservation. The enhanced Docker byte-exchange phase failed in the `a5efbee` Linux run.
+That result does not confirm the full repair, despite successful allocation.
+The explicit relay binding is a source-confirmed candidate fix pending a new
+Linux allocation and byte-exchange run; this Windows workspace has no Docker daemon.
+Failed relay exchanges now retain only fixed progress stages, bounded candidate
+counts and ICE/data-channel state enums, including the state before cleanup.
+They continue to require both actual nonce deliveries and both selected relay pairs.
 
 
 ## Optional browser relay traffic test
@@ -130,4 +145,5 @@ Matrix SDK with controlled peer boundaries, including omitted statistics,
 contradictory routes, cancellation, account changes and final access revocation.
 The existing isolated coturn CI fixture now additionally serves and runs the
 actual production helper after its independent two-relay byte exchange. Its
-new production-helper acceptance remains pending the next Linux CI run.
+new production-helper acceptance was not reached in the `a5efbee` Linux run
+because the independent relay exchange failed first.

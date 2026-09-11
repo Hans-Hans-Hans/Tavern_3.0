@@ -24,6 +24,16 @@ export function turnFailureSummary(stage, error, observation, container) {
     output.push('protocol=' + (['udp', 'tcp'].includes(observation.result?.protocol) ? observation.result.protocol : 'unknown'));
     for (const key of ['captures', 'closed']) output.push(key + '=' + (Number.isInteger(observation[key]) && observation[key] >= 0 && observation[key] <= 8 ? observation[key] : 'invalid'));
   }
+  if (stage === 'relay-exchange' && observation?.relay) {
+    const relay = observation.relay;
+    output.push('relay-stage=' + (['create', 'offer', 'answer', 'connect', 'bytes', 'routes'].includes(relay.stage) ? relay.stage : 'unknown'));
+    for (let index = 0; index < 2; index++) {
+      const count = relay.counts?.[index], ice = relay.ice?.[index], channel = relay.channels?.[index];
+      output.push('relays' + index + '=' + (Number.isInteger(count) && count >= 0 && count <= 8 ? count : 'invalid'));
+      output.push('ice' + index + '=' + (['new', 'checking', 'connected', 'completed', 'failed', 'disconnected', 'closed'].includes(ice) ? ice : 'unknown'));
+      output.push('data' + index + '=' + (['connecting', 'open', 'closing', 'closed'].includes(channel) ? channel : 'unknown'));
+    }
+  }
   if (typeof container === 'string' && /^(created|running|paused|restarting|removing|exited|dead) [0-9]{1,3} (true|false)$/.test(container)) {
     const [state, exit, oom] = container.split(' ');
     if (Number(exit) <= 255) output.push('container=' + state, 'exit=' + exit, 'oom=' + oom);
@@ -73,7 +83,7 @@ export function coturnRuntimeScript(compose) {
 }
 export function turnContainerArguments(name, network, nonce, secret, runtime) {
   if (!/^[a-f0-9]{24}$/.test(nonce) || name !== 'tavern-turn-ci-' + nonce || network !== name + '-network' || !/^[a-f0-9]{64}$/.test(secret)) throw new Error('Invalid isolated TURN ownership.');
-  if (typeof runtime !== 'string' || runtime.length > 8192 || !runtime.includes('exec /usr/bin/turnserver "$@" "--allowed-peer-ip=$turn_self_ip"')) throw new Error('The production coturn runtime is required.');
+  if (typeof runtime !== 'string' || runtime.length > 8192 || !runtime.includes('exec /usr/bin/turnserver "$@" "--relay-ip=$turn_self_ip" "--allowed-peer-ip=$turn_self_ip"')) throw new Error('The production coturn runtime is required.');
   return ['run', '-d', '--name', name, '--label', LABEL + '=' + nonce, '--network', network, '--user', '0:0',
     '--read-only', '--cap-drop', 'ALL', '--cap-add', 'NET_BIND_SERVICE', '--security-opt', 'no-new-privileges:true',
     '--pids-limit', '128', '--memory', '128m', '--cpus', '1', '--log-driver', 'none',
@@ -83,16 +93,17 @@ export function turnContainerArguments(name, network, nonce, secret, runtime) {
     '--realm=tavern-turn-ci.invalid', '--use-auth-secret', '--static-auth-secret=' + secret, '--fingerprint',
     '--max-allocate-lifetime=60', '--user-quota=4', '--total-quota=8', '--no-cli', '--no-tls', '--no-dtls', '--no-tcp-relay', '--no-multicast-peers',
     '--denied-peer-ip=0.0.0.0-255.255.255.255', '--denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
-    // A documentation-only external address exercises coturn's public→private
+    // A documentation-only external address exercises coturn's publicâ†’private
     // mapping without requiring NAT or any public route. The production entry
-    // point adds only this container's exact private IP to the peer whitelist.
+    // point binds relays and whitelists only this container's exact private IP.
     '--external-ip=198.51.100.1', '--allowed-peer-ip=198.51.100.1',
     '--pidfile=/tmp/turn.pid', '--no-stdout-log', '--log-file=/dev/null', '--simple-log'];
 }
 
 export async function exchangeRelayData({ address, port, username, credential, nonce }) {
   const peers = [], channels = [], cleanup = [];
-  let timer, captures = 0, result;
+  let timer, captures = 0, result, progress = 'create', timedOut = false;
+  const counts = [0, 0];
   const failure = () => new Error('The isolated relay byte exchange failed.');
   const originalUser = navigator.mediaDevices.getUserMedia, originalDisplay = navigator.mediaDevices.getDisplayMedia;
   navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getDisplayMedia = async () => { captures++; throw failure(); };
@@ -105,6 +116,7 @@ export async function exchangeRelayData({ address, port, username, credential, n
     await peer.setLocalDescription(description);
     await until(peer, 'icegatheringstatechange', () => peer.iceGatheringState === 'complete');
     const candidates = peer.localDescription.sdp.split(/\r?\n/).filter(line => line.startsWith('a=candidate:'));
+    counts[peers.indexOf(peer)] = candidates.length;
     expect(candidates.length > 0 && candidates.length <= 8);
     for (const line of candidates) {
       const candidate = new RTCIceCandidate({ candidate: line.slice(2), sdpMid: '0' });
@@ -121,13 +133,18 @@ export async function exchangeRelayData({ address, port, username, credential, n
       const receipts = channels.map((channel, index) => new Promise((resolve, reject) => listen(channel, 'message', event => event.data === nonce + ':' + (1 - index) ? resolve() : reject(failure()))));
       // Attach rejection handling immediately, even before SDP negotiation.
       const delivered = Promise.all(receipts); delivered.catch(() => {});
+      progress = 'offer';
       const offer = await gather(peers[0], await peers[0].createOffer());
+      progress = 'answer';
       await peers[1].setRemoteDescription(offer);
       const answer = await gather(peers[1], await peers[1].createAnswer());
+      progress = 'connect';
       await peers[0].setRemoteDescription(answer);
       await Promise.all(channels.map(channel => until(channel, 'open', () => { expect(channel.readyState !== 'closed'); return channel.readyState === 'open'; })));
+      progress = 'bytes';
       channels.forEach((channel, index) => channel.send(nonce + ':' + index));
       await delivered;
+      progress = 'routes';
       for (const peer of peers) {
         const stats = await peer.getStats();
         const transport = [...stats.values()].find(value => value.type === 'transport' && value.selectedCandidatePairId);
@@ -135,7 +152,16 @@ export async function exchangeRelayData({ address, port, username, credential, n
         expect(pair?.state === 'succeeded' && stats.get(pair.localCandidateId)?.candidateType === 'relay' && stats.get(pair.remoteCandidateId)?.candidateType === 'relay');
       }
       return { exchanged: true, relayPairs: 2 };
-    })(), new Promise((_, reject) => { timer = setTimeout(() => reject(failure()), 25000); })]);
+    })(), new Promise((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(failure()); }, 25000); })]);
+  } catch {
+    // Only fixed stages/counts/enums cross the browser boundary. Never include
+    // raw exceptions, SDP, candidates, addresses, credentials or nonce bytes.
+    const state = (value, allowed) => allowed.includes(value) ? value : 'unknown';
+    result = { exchanged: false, result: { status: timedOut ? 'timeout' : 'failed' }, relay: {
+      stage: progress, counts: counts.map(value => Number.isInteger(value) && value >= 0 && value <= 8 ? value : -1),
+      ice: peers.map(peer => state(peer.iceConnectionState, ['new', 'checking', 'connected', 'completed', 'failed', 'disconnected', 'closed'])),
+      channels: channels.map(channel => state(channel.readyState, ['connecting', 'open', 'closing', 'closed'])),
+    } };
   } finally {
     clearTimeout(timer); cleanup.forEach(remove => remove()); channels.forEach(channel => channel.close()); peers.forEach(peer => peer.close());
     navigator.mediaDevices.getUserMedia = originalUser; navigator.mediaDevices.getDisplayMedia = originalDisplay;
@@ -238,7 +264,7 @@ export async function turnAllocationSmoke() {
     assert.ok(['failed', 'timeout'].includes(rejected.result.status), 'Invalid credentials must never allocate a relay.');
     assert.equal(rejected.captures, 0); assert.equal(rejected.closed, 1);
     stage = 'relay-exchange'; observation = undefined;
-    const exchanged = await page.evaluate(exchangeRelayData, { address, port, username, credential: password, nonce });
+    const exchanged = observation = await page.evaluate(exchangeRelayData, { address, port, username, credential: password, nonce });
     assert.deepEqual(exchanged, { exchanged: true, relayPairs: 2, captures: 0, closed: 2 }, 'Two same-server relay-only peers must exchange real bytes through the production exact-self ACL.');
     stage = 'production-traffic'; observation = undefined;
     const traffic = observation = await page.evaluate(async ({ address, port, username, credential }) => {

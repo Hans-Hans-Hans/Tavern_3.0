@@ -11,10 +11,20 @@ role-save fix. The Python suite passed 695 cases with 15 platform/environment
 skips; the additional category-to-channel voice permission recipe passed its
 actual native policy callback test. Compose aliases and diff checks passed.
 
-The isolated Linux Docker checks now include both independent relay byte exchange
-and the actual production TURN traffic helper. Their next CI execution and the
-user's redeployed phone/PC audio test remain pending; local browser fixtures do
-not establish production call success. See [channel navigation](CHANNEL_NAVIGATION.md),
+Checkpoint `a5efbee` passed the GitHub production build, 629 Node cases, all
+424 browser cases, the Python suite, GitHub-source Docker image builds, gateway
+checks and the independent failed-update rollback proof. The [complete Linux
+workflow](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34546152509)
+failed: the isolated TURN fixture reached relay byte exchange and failed there;
+its subsequent production traffic-helper phase was not reached. The native
+embedded conference reported a fatal observation while waiting for connected,
+encrypted participants. The workflow intentionally continues after the independent
+TURN failure, then restores that failure in its final result guard; its green
+intermediate step summary is not a relay pass.
+
+Both native call checks and the user's redeployed phone/PC audio test remain
+open. Local browser fixtures do not establish production call success.
+See [channel navigation](CHANNEL_NAVIGATION.md),
 [channel roles](CHANNEL_ROLE_PERMISSIONS.md), [voice sidebar](VOICE_SIDEBAR.md)
 and [TURN diagnostics](TURN_DIAGNOSTICS.md).
 
@@ -105,8 +115,8 @@ Coturn maps a public relay peer back to its private Docker address before checki
 peer permissions. The canonical Compose entrypoint now allows only that exact
 current container address while retaining the existing configuration and private
 network restrictions. The entrypoint's actual POSIX-shell tests pass. Its Linux
-fixture now exchanges bytes through two relay allocations; Docker execution is
-pending. The direct-call checkpoint passed its production build, 41 focused
+fixture now requires bytes through two relay allocations; the `a5efbee` Linux
+execution failed at that exchange phase, so the transport repair remains unconfirmed. The direct-call checkpoint passed its production build, 41 focused
 Node tests and the three runtime-shell tests; adjacent presentation browser tests
 passed. These checks do not establish audible media on the user's deployment.
 

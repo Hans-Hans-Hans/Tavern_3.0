@@ -12,6 +12,22 @@ const ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
 const FRAME = 'iframe[title="Tavern encrypted conference"]';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 function requireProof(condition, message) { if (!condition) throw new Error(message); }
+// Keep this finite projection aligned with the shipped telemetry protocol.
+// Sent to the observer as primitive allowlists, then independently checked
+// again in Node before a diagnostic is printed. Never retain message/stack.
+export const conferenceFailureFields = Object.freeze(Object.fromEntries(Object.entries({
+  code: ['MISSING_MATRIX_RTC_TRANSPORT', 'CONNECTION_LOST_ERROR', 'INTERNAL_MEMBERSHIP_MANAGER', 'FAILED_TO_START_LIVEKIT', 'INSUFFICIENT_CAPACITY_ERROR', 'E2EE_NOT_SUPPORTED', 'STICKY_EVENTS_NOT_SUPPORTED', 'OPEN_ID_ERROR', 'NO_MATRIX_2_0_AUTHORIZATION_SERVICE', 'SFU_ERROR', 'UNKNOWN_ERROR'],
+  cause: [null, 'MatrixError', 'ConnectionError', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'AbortError', 'Error', 'unknown'],
+  status: [null, 400, 401, 403, 404, 408, 409, 410, 413, 429, 500, 502, 503, 504],
+  reason: [null, 'NotAllowed', 'ServerUnreachable', 'InternalError', 'Cancelled', 'LeaveRequest', 'Timeout', 'WebSocket', 'ServiceNotFound'],
+  matrixCode: [null, 'M_FORBIDDEN', 'M_UNKNOWN_TOKEN', 'M_MISSING_TOKEN', 'M_NOT_FOUND', 'M_UNRECOGNIZED', 'M_LIMIT_EXCEEDED', 'M_UNKNOWN', 'M_BAD_JSON', 'M_NOT_JSON', 'M_UNAUTHORIZED', 'M_INVALID_PARAM', 'M_RESOURCE_LIMIT_EXCEEDED', 'M_UNSUPPORTED_ROOM_VERSION', 'M_INCOMPATIBLE_ROOM_VERSION'],
+}).map(([key, values]) => [key, Object.freeze(values)])));
+export function conferenceFailureDiagnostic(value) {
+  const fields = Object.entries(conferenceFailureFields);
+  if (!object(value) || Object.keys(value).length !== fields.length || fields.some(([key, allowed]) => !Object.hasOwn(value, key) || !allowed.includes(value[key]))) return 'unavailable';
+  return fields.map(([key]) => value[key] === null ? 'none' : String(value[key])).join('/');
+}
+
 const execute = promisify(execFile);
 const dockerRead = async args => (await execute('docker', args, { timeout: 10000, maxBuffer: 1024 * 1024, windowsHide: true })).stdout.trim();
 
@@ -68,8 +84,8 @@ export function proveConferenceRoom(roomId, events) {
 
 /** Serialized into the parent page. Read-only listeners in both documents
  * observe the real parent's fresh challenge and the exact iframe's replies.
- * Retain only booleans/counts/time, never URLs, JWTs, full telemetry or errors. */
-export function installConferenceObserver({ nonce, roomId, owner, owners }) {
+ * Retain only booleans/counts/time and allowlisted failure categories. */
+export function installConferenceObserver({ nonce, roomId, owner, owners, failureFields }) {
   const key = '__tavernCiConferenceSmoke', origin = 'https://chat.example.test';
   const frame = document.querySelector('iframe[title="Tavern encrypted conference"]');
   if (location.origin !== origin || !frame || window[key]) return false;
@@ -80,7 +96,12 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
     || !validNonce(widget) || !validNonce(session) || params.get('roomId') !== roomId
     || params.get('userId') !== owner.userId || params.get('deviceId') !== owner.deviceId
     || params.get('baseUrl') !== origin || params.get('perParticipantE2EE') !== 'true') return false;
-  let challenge = '', sequence = 0, received = 0, since = null, status = 'waiting', packets = 0, fatal = false;
+  const allowedFailure = Object.entries(failureFields).map(([key, values]) => [key, new Set(values)]);
+  const projectFailure = value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== allowedFailure.length || allowedFailure.some(([key, values]) => !Object.hasOwn(value, key) || !values.has(value[key]))) return null;
+    return Object.fromEntries(allowedFailure.map(([key]) => [key, value[key]]));
+  };
+  let challenge = '', sequence = 0, received = 0, since = null, status = 'waiting', packets = 0, fatal = false, failure = null;
   const current = () => { try { return location.origin === origin && frame.isConnected && frame.contentWindow === source && source.document === nativeDocument && frame.src === url.href; } catch { return false; } };
   const reset = value => { since = null; status = fatal ? 'fatal' : value; };
   const bind = event => {
@@ -96,7 +117,7 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
       || !Number.isSafeInteger(data.sequence) || data.sequence <= sequence || !Array.isArray(data.participants) || data.participants.length > 128) return;
     const now = performance.now(); if (received && now - received > 5000) reset('stale');
     sequence = data.sequence; received = now; packets++;
-    if (data.failure !== null && data.failure !== undefined) fatal = true;
+    if (!fatal && data.failure !== null && data.failure !== undefined) { fatal = true; failure = projectFailure(data.failure); }
     if (fatal) { reset('fatal'); return; }
     if (data.connected !== true || data.reconnecting !== false) { reset('disconnected'); return; }
     const peers = data.participants;
@@ -109,7 +130,7 @@ export function installConferenceObserver({ nonce, roomId, owner, owners }) {
   window[key] = { nonce, owns: current, read: () => {
     const now = performance.now();
     if (!current()) reset('scope'); else if (received && now - received > 5000) reset('stale');
-    return { status, stableMs: since === null ? 0 : Math.max(0, now - since), ageMs: received ? Math.max(0, now - received) : null, packets };
+    return { status, stableMs: since === null ? 0 : Math.max(0, now - since), ageMs: received ? Math.max(0, now - received) : null, packets, failure: failure ? { ...failure } : null };
   }, stop: () => { source.removeEventListener('message', bind); window.removeEventListener('message', message); if (window[key]?.nonce === nonce) delete window[key]; } };
   return true;
 }
@@ -169,7 +190,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       const lobby = page.frameLocator(FRAME).getByTestId('lobby_joinCall');
       await run(() => lobby.waitFor({ state: 'visible', timeout: 45000 }), 'widget-lobby', 45000);
       await scope(page);
-      requireProof(await run(() => page.evaluate(installConferenceObserver, { nonce, roomId, owner: owners.get(page), owners: [...owners.values()].map(({ userId, deviceId }) => ({ userId, deviceId })) }), 'observer-binding'), 'Embedded conference iframe did not match its owning native device.');
+      requireProof(await run(() => page.evaluate(installConferenceObserver, { nonce, roomId, owner: owners.get(page), owners: [...owners.values()].map(({ userId, deviceId }) => ({ userId, deviceId })), failureFields: conferenceFailureFields }), 'observer-binding'), 'Embedded conference iframe did not match its owning native device.');
       await run(() => lobby.click({ timeout: 15000 }), 'join-widget');
     }
     await run(() => Promise.all([...owners.keys()].map(page => page.waitForFunction(nonce => {
@@ -185,14 +206,14 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     succeeded = true;
   } catch {
     const allowed = new Set(['waiting', 'disconnected', 'participants', 'encryption', 'ready', 'scope', 'stale', 'fatal']);
-    const statuses = [];
+    const statuses = [], failures = [];
     for (const page of owners.keys()) {
       let timer;
-      try { const value = await Promise.race([page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; return probe?.nonce === nonce ? probe.read() : null; }, nonce), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error()), 1500); })]); statuses.push(allowed.has(value?.status) ? value.status : 'unavailable'); }
-      catch { statuses.push('unavailable'); }
+      try { const value = await Promise.race([page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; return probe?.nonce === nonce ? probe.read() : null; }, nonce), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error()), 1500); })]); statuses.push(allowed.has(value?.status) ? value.status : 'unavailable'); failures.push(value?.status === 'fatal' ? conferenceFailureDiagnostic(value?.failure) : 'none'); }
+      catch { statuses.push('unavailable'); failures.push('unavailable'); }
       finally { clearTimeout(timer); }
     }
-    throw new Error('Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ', devices=' + devices + ').');
+    throw new Error('Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ', devices=' + devices + ', failures=' + failures.join(',') + ').');
   } finally {
     // Teardown has its own bounded grace period after a connection deadline.
     deadline = Date.now() + 40000;
