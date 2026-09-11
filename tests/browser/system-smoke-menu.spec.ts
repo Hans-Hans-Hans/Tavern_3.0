@@ -30,7 +30,7 @@ const MobileServerNavigation=()=>null,toast={error:error=>{throw error;}},naviga
 const SidebarHeader=({children,...props})=><header {...props}>{children}</header>;
 export function WorkspaceMenu(){
  const[selectedServer,setSelected]=useState('all'),[modal,setModal]=useState('');
- const data={workspace:{name:'Tavern'},servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
+ const prefs={muted:[],focus:false},data={workspace:{name:'Tavern'},conversations:[],servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
  const readAction={run:()=>{}},setCreationCategory=()=>{},setCategoryRequest=()=>{},setReportTarget=()=>{},setConfirmAction=()=>{},loadBootstrap=async()=>{},openServerSettings=id=>{chooseServer(id);setModal('serverSettings');};
  ${serverActions}
  return <><style>{'[data-slot="dropdown-menu-content"][data-state="closed"]{animation-duration:1000ms!important}'}</style><button aria-label={f.server.name} onClick={()=>chooseServer(f.server.id)}>{f.server.name}</button>${header}{modal&&<div role='dialog'>{modal}</div>}</>;
