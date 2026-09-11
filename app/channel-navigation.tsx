@@ -65,11 +65,14 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const displayChannels = new Map(channels.filter(channel => owner.current() && client?.getRoom(channel.id)?.getMyMembership() === 'join').map(channel => [channel.id, channel]));
   const groups = serverId ? [{ id: '', name: 'Uncategorized', icon: '' }, ...shown.categories] : [{ id: '', name: 'Channels', icon: '' }];
 
-  function endDrag() {
-    if (dragRef.current) suppressClick.current = performance.now() + 350;
-    dragRef.current = null; setDrag(null); setDrop(null); setHoverExpanded(''); scrolling.current = null;
+  function clearDragTarget() {
+    setDrop(null); setHoverExpanded(''); scrolling.current = null;
     if (frame.current !== null) cancelAnimationFrame(frame.current); frame.current = null;
     if (hover.current) clearTimeout(hover.current.timer); hover.current = null;
+  }
+  function endDrag() {
+    if (dragRef.current) suppressClick.current = performance.now() + 350;
+    dragRef.current = null; setDrag(null); clearDragTarget();
   }
   useEffect(() => {
     setOptimistic(null); setCollapse(null); setEditor(null); setError(''); setBusy(false); operation.current = null; endDrag();
@@ -191,7 +194,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const indicator = (kind: string, id: string) => drop?.kind === kind && drop.id === id ? drop.edge : undefined;
   const editModal = (patch: Partial<Editor>) => setEditor(previous => previous?.owner === owner ? { owner, value: { ...previous.value, ...patch } } : previous);
 
-  return <><nav ref={nav} aria-label='Channels' className='community-channel-navigation channel-navigation' aria-busy={busy}>
+  return <><nav onDragLeave={event => { const next = event.relatedTarget; if (!(next instanceof Node) || !event.currentTarget.contains(next)) clearDragTarget(); }} ref={nav} aria-label='Channels' className='community-channel-navigation channel-navigation' aria-busy={busy}>
     {canMove && <div className='channel-navigation-tools'><span>CHANNELS</span><button type='button' className='channel-row-action' disabled={busy || shown.categories.length >= 100} aria-label='Create category' onClick={() => openEditor('create')}><Plus size={16}/></button></div>}
     {groups.map(group => {
       const ordered = serverId ? shown.channels.filter(channel => channel.category === group.id).flatMap(channel => displayChannels.get(channel.id) || []) : [...displayChannels.values()];

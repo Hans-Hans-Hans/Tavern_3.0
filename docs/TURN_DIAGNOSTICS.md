@@ -1,6 +1,6 @@
 # Browser TURN diagnostics
 
-Open **Admin â†’ Diagnostics â†’ Test TURN allocation**. The test uses the current
+Open **Admin > Diagnostics > Test TURN allocation**. The test uses the current
 account's short-lived authenticated homeserver TURN credentials. It creates a
 relay-only WebRTC connection with a data channel, gathers a relay candidate and
 closes the connection. It does not request microphone, camera or screen access.

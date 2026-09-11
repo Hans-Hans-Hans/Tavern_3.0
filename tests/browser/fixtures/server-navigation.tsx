@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { createClient, MatrixEvent } from 'matrix-js-sdk';
+import { createClient, MatrixEvent, Room, NotificationCountType } from 'matrix-js-sdk';
 import { Toaster } from 'sonner';
 import { ServerNavigation } from '../../../app/server-navigation';
 import { MobileServerNavigation } from '../../../app/mobile-server-navigation';
@@ -23,5 +23,18 @@ export function mountFixture(mobile=false) {
   w.sync=(value:any)=>{w.native=structuredClone(value);sessionStorage.setItem('fixture-server-organization',JSON.stringify(value));updateCache();};
   w.changeOwner=()=>{w.accountOwner={};w.holdRead=false;w.listeners.forEach((fn:()=>void)=>fn());};
   const servers=[{id:'!alpha:local',name:'Alpha'},{id:'!bravo:local',name:'Bravo'},{id:'!charlie:local',name:'Charlie'},{id:'!delta:local',name:'Delta'}];
-  const root=createRoot(document.getElementById('root')!);root.render(<React.StrictMode>{mobile ? <div style={{width:'100%',padding:12}}><MobileServerNavigation servers={servers} active='' onSelectServer={id=>w.selected.push(id)} serverActions={server=>[{label:'Server settings '+server.name,run:()=>w.selected.push('settings:'+server.id)}]}/></div> : <aside className='workspace-rail' style={{height:'100dvh',display:'flex'}}><ServerNavigation servers={servers} active='' onSelectServer={id=>w.selected.push(id)} renderServer={(server,button,organization)=><ActionMenu actions={[{label:'Server settings '+server.name,run:()=>{}},...organization]}>{button}</ActionMenu>}/></aside>}<Toaster/></React.StrictMode>);
+  w.manualUnread=[]; w.readState={roomIds:['!child:local','!muted:local','!left:local','!invited:local','!manual:local'],muted:['!muted:local'],focus:false};
+  let eventNumber=0;
+  const stateEvent=(id:string,type:string,key:string,content:any)=>new MatrixEvent({room_id:id,type,state_key:key,content,event_id:'$read'+(++eventNumber),sender:w.actor});
+  const addRoom=(id:string,space=false,membership='join',unread=0,mentions=0)=>{
+    const room=new Room(id,w.client,w.actor,{pendingEventOrdering:'detached'});room.updateMyMembership(membership as any);
+    room.currentState.setStateEvents([stateEvent(id,'m.room.create','',space?{type:'m.space'}:{})]);
+    room.setUnreadNotificationCount(NotificationCountType.Total,unread);room.setUnreadNotificationCount(NotificationCountType.Highlight,mentions);w.client.store.storeRoom(room);return room;
+  };
+  for(const server of servers)addRoom(server.id,true);
+  addRoom('!child:local',false,'join',3,2);addRoom('!muted:local',false,'join',90,70);addRoom('!left:local',false,'leave',50,30);addRoom('!invited:local',false,'invite',40,20);addRoom('!hidden:local',false,'join',60,40);addRoom('!manual:local');
+  w.client.getRoom('!alpha:local').currentState.setStateEvents([...w.readState.roomIds,'!hidden:local'].map((id:string)=>stateEvent('!alpha:local','m.space.child',id,{via:['local']})));
+  w.client.getRoom('!bravo:local').currentState.setStateEvents([stateEvent('!bravo:local','m.space.child','!manual:local',{via:['local']})]);
+  w.emit=()=>w.listeners.forEach((fn:()=>void)=>fn());
+  const root=createRoot(document.getElementById('root')!);w.redraw=()=>root.render(<React.StrictMode>{mobile ? <div style={{width:'100%',padding:12}}><MobileServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} serverActions={server=>[{label:'Server settings '+server.name,run:()=>w.selected.push('settings:'+server.id)}]}/></div> : <aside className='workspace-rail' style={{height:'100dvh',display:'flex'}}><ServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} renderServer={(server,button,organization)=><ActionMenu actions={[{label:'Server settings '+server.name,run:()=>{}},...organization]}>{button}</ActionMenu>}/></aside>}<Toaster/></React.StrictMode>);w.redraw();
 }

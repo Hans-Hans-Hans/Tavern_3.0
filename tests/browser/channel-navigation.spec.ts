@@ -122,3 +122,27 @@ test('touch viewport exposes Move actions without hover and the dialog stays wit
     expect(await page.evaluate(() => (window as any).layout.channels.find((c: any) => c.id === '!voice:local').category)).toBe('');
   } finally { await context.close(); }
 });
+
+test('leaving the sidebar clears drag effects while internal movement and re-entry retain the drag', async ({ page }) => {
+  await setup(page); await page.getByRole('button', { name: 'Games', exact: true }).click();
+  await page.evaluate(() => { const box = document.querySelector<HTMLElement>('.channel-sidebar')!; box.style.height = '210px'; const filler = document.createElement('div'); filler.style.height = '1000px'; box.appendChild(filler); });
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+  await channel(page, 'general').dispatchEvent('dragstart', { dataTransfer });
+  const bounds = (await page.locator('.channel-sidebar').boundingBox())!;
+  await category(page, 'games').dispatchEvent('dragover', { dataTransfer, clientY: bounds.y + bounds.height - 2 });
+  await category(page, 'games').evaluate(node => node.dispatchEvent(new DragEvent('dragleave', { bubbles: true, relatedTarget: node.querySelector('button') })));
+  await expect(category(page, 'games')).toHaveAttribute('data-drop', 'inside');
+  await page.locator('nav.channel-navigation').dispatchEvent('dragleave', { dataTransfer, relatedTarget: null });
+  const stopped = await page.locator('.channel-sidebar').evaluate(node => node.scrollTop);
+  await expect(category(page, 'games')).not.toHaveAttribute('data-drop');
+  // The actual 550ms expansion and animation loop must stay cancelled after exit.
+  await page.waitForTimeout(700);
+  expect(await page.locator('.channel-sidebar').evaluate(node => node.scrollTop)).toBe(stopped);
+  await expect(category(page, 'games').getByRole('button', { name: 'Games', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  await category(page, 'games').dispatchEvent('dragover', { dataTransfer, clientY: bounds.y + 80 });
+  await expect(category(page, 'games')).toHaveAttribute('data-drop', 'inside');
+  await expect(channel(page, 'voice')).toBeVisible();
+  await category(page, 'games').dispatchEvent('drop', { dataTransfer, clientY: bounds.y + 80 });
+  await expect.poll(() => page.evaluate(() => (window as any).layout.channels.find((c: any) => c.id === '!general:local').category)).toBe('games');
+  expect(await page.evaluate(() => (window as any).saves.length)).toBe(1);
+});

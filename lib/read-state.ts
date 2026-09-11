@@ -18,6 +18,24 @@ const count = (value: unknown) => typeof value === 'number' && Number.isSafeInte
 export function roomReadCounts(room: Pick<Room, 'getUnreadNotificationCount'>) {
   return { unread: count(room.getUnreadNotificationCount()), mentions: count(room.getUnreadNotificationCount('highlight' as any)) };
 }
+/** Aggregate only currently joined children also present in the caller's visible
+ * conversation inventory. Counts come from native push rules, never message scans. */
+export function serverReadCounts(client: Pick<MatrixClient, 'getRoom'>, serverId: string, visibleRoomIds: ReadonlySet<string>, muted: ReadonlySet<string>, manualUnread: ReadonlySet<string>) {
+  const result = { unread: 0, mentions: 0, manual: false }, server = client.getRoom(serverId);
+  if (!server?.isSpaceRoom() || server.getMyMembership() !== 'join') return result;
+  const seen = new Set<string>();
+  for (const event of server.currentState.getStateEvents('m.space.child' as any)) {
+    const id = event.getStateKey(), via = event.getContent().via;
+    if (!id || seen.has(id) || !visibleRoomIds.has(id) || muted.has(id) || !Array.isArray(via) || !via.length) continue;
+    seen.add(id); const room = client.getRoom(id);
+    if (!room || room.isSpaceRoom() || room.getMyMembership() !== 'join') continue;
+    const counts = roomReadCounts(room);
+    result.unread = Math.min(Number.MAX_SAFE_INTEGER, result.unread + counts.unread);
+    result.mentions = Math.min(Number.MAX_SAFE_INTEGER, result.mentions + counts.mentions);
+    result.manual ||= manualUnread.has(id);
+  }
+  return result;
+}
 /** SDK42 does not re-emit this room event on MatrixClient. */
 export function watchRoomReadCounts(client: MatrixClient, update: () => void) {
   const rooms = new Map<string, Room>();

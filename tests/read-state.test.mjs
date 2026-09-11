@@ -123,3 +123,18 @@ test('last loaded thread event is acknowledged without fetching history and a pe
   const pending = new sdk.MatrixEvent({ event_id: '~pending', room_id: f.room.roomId, sender: f.actor, origin_server_ts: 10, type: 'm.room.message', content: {} }); pending.setStatus(sdk.EventStatus.SENDING); f.room.getLiveTimeline().getEvents().push(pending);
   const result = await matrix.markMatrixRoomsRead(); assert.deepEqual(result.marked, [f.room.roomId]); assert.ok(receipts(f)[0].path.endsWith(encodeURIComponent('$reply'))); assert.equal(f.calls.length, 1);
 });
+
+test('server counts follow native child links and current joined rooms without exposing hidden or muted counts', () => {
+  const client = sdk.createClient({ baseUrl: 'https://local', userId: '@reader:local', deviceId: 'DEVICE' });
+  const add = (id, space = false) => { const room = new sdk.Room(id, client, '@reader:local', { pendingEventOrdering: 'detached' }); room.updateMyMembership('join'); room.currentState.setStateEvents([new sdk.MatrixEvent({ room_id: id, type: 'm.room.create', state_key: '', content: space ? { type: 'm.space' } : {}, event_id: '$create' + id, sender: '@reader:local' })]); client.store.storeRoom(room); return room; };
+  const server = add('!server:local', true), child = add('!child:local'), hidden = add('!hidden:local'), muted = add('!muted:local');
+  const link = (id, via) => server.currentState.setStateEvents([new sdk.MatrixEvent({ room_id: server.roomId, type: 'm.space.child', state_key: id, content: { via }, event_id: '$link' + id + via.length, sender: '@reader:local' })]);
+  for (const room of [child, hidden, muted]) { link(room.roomId, ['local']); room.setUnreadNotificationCount(sdk.NotificationCountType.Total, 10); room.setUnreadNotificationCount(sdk.NotificationCountType.Highlight, 3); }
+  const visible = new Set([child.roomId, muted.roomId]), mutes = new Set([muted.roomId]), manual = new Set([child.roomId]);
+  const project = () => read.serverReadCounts(client, server.roomId, visible, mutes, manual);
+  assert.deepEqual(project(), { unread: 10, mentions: 3, manual: true });
+  link(child.roomId, []); assert.deepEqual(project(), { unread: 0, mentions: 0, manual: false });
+  link(child.roomId, ['local']); child.updateMyMembership('invite'); assert.deepEqual(project(), { unread: 0, mentions: 0, manual: false });
+  child.updateMyMembership('join'); server.updateMyMembership('leave'); assert.deepEqual(project(), { unread: 0, mentions: 0, manual: false });
+  server.updateMyMembership('join'); const replacement = add(child.roomId); replacement.updateMyMembership('leave'); assert.deepEqual(project(), { unread: 0, mentions: 0, manual: false });
+});

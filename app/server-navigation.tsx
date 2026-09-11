@@ -2,18 +2,21 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'rea
 import { Folder, FolderOpen, FolderPlus, MoreHorizontal, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { onMatrixUpdate } from '@/lib/matrix';
+import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { navigationPreferences, setNavigationFlag } from '@/lib/interactions';
 import { moveServerRelative, orderedServerIds, positionFolder, positionServer, readServerNavigation, refreshServerNavigation, saveServerFolder, serverFolderId, serverNavigationOwner, subscribeServerNavigation, updateServerNavigation, type ServerFolder, type ServerNavigationState } from '@/lib/server-navigation';
+import { serverReadCounts } from '@/lib/read-state';
+import { ReadStateBadges } from './read-state';
 import { readServerBranding } from '@/lib/community';
 import { CommunityImage } from './community-settings';
 import { ActionMenu, type ContextAction } from './action-menu';
 import './server-navigation.css';
 type Server = { id: string; name: string };
+export type ServerNavigationReadState = { roomIds: readonly string[]; muted: readonly string[]; focus: boolean };
 type DragItem = { kind: 'server' | 'folder'; id: string };
 type Drop = { kind: 'server' | 'folder' | 'inside' | 'root'; id: string; side?: 'before' | 'after' };
 type Edit = { draft: ServerFolder; original: ServerFolder | null };
-export function ServerNavigation({ servers, active, onSelectServer, renderServer }: { servers: Server[]; active: string; onSelectServer: (id: string) => void; renderServer?: (server: Server, button: ReactNode, organizationActions: ContextAction[]) => ReactNode }) {
+export function ServerNavigation({ servers, active, onSelectServer, renderServer, readState }: { readState?: ServerNavigationReadState; servers: Server[]; active: string; onSelectServer: (id: string) => void; renderServer?: (server: Server, button: ReactNode, organizationActions: ContextAction[]) => ReactNode }) {
   const [state, setState] = useState(readServerNavigation), [favorites, setFavorites] = useState(() => navigationPreferences().favorites);
   const [owner, setOwner] = useState(serverNavigationOwner), [editing, setEditing] = useState<Edit | null>(null), [moving, setMoving] = useState<DragItem | null>(null), [destination, setDestination] = useState(''), [before, setBefore] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [dragging, setDragging] = useState<DragItem | null>(null), [drop, setDrop] = useState<Drop | null>(null);
@@ -50,7 +53,9 @@ export function ServerNavigation({ servers, active, onSelectServer, renderServer
   }
   const side = (e: DragEvent) => e.clientY < e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2 ? 'before' as const : 'after' as const;
   const marker = (kind: Drop['kind'], id: string) => drop?.kind === kind && drop.id === id ? ' drop-' + (drop.side || 'inside') : '';
+  const visibleRooms = new Set(readState?.roomIds || []), mutedRooms = new Set(readState?.muted || []), manualRooms = new Set(navigationPreferences().unread || []);
   const button = (server: Server) => {
+    const client = getMatrixClient(), counts = client && readState ? serverReadCounts(client, server.id, visibleRooms, mutedRooms, manualRooms) : null;
     const branding = readServerBranding(server.id), organization: ContextAction[] = [
       { label: 'Move server…', run: () => openMove({ kind: 'server', id: server.id }), separator: true },
       { label: favorites.includes(server.id) ? 'Remove favorite' : 'Favorite server', run: () => { if (current()) return setNavigationFlag(server.id, 'favorites', !favorites.includes(server.id)); } },
@@ -58,6 +63,7 @@ export function ServerNavigation({ servers, active, onSelectServer, renderServer
     const element = <button className={'workspace-icon ' + (active === server.id ? 'selected' : '')} title={server.name} aria-label={server.name} draggable onDragStart={e => startDrag(e, { kind: 'server', id: server.id })} onDragEnd={endDrag} onClick={() => { if (current() && Date.now() >= suppressClick.current) onSelectServer(server.id); }}>{branding.icon ? <CommunityImage mxc={branding.icon} name={server.name} size={40}/> : server.name.split(/\s+/).map(v => v[0]).join('').slice(0, 2).toUpperCase()}</button>;
     return <div key={server.id} className={'server-rail-item' + marker('server', server.id) + (dragging?.kind === 'server' && dragging.id === server.id ? ' is-dragging' : '')} data-server-id={server.id} onDragOver={e => over(e, { kind: 'server', id: server.id, side: side(e) })} onDrop={e => receive(e, { kind: 'server', id: server.id, side: side(e) })}>
       {renderServer ? renderServer(server, element, organization) : <ActionMenu actions={organization}>{element}</ActionMenu>}
+      {counts && <span className='server-read-state'><ReadStateBadges {...counts} focus={readState?.focus}/></span>}
       <button type='button' className='server-organize-button' aria-label={'Move ' + server.name} title={'Move ' + server.name} onClick={() => openMove({ kind: 'server', id: server.id })}><MoreHorizontal size={14}/></button>
     </div>;
   };

@@ -173,3 +173,24 @@ test('orchestration reports the first bounded fatal descriptor and still closes 
   const secret = fixture({ failure: { ...failure, reason: 'PRIVATE_CREDENTIAL' } });
   await assert.rejects(conferenceSmoke(secret.args, secret.adapters), error => error.message.includes('failures=unavailable,unavailable') && !error.message.includes('PRIVATE_CREDENTIAL'));
 }));
+
+
+test('the serialized observer does not retain malformed failure payloads or turn later success into a pass', () => {
+  const parentListeners = new Set(), childListeners = new Set();
+  const child = { document: {}, addEventListener: (_type, fn) => childListeners.add(fn), removeEventListener: (_type, fn) => childListeners.delete(fn) };
+  const window = { addEventListener: (_type, fn) => parentListeners.add(fn), removeEventListener: (_type, fn) => parentListeners.delete(fn) };
+  const frame = { src: frameUrl(owners[0]), contentWindow: child, isConnected: true };
+  const install = runInNewContext('(' + installConferenceObserver.toString() + ')', { window, document: { querySelector: () => frame }, location: { origin }, URL, URLSearchParams, performance: { now: () => 100 } });
+  install({ nonce: 'probe', roomId, owner: owners[0], owners, failureFields: conferenceFailureFields });
+  childListeners.forEach(fn => fn({ source: window, origin, data: { type: 'io.tavern.call.telemetry.bind', version: 1, widgetId: widget, session, roomId, document: challenge } }));
+  const payload = { type: 'io.tavern.call.telemetry', version: 1, widgetId: widget, session, roomId, document: challenge, sequence: 1, participants: [], failure: {
+    code: 'UNKNOWN_ERROR', cause: 'PRIVATE_CREDENTIAL', status: null, reason: null, matrixCode: null, message: 'PRIVATE_CREDENTIAL',
+  } };
+  parentListeners.forEach(fn => fn({ source: child, origin, data: payload }));
+  const result = window.__tavernCiConferenceSmoke.read();
+  assert.equal(result.status, 'fatal'); assert.equal(result.failure, null);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_CREDENTIAL'), false);
+  parentListeners.forEach(fn => fn({ source: child, origin, data: { ...payload, sequence: 2, failure: null, connected: true } }));
+  assert.equal(window.__tavernCiConferenceSmoke.read().status, 'fatal');
+  window.__tavernCiConferenceSmoke.stop();
+});

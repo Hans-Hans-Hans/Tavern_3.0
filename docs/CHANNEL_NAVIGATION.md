@@ -25,3 +25,19 @@ writes. Recreate/restart Synapse with the updated module to enforce the new chec
 Collapsed headings aggregate unread and highlight counts from visible, unmuted channels; highlights overlap unread counts. Category read/mute/all actions remain personal controls. Channel icons follow actual channel kinds, with custom appearance icons taking precedence. Existing parent callbacks own channel creation, edit and invitation flows. Voice channels accept the separate participant roster component without creating another media connection.
 
 Validation: four pure ordering tests and mounted browser coverage exercise saved order/reload, full-row before/after/root moves, category dialogs and retained channels, rollback, account-generation changes, permission revocation, hover expansion and personal unread aggregation. The browser fixtures use real components and layout helpers with an explicit SDK transport boundary; they do not claim native deployment or media acceptance.
+
+
+## Remaining sidebar requirements
+
+The requested sidebar redesign is not yet complete. Private channel creation
+currently invites selected members; it does not maintain access from selected
+roles as assignments change. Channel and server management still provide archive
+and leave operations, not a channel/server deletion workflow. Those require
+native admission, revocation and partial-failure handling; hiding a row or
+relabelling archive would not satisfy them. The pinned conference widget's
+self-deafen limitation is recorded in [voice sidebar](VOICE_SIDEBAR.md).
+
+The full two-user Games-category acceptance sequence, including a role-restricted
+voice join and cross-client ordering after refresh, remains a deployed acceptance
+gate. Component, native write-boundary and policy tests are recorded separately
+from that gate in [validation](VALIDATION.md).
