@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 const serverId = '!server:local', actor = '@owner:local', peer = '@peer:local';
-const ev = (type, content, state_key = '', sender = actor) => ({ type, state_key, sender, content });
+const ev = (type, content, state_key = '', sender = actor) => ({ type, state_key, sender, content, event_id: '$'+type+state_key });
 function setup() {
   const f = { actor, account: {}, writes: [], creates: [], reads: [], beforeRead: null, beforeWrite: null, beforeCreate: null, config: { serverRolePolicy: true, callsEnabled: true } };
   const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account };

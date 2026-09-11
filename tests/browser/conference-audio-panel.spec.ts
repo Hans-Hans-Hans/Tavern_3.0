@@ -16,7 +16,7 @@ async function fixture(page: Page, configure?: (backend: any) => void, managed =
     beforeGet: null as ((roomId: string, userId: string) => Promise<void>) | null };
   for (const room of ['!channel:local', '!other:local']) for (const user of [self, guest]) backend.states.set(room + user, audioState(room, user));
   configure?.(backend);
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.audioPanelFixture?.client;export const onMatrixUpdate=fn=>{window.audioPanelFixture.listeners.add(fn);return()=>window.audioPanelFixture.listeners.delete(fn)};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=async()=>{throw new Error("Read-only voice fixture cannot write account data")};export const getMatrixClient=()=>window.audioPanelFixture?.client;export const onMatrixUpdate=fn=>{window.audioPanelFixture.listeners.add(fn);return()=>window.audioPanelFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `
     export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices){
       const f=window.audioPanelFixture;f.mounts.push(roomId);frame.srcdoc='<p>Isolated media boundary</p>';

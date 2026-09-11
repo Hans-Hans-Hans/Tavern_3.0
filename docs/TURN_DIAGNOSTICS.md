@@ -105,3 +105,29 @@ allowed and `allow-loopback-peers` is not enabled.
 Three actual POSIX-shell regressions verify address validation, failure handling
 and argument preservation. The enhanced Docker byte-exchange phase requires its
 next Linux CI execution; this Windows workspace has no Docker daemon.
+
+
+## Optional browser relay traffic test
+
+**Test TURN relay traffic** in Admin Diagnostics uses the same freshly verified
+administrator session and short-lived native TURN credentials. Two temporary
+relay-only peers exchange random data in both directions; success also requires
+both peers to report a selected pair whose local and remote candidates are TURN
+relays. Missing route statistics are reported as unavailable, even when data
+was exchanged. Microphones, cameras and screen capture are never requested.
+
+This tests this browser's bidirectional path through its configured TURN service.
+It does not test microphone capture, audio playback, media codecs or another
+participant's network. Candidate protocol describes the relay candidate, not
+necessarily the connection from the browser to TURN. The overall 15-second
+limit includes credentials, negotiation, exchange and final administrator
+verification. Cancellation, navigation and account changes close both peers
+and their data channels. Credentials, candidate addresses, SDP and random payloads
+are not displayed or logged by the diagnostic.
+
+Focused browser tests exercise the actual Admin component and request-only
+Matrix SDK with controlled peer boundaries, including omitted statistics,
+contradictory routes, cancellation, account changes and final access revocation.
+The existing isolated coturn CI fixture now additionally serves and runs the
+actual production helper after its independent two-relay byte exchange. Its
+new production-helper acceptance remains pending the next Linux CI run.

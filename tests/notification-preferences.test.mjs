@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadTs } from './load-ts.mjs';
 const { normalizeNotificationPreferences: normalize, resolveNotificationPreference: resolve, notificationEligible, notificationServerForRoom, updateNotificationPreferences } = loadTs('../lib/notification-preferences.ts', { './matrix': {} });
+test('explicit category preference writes recheck owner after queued native account reads', async () => {
+  let current = true, writes = 0;
+  const client = { getAccountDataFromServer: async () => { current = false; return {}; }, setAccountData: async () => { writes++; } };
+  await assert.rejects(updateNotificationPreferences(p => ({ ...p, rooms: { '!room:local': { mode: 'nothing', mutedUntil: 0 } } }), client, () => current), /account or room membership changed/);
+  assert.equal(writes, 0);
+});
 test('notification channel overrides inherit server and global defaults without clearing ancestor mutes', () => {
   const prefs = normalize({ global: { mode: 'all' }, servers: { '!s:local': { mode: 'mentions', mutedUntil: 2000 } }, rooms: { '!r:local': { mode: 'all' } } });
   assert.deepEqual(resolve(prefs, '!other:local', '!s:local', 1000), { mode: 'mentions', source: 'Server', muted: true, mutedUntil: 2000, sound: false });

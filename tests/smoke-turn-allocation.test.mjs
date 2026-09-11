@@ -183,3 +183,16 @@ test('cleanup never removes an unowned resource and removes a confirmed owned fi
   assert.deepEqual(calls[1], ['container', 'rm', '-f', '-v', name]);
   await assert.rejects(removeOwnedTurnResource('container', 'production', nonce, async () => { throw new Error('must not execute'); }), /Invalid isolated TURN ownership/);
 });
+
+
+test('actual production traffic module rewrites only its reviewed shared runner import', async () => {
+  const { diagnosticTrafficScript } = await import('../scripts/smoke-turn-allocation.mjs');
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../lib/turn-traffic-diagnostics.ts', import.meta.url), 'utf8');
+  const script = diagnosticTrafficScript(source);
+  assert.match(script, /from '\/runner.js'/);
+  assert.match(script, /export function runTurnTrafficDiagnostic/);
+  assert.doesNotMatch(script, /from ['"]\.\//);
+  assert.throws(() => diagnosticTrafficScript(source.replace('./turn-diagnostics', './unknown')), /imports changed/);
+  assert.equal(turnFailureSummary('production-traffic', null, { result: { status: 'exchanged', protocol: 'udp' }, captures: 0, closed: 2 }), 'stage=production-traffic reason=failed result=exchanged protocol=udp captures=0 closed=2');
+});

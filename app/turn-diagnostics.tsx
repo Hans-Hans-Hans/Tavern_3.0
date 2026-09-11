@@ -3,6 +3,7 @@ import { accountArtworkOwner, isManagedAccount, type AccountSession } from '@/li
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { runTurnDiagnostic, type TurnDiagnosticResult } from '@/lib/turn-diagnostics';
 import { prepareDiagnosticTurn, verifyDiagnosticAdmin } from '@/lib/turn-diagnostic-session';
+import { runTurnTrafficDiagnostic, type TurnTrafficResult } from '@/lib/turn-traffic-diagnostics';
 
 const descriptions = {
   failed: 'No relay candidate was obtained. Check TURN DNS, credentials and firewall reachability, then retry.',
@@ -17,7 +18,7 @@ export function TurnDiagnostics({ session }: { session: AccountSession }) {
   const latest = useRef(session); latest.current = session;
   const [owner] = useState(() => { const client = getMatrixClient(); return { client, clientBase: client?.getHomeserverUrl(), account: accountArtworkOwner(), ...session }; });
   const alive = useRef(false), controller = useRef<AbortController | null>(null);
-  const [busy, setBusy] = useState(false), [stale, setStale] = useState(false), [result, setResult] = useState<TurnDiagnosticResult | null>(null);
+  const [busy, setBusy] = useState(false), [mode, setMode] = useState<'allocation' | 'traffic'>('allocation'), [stale, setStale] = useState(false), [result, setResult] = useState<TurnDiagnosticResult | TurnTrafficResult | null>(null);
   const current = () => alive.current && isManagedAccount() && owner.admin && latest.current.admin
     && latest.current.userId === owner.userId && latest.current.deviceId === owner.deviceId && latest.current.baseUrl === owner.baseUrl
     && accountArtworkOwner() === owner.account && getMatrixClient() === owner.client
@@ -30,10 +31,11 @@ export function TurnDiagnostics({ session }: { session: AccountSession }) {
     function stop() { controller.current?.abort(); }
     return () => { alive.current = false; controller.current?.abort(); off(); clearInterval(timer); window.removeEventListener('tavern:signout', update); window.removeEventListener('pagehide', stop); };
   }, [owner]);
-  async function start() {
+  async function start(kind: 'allocation' | 'traffic') {
     if (!current() || controller.current) return;
-    const attempt = new AbortController(); controller.current = attempt; setBusy(true); setResult(null);
-    const value = await runTurnDiagnostic({ signal: attempt.signal, current, prepare: signal => prepareDiagnosticTurn(owner, owner.client, current, signal),
+    const attempt = new AbortController(); controller.current = attempt; setBusy(true); setMode(kind); setResult(null);
+    const runner = kind === 'traffic' ? runTurnTrafficDiagnostic : runTurnDiagnostic;
+    const value = await runner({ signal: attempt.signal, current, prepare: signal => prepareDiagnosticTurn(owner, owner.client, current, signal),
       verify: async signal => { await verifyDiagnosticAdmin(owner, current, signal); } });
     if (controller.current !== attempt) return;
     controller.current = null;
@@ -44,10 +46,12 @@ export function TurnDiagnostics({ session }: { session: AccountSession }) {
   return <section className="product-section" aria-label="Browser TURN test"><h2>Browser TURN test</h2>
     <p>Test relay allocation from this browser and network using your account’s short-lived TURN credentials. No microphone or camera access is requested.</p>
     <p>A relay candidate confirms allocation only. It does not verify a complete call, media delivery or reachability from every network. Test a call from outside your LAN separately.</p>
-    <div className="product-actions"><button className="secondary-button" disabled={busy || stale} onClick={() => void start()}>Test TURN allocation</button>
+    <p>The optional traffic test exchanges a small random message both ways between two relayed connections in this browser. It does not test your microphone, speakers, media codecs, or another participant's network.</p>
+    <div className="product-actions"><button className="secondary-button" disabled={busy || stale} onClick={() => void start('allocation')}>Test TURN allocation</button>
+      <button className="secondary-button" disabled={busy || stale} onClick={() => void start('traffic')}>Test TURN relay traffic</button>
       {busy && <button className="secondary-button" onClick={() => controller.current?.abort()}>Cancel TURN test</button>}</div>
-    {busy && <p role="status">Checking TURN allocation…</p>}
+    {busy && <p role="status">{mode === 'traffic' ? 'Checking bidirectional TURN relay traffic...' : 'Checking TURN allocation...'}</p>}
     {stale && <p role="status">Your account or administrator session changed. Reopen Diagnostics to run this test.</p>}
-    {!stale && result && <p role="status">{result.status === 'allocated' ? <>Relay candidate obtained.{result.protocol && <> Relay candidate protocol: {result.protocol.toUpperCase()}.</>}</> : descriptions[result.status]}</p>}
+    {!stale && result && <p role="status">{result.status === 'allocated' ? <>Relay candidate obtained.{result.protocol && <> Relay candidate protocol: {result.protocol.toUpperCase()}.</>}</> : result.status === 'exchanged' ? <>Bidirectional relay traffic confirmed. Both connections exchanged data using TURN relay candidates.{result.protocol && <> Relay candidate protocol: {result.protocol.toUpperCase()}.</>}</> : mode === 'traffic' && result.status === 'unavailable' && 'stage' in result && result.stage === 'verification' ? 'Data exchanged, but this browser could not verify the selected TURN relay routes. Relay traffic is not confirmed.' : mode === 'traffic' && result.status === 'failed' ? 'Bidirectional relay traffic could not be confirmed. Check TURN relay ports and peer-address rules, then retry. This result does not identify a microphone or speaker problem.' : descriptions[result.status]}</p>}
   </section>;
 }

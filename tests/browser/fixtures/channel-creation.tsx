@@ -5,7 +5,7 @@ import '../../../app/globals.css';
 export function mountFixture() {
   const w = window as any; w.actor = '@owner:local'; w.accountOwner = {}; w.listeners = []; w.created = []; w.writes = []; w.opened = [];
   w.layout = { version: 1, categories: [{ id: 'projects', name: 'Projects', icon: '📁' }], channels: [] };
-  const ev = (type: string, content: any, key = '', sender = w.actor) => ({ type, content, state_key: key, sender });
+  const ev = (type: string, content: any, key = '', sender = w.actor) => ({ type, content, state_key: key, sender, event_id: '$'+type+key });
   const parent = (name: string) => [ev('m.room.create', { room_version: '12', type: 'm.space', 'm.federate': false }), ev('m.room.name', { name }),
     ev('m.room.power_levels', { state_default: 50, users: {}, events: {} }), ev('m.room.member', { membership: 'join' }, w.actor),
     ev('m.room.member', { membership: 'join' }, '@peer:local'), ev('io.tavern.server.layout', structuredClone(w.layout))];

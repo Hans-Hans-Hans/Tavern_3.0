@@ -38,11 +38,14 @@ function RowActions({ label, actions }: { label: string; actions: ContextAction[
 export function ChannelNavigation(props: ChannelNavigationProps) {
   const { serverId, channels, active, muted, focus, onSelect, renderChannel, onCreateChannel, onEditChannel, onInviteChannel, renderParticipants } = props;
   const client = getMatrixClient(), account = accountArtworkOwner(), actor = client?.getUserId(), device = client?.getDeviceId(), base = client?.getHomeserverUrl();
+  const renderedOwner = useRef<object | null>(null), mounted = useRef(true), room = serverId ? client?.getRoom(serverId) : null;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const owner = useMemo(() => {
-    const room = serverId ? client?.getRoom(serverId) : null;
-    return { current: () => client === getMatrixClient() && account === accountArtworkOwner() && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getHomeserverUrl() === base
+    const snapshot = { current: (): boolean => mounted.current && renderedOwner.current === snapshot && client === getMatrixClient() && account === accountArtworkOwner() && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getHomeserverUrl() === base
       && (!serverId || !!room && client?.getRoom(serverId) === room && room.isSpaceRoom() && room.getMyMembership() === 'join') };
-  }, [serverId, client, account, actor, device, base]);
+    return snapshot;
+  }, [serverId, client, account, actor, device, base, room]);
+  renderedOwner.current = owner;
   const layout = serverId && owner.current() ? readServerLayout(serverId) : empty;
   const signature = layoutKey(layout), nativeCollapsed = serverId ? collapsedCategories(serverId) : [];
   const [version, refresh] = useState(0), [optimistic, setOptimistic] = useState<{ owner: typeof owner; baseline: string; next: ServerLayout } | null>(null);

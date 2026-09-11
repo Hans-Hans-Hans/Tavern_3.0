@@ -43,7 +43,7 @@ export function VoiceSidebarDock({ onSelect, onSettings }: { onSelect: (roomId: 
   async function run(action: () => unknown) { try { await action(); } catch (error) { if (voiceSidebar.owns(state!)) toast.error((error as Error).message); } }
   const label = { joining: 'Joining voice…', connected: 'Voice connected', reconnecting: 'Reconnecting voice…', closing: 'Leaving voice…', error: 'Voice needs attention', unknown: 'Checking voice connection…' }[state.phase];
   return <section className="voice-sidebar-dock" aria-label="Current voice call">
-    <button type="button" className="voice-sidebar-current" title="Open current voice channel" onClick={() => { if (current(state)) onSelect(state.roomId); }}>
+    <button type="button" className="voice-sidebar-current" aria-label={'Open voice channel ' + (room.name || 'Voice channel')} title="Open current voice channel" onClick={() => { if (current(state)) onSelect(state.roomId); }}>
       <Headphones size={17} aria-hidden="true"/><span><strong className={state.phase === 'connected' ? 'is-connected' : ''} role="status">{label}</strong><span>{room.name || 'Voice channel'}</span></span>
     </button>
     <div className="voice-sidebar-controls">

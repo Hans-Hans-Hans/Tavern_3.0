@@ -6,9 +6,10 @@ export type ManagementSection = { id: string; title: string; content: ReactNode 
 
 /** Key the parent by its account and server/channel scope. Visited editors remain
  * mounted within that scope, while unopened editors do not fetch or mount. */
-export function ManagementSections({ label, sections }: { label: string; sections: ManagementSection[] }) {
-  const [selected, setSelected] = useState(() => sections[0]?.id || '');
-  const [visited, setVisited] = useState(() => new Set(sections[0] ? [sections[0].id] : []));
+export function ManagementSections({ label, sections, initialSection }: { label: string; sections: ManagementSection[]; initialSection?: string }) {
+  const initial = sections.some(section => section.id === initialSection) ? initialSection! : sections[0]?.id || '';
+  const [selected, setSelected] = useState(initial);
+  const [visited, setVisited] = useState(() => new Set(initial ? [initial] : []));
   const current = sections.some(section => section.id === selected) ? selected : sections[0]?.id;
   if (!current) return null;
   function choose(id: string) {

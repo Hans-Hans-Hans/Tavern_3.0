@@ -20,6 +20,15 @@ function fixture() {
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 350));
 
+test('explicit category notification changes stop after owner loss during native rule lookup', async () => {
+  const f = fixture(); let current = true;
+  try {
+    f.beforeRules = async () => { current = false; };
+    await assert.rejects(f.api.setRoomNotifications(f.client, '!room:local', 'mute', () => current), /account changed/);
+    assert.deepEqual(f.writes, []);
+  } finally { f.api.resetNotifications(); }
+});
+
 test('background delivery handoff requires the current connected device and an active alert surface', () => {
   const f = fixture();
   globalThis.document = { visibilityState: 'visible' };

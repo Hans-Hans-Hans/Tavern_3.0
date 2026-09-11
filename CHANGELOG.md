@@ -6,6 +6,10 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- Persistent server/folder and channel/category ordering with full-row drop indicators, context menus, keyboard/touch Move dialogs, conflict handling and a mobile server organizer.
+- Native voice participant rows beneath channels and a persistent dock using the existing call's microphone, device settings and disconnect controls.
+- An explicit **Show in Direct Messages** action for joined encrypted private conversations whose personal list entry is missing; it preserves the existing room and messages.
+
 - Automatic reuse of a matching encrypted-history backup key retained in this browser, with a dismissible recovery reminder that waits for the automatic check.
 - Fresh native direct-message list merging and confirmation, preventing a stale client cache from discarding earlier DMs when starting another conversation.
 

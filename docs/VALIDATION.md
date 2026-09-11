@@ -2,7 +2,32 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Current sidebar checkpoint
+
+Final local verification passed the production build, all 629 Node cases and
+all 416 browser cases in the complete suite. Eight subsequently added relay
+traffic browser cases also passed, as did focused reruns after the final scoped
+role-save fix. The Python suite passed 695 cases with 15 platform/environment
+skips; the additional category-to-channel voice permission recipe passed its
+actual native policy callback test. Compose aliases and diff checks passed.
+
+The isolated Linux Docker checks now include both independent relay byte exchange
+and the actual production TURN traffic helper. Their next CI execution and the
+user's redeployed phone/PC audio test remain pending; local browser fixtures do
+not establish production call success. See [channel navigation](CHANNEL_NAVIGATION.md),
+[channel roles](CHANNEL_ROLE_PERMISSIONS.md), [voice sidebar](VOICE_SIDEBAR.md)
+and [TURN diagnostics](TURN_DIAGNOSTICS.md).
+
 ## Returning sign-ins and direct-message persistence
+
+The sidebar integration build failure at `d9f76e9` was a missing
+`createCategoryRequest` component prop. Checkpoint `2ec42b2` repairs it and passed
+the production build locally; its GitHub build and Node stages also passed.
+The current local Node suite passed 611 cases. Server organization passed 14
+model and nine mounted SDK browser cases; voice sidebar changes passed five model
+and 33 related browser cases, with independent lifecycle review. Layout writes
+passed four new Node cases and 22 Python role checks including fresh native
+revision rejection. These are implementation checks, not deployment acceptance.
 
 The current recovery change passed 14 browser cases using the real Matrix SDK
 and Rust/WASM store, 18 security/backup Node cases, and five reminder UI cases.

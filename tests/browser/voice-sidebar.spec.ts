@@ -3,7 +3,7 @@ import { routeVoiceAvatar } from './voice-fixture-routes';
 
 async function fixture(page: Page) {
   await routeVoiceAvatar(page);
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=async()=>{throw new Error("Read-only voice fixture cannot write account data")};export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/calls.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const callSnapshot=()=>({call:null});export const callsConfigured=async()=>true;' }));
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices,options={}){
     const f=window.voiceFixture;f.mounts.push({roomId,voiceOnly:options.voiceOnly});f.telemetry.push(options.onTelemetry);
@@ -60,7 +60,7 @@ test('bottom dock controls the persistent widget and navigation never remounts i
   expect(await page.evaluate(() => (window as any).voiceFixture.deviceChanges)).toEqual([{ audio_enabled: false }]);
   await dock.getByRole('button', { name: 'Voice settings and call controls', exact: true }).click();
   await expect(page.locator('iframe[title="Tavern encrypted conference"]')).not.toHaveClass(/voice-frame-hidden/);
-  await dock.getByRole('button', { name: /Voice connected Voice lounge/ }).click();
+  await dock.getByRole('button', { name: 'Open voice channel Voice lounge', exact: true }).click();
   expect(await page.evaluate(() => (window as any).voiceFixture.selected)).toBe('!voice:local');
   expect(await page.evaluate(() => (window as any).voiceFixture.mounts.length)).toBe(1);
   await expect(dock.getByRole('button', { name: /deafen/i })).toHaveCount(0);

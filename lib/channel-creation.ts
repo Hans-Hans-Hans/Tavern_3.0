@@ -19,7 +19,7 @@ export const channelTemplates: Record<ChannelKind, { description: string; purpos
 export const channelSlowModes = [0, 5, 10, 30, 60, 300, 900, 3600, 21600] as const;
 export type ChannelDraft = { name: string; description: string; kind: ChannelKind; slowModeSeconds: number; serverId?: string; categoryId: string; members: string[]; icon: string };
 export type ChannelCreationResult = { roomId: string; name: string; linked: boolean; categoryApplied: boolean; invited: string[]; pendingMembers: string[]; errors: string[] };
-type Native = { type: string; state_key: string; content: any; sender?: string };
+type Native = { type: string; state_key: string; content: any; sender?: string; event_id?: string };
 type Owner = { client: MatrixClient; user: string; device: string; account: object; homeserver: string };
 type Scope = { id: string; child: string; events: Native[] };
 type Pending = { owner: Owner; draft: ChannelDraft; running: boolean };
@@ -172,7 +172,9 @@ export async function finishChannelCreation(result: ChannelCreationResult): Prom
         const scopes = await serverScopes(owner, draft, result.roomId), parent = scopes.find(scope => scope.id === draft.serverId)!;
         const { before, after } = selectedLayout(parent.events, draft, result.roomId);
         if (before.channels.find(channel => channel.id === result.roomId)?.category !== draft.categoryId) {
-          await owner.client.sendStateEvent(draft.serverId, layoutEvent as any, after, ''); requireCurrent(owner);
+          const saved = event(parent.events, layoutEvent);
+          if (saved && (typeof saved.event_id !== 'string' || !saved.event_id.startsWith('$'))) throw new Error('The category layout revision is unavailable. Reload before retrying setup.');
+          await owner.client.sendStateEvent(draft.serverId, layoutEvent as any, { ...after, 'io.tavern.previous_event': saved?.event_id ?? null }, ''); requireCurrent(owner);
         }
         result.categoryApplied = true;
       }

@@ -71,8 +71,35 @@ async function freshRoles(owner: ReturnType<typeof roleWriteOwner>, serverId: st
   }
   return { raw, policy: raw ? parseRolePolicy(raw)! : null, revision };
 }
-export async function saveRolePolicy(serverId: string, policy: RolePolicy, previous?: RolePolicy | null) {
-  const owner = roleWriteOwner(serverId), fresh = await freshRoles(owner, serverId);
+/** Scope a channel editor to a current joined reciprocal child. This reads
+ * native state without changing membership or giving the child new powers. */
+export async function checkChannelRoleScope(serverId: string, channelId: string, assertScope: () => void, expectedPolicy?: RolePolicy | null) {
+  const owner = roleWriteOwner(serverId), room = owner.client.getRoom(channelId);
+  const current = () => { owner.assertCurrent(); assertScope(); if (!room || owner.client.getRoom(channelId) !== room || room.getMyMembership() !== 'join') throw new Error('Your channel membership changed. Reopen channel permissions.'); };
+  const read = async (id: string) => {
+    current(); const events = await owner.client.roomState(id); current();
+    if (!Array.isArray(events) || events.length > 10000) throw new Error('The channel relationship is unavailable or too large to check.');
+    const seen = new Set<string>();
+    for (const event of events) {
+      const key = JSON.stringify([event?.type, event?.state_key]);
+      if (!event || typeof event.type !== 'string' || typeof event.state_key !== 'string' || !event.content || typeof event.content !== 'object' || Array.isArray(event.content) || seen.has(key) || event.room_id !== undefined && event.room_id !== id) throw new Error('The current channel relationship is invalid.');
+      seen.add(key);
+    }
+    return (type: string, key = '') => events.find(event => event.type === type && event.state_key === key)?.content;
+  };
+  const child = await read(channelId), parent = await read(serverId);
+  const creation = child('m.room.create'), server = parent('m.room.create');
+  const parentLink = child('m.space.parent', serverId), childLink = parent('m.space.child', channelId);
+  if (!creation || creation.type || creation['m.federate'] !== false || server?.type !== 'm.space' || server['m.federate'] !== false
+    || child('m.room.member', owner.user)?.membership !== 'join' || parent('m.room.member', owner.user)?.membership !== 'join'
+    || parentLink?.canonical !== true || !Array.isArray(parentLink.via) || !parentLink.via.length || !Array.isArray(childLink?.via) || !childLink.via.length)
+    throw new Error('This channel is no longer a joined child of this server. Reopen channel permissions.');
+  if (expectedPolicy !== undefined && stableRoleJson(parseRolePolicy(parent(rolesEvent))) !== stableRoleJson(expectedPolicy)) throw new Error('Server roles changed while checking the channel relationship. Reload saved roles.');
+  current();
+}
+export async function saveRolePolicy(serverId: string, policy: RolePolicy, previous?: RolePolicy | null, assertScope: () => void = () => {}, channelId?: string) {
+  assertScope();
+  const owner = roleWriteOwner(serverId), fresh = await freshRoles(owner, serverId); assertScope();
   if (fresh.policy?.callPublicationVersion !== policy.callPublicationVersion) throw new Error('Conference permissions changed. Reopen server roles; enabling them requires the separate migration action.');
   // This editor owns roles, assignments and channel overrides. Preserve its
   // draft instead of overwriting a concurrent editor; category writes are
@@ -84,8 +111,9 @@ export async function saveRolePolicy(serverId: string, policy: RolePolicy, previ
   const ids = new Set(policy.roles.map(role => role.id)), categoryOverrides = Object.fromEntries(Object.entries(fresh.policy?.categoryOverrides || policy.categoryOverrides || {}).map(([id, targets]) => [id, { ...targets, roles: Object.fromEntries(Object.entries(targets.roles || {}).filter(([role]) => ids.has(role))) }]));
   const next = { ...policy, categoryOverrides };
   if (!parseRolePolicy(next)) throw new Error('The role policy is invalid. Check role positions and assigned members.');
-  owner.assertCurrent(); await owner.client.sendStateEvent(serverId, rolesEvent as any, { ...next, ...(fresh.revision ? { 'io.tavern.previous_event': fresh.revision } : {}) }, '');
-  owner.assertCurrent(); return next;
+  if (channelId) await checkChannelRoleScope(serverId, channelId, assertScope, fresh.policy);
+  owner.assertCurrent(); assertScope(); await owner.client.sendStateEvent(serverId, rolesEvent as any, { ...next, ...(fresh.revision ? { 'io.tavern.previous_event': fresh.revision } : {}) }, '');
+  owner.assertCurrent(); assertScope(); return next;
 }
 export async function enableConferencePublication(serverId: string) {
   const owner = roleWriteOwner(serverId), events = await owner.client.roomState(serverId); owner.assertCurrent();

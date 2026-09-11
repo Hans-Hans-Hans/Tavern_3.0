@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, MatrixEvent, NotificationCountType, Room } from 'matrix-js-sdk';
 import { Toaster } from 'sonner';
-import { ChannelNavigation } from '../../../app/community-settings';
+import { ChannelNavigation } from '../../../app/channel-navigation';
 import { ReadStateBadges, MarkAllReadButton, useMarkReadAction } from '../../../app/read-state';
 import { KeyboardShortcuts } from '../../../app/keyboard-shortcuts';
 import { accountArtworkOwner, setAccountDevice } from '../../../lib/api';

@@ -12,8 +12,8 @@ import { chromium } from 'playwright';
 import ts from 'typescript';
 
 const execute = promisify(execFile), IMAGE = 'coturn/coturn:4.17.2-r0', LABEL = 'io.tavern.ci.turn-allocation';
-const STAGES = new Set(['guard', 'runtime-script', 'image-pull', 'network-create', 'container-start', 'endpoint-proof', 'listener', 'runner-load', 'browser-start', 'valid-allocation', 'invalid-credentials', 'relay-exchange', 'browser-cleanup', 'server-cleanup', 'container-cleanup', 'network-cleanup']);
-const RESULTS = new Set(['allocated', 'failed', 'timeout', 'cancelled', 'unavailable', 'not-configured', 'unauthorized']);
+const STAGES = new Set(['guard', 'runtime-script', 'image-pull', 'network-create', 'container-start', 'endpoint-proof', 'listener', 'runner-load', 'browser-start', 'valid-allocation', 'invalid-credentials', 'relay-exchange', 'production-traffic', 'browser-cleanup', 'server-cleanup', 'container-cleanup', 'network-cleanup']);
+const RESULTS = new Set(['allocated', 'exchanged', 'failed', 'timeout', 'cancelled', 'unavailable', 'not-configured', 'unauthorized']);
 class TurnFixtureFailure extends Error {}
 export function turnFailureSummary(stage, error, observation, container) {
   const reason = error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'command-output-limit' : error?.killed === true ? 'command-deadline' :
@@ -177,6 +177,13 @@ async function waitListening(address, port) {
   throw new Error('The isolated TURN listener did not become ready.');
 }
 
+export function diagnosticTrafficScript(source) {
+  const script = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+  const imports = [...script.matchAll(/from (['"])([^'"]+)\1/g)];
+  if (imports.length !== 1 || imports[0][2] !== './turn-diagnostics') throw new Error('The isolated traffic runner imports changed. Review its fixture.');
+  return script.replace(imports[0][0], "from '/runner.js'");
+}
+
 export async function turnAllocationSmoke() {
   requireTurnAllocationCi();
   const nonce = randomBytes(12).toString('hex'), name = 'tavern-turn-ci-' + nonce, network = name + '-network', secret = randomBytes(32).toString('hex');
@@ -202,10 +209,12 @@ export async function turnAllocationSmoke() {
     stage = 'runner-load';
     const source = await readFile(new URL('../lib/turn-diagnostics.ts', import.meta.url), 'utf8');
     const script = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+    const trafficScript = diagnosticTrafficScript(await readFile(new URL('../lib/turn-traffic-diagnostics.ts', import.meta.url), 'utf8'));
     server = createServer((request, response) => {
       response.setHeader('Cache-Control', 'no-store');
       if (request.url === '/') { response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><title>Isolated TURN allocation</title>'); }
       else if (request.url === '/runner.js') { response.setHeader('Content-Type', 'text/javascript'); response.end(script); }
+      else if (request.url === '/traffic.js') { response.setHeader('Content-Type', 'text/javascript'); response.end(trafficScript); }
       else { response.statusCode = 404; response.end(); }
     });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -231,6 +240,18 @@ export async function turnAllocationSmoke() {
     stage = 'relay-exchange'; observation = undefined;
     const exchanged = await page.evaluate(exchangeRelayData, { address, port, username, credential: password, nonce });
     assert.deepEqual(exchanged, { exchanged: true, relayPairs: 2, captures: 0, closed: 2 }, 'Two same-server relay-only peers must exchange real bytes through the production exact-self ACL.');
+    stage = 'production-traffic'; observation = undefined;
+    const traffic = observation = await page.evaluate(async ({ address, port, username, credential }) => {
+      const { runTurnTrafficDiagnostic } = await import('/traffic.js');
+      let captures = 0, closed = 0;
+      navigator.mediaDevices.getUserMedia = navigator.mediaDevices.getDisplayMedia = async () => { captures++; throw new Error('Capture is forbidden'); };
+      const result = await runTurnTrafficDiagnostic({ current: () => true, signal: new AbortController().signal,
+        prepare: async () => [{ urls: ['turn:' + address + ':' + port + '?transport=tcp'], username, credential }], verify: async () => {},
+        createPeer: configuration => { const peer = new RTCPeerConnection(configuration), close = peer.close.bind(peer); peer.close = () => { closed++; close(); }; return peer; } });
+      return { result, captures, closed };
+    }, { address, port, username, credential: password });
+    assert.deepEqual(traffic, { result: { status: 'exchanged', protocol: 'udp' }, captures: 0, closed: 2 }, 'The actual production diagnostic must verify both relay routes after exchanging real bytes.');
+
   } catch (error) {
     let container;
     try { container = await docker(['container', 'inspect', '--format', '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}', name]); } catch { /* No owned container may have been created. */ }

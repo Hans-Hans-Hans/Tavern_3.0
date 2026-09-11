@@ -16,7 +16,7 @@ export async function mountFixture() {
     event('m.room.member', { membership: 'join' }, actor),
     event('m.room.member', { membership: 'join' }, '@cibob:chat.example.test'),
   ]);
-  const room = { currentState: state, getMyMembership: () => 'join' };
+  const room = { currentState: state, getMyMembership: () => 'join', isSpaceRoom: () => true };
   (window as any).workspaceFixture = {
     React, icons, actor, state, room,
     client: { getUserId: () => actor, getRoom: (id: string) => id === roomId ? room : null },

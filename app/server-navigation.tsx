@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import { Folder, FolderOpen, FolderPlus, MoreHorizontal, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -32,7 +32,7 @@ export function ServerNavigation({ servers, active, onSelectServer, renderServer
   function openFolder(folder?: ServerFolder) { if (!current()) return; setError(''); const original = folder ? structuredClone(folder) : null; setEditing({ original, draft: original ? structuredClone(original) : { id: crypto.randomUUID(), name: '', color: '#d7b880', serverIds: [] } }); }
   function toggleFolder(id: string) { void update(p => ({ ...p, collapsed: p.collapsed.includes(id) ? p.collapsed.filter(value => value !== id) : [...p.collapsed, id] })); }
   function startDrag(e: DragEvent, item: DragItem) { if (!current()) { e.preventDefault(); return; } dragRef.current = item; setDragging(item); suppressClick.current = Date.now() + 500; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/tavern-' + item.kind, item.id); }
-  function endDrag() { dragRef.current = null; setDragging(null); setDrop(null); clearTimeout(hover.current); suppressClick.current = Date.now() + 200; }
+  function endDrag() { dragRef.current = null; setDragging(null); setDrop(null); clearTimeout(hover.current); hover.current = undefined; suppressClick.current = Date.now() + 200; }
   function over(e: DragEvent, next: Drop) {
     const item = dragRef.current; if (!item || !current() || item.kind === 'folder' && next.kind !== 'folder' || item.kind === 'server' && next.kind === 'folder') return;
     e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDrop(next);

@@ -26,16 +26,15 @@ export function systemNoticeMessages(events) {
 
 export async function openSystemMessageSettings(page, serverName) {
   const trigger = page.locator('.workspace-select');
-  await trigger.click();
-  await page.getByRole('menuitem', { name: serverName, exact: true }).click();
-  await expect(trigger.locator('strong')).toHaveText(serverName);
-  // Radix retains its closing content through the exit animation. Re-clicking
-  // the toggle before that layer is removed can close the newly opened menu.
-  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  if (await trigger.getAttribute('aria-expanded') === 'true') await trigger.press('Escape');
+  // The desktop rail owns server selection. Wait for any previous Radix exit
+  // layer before selecting it, then open the current server's action menu.
   await expect(page.locator('.workspace-menu')).toHaveCount(0);
+  await page.getByRole('button', { name: serverName, exact: true }).click();
+  await expect(trigger.locator('strong')).toHaveText(serverName);
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-  await page.getByRole('menuitem', { name: 'Server settings & categories', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Server settings', exact: true }).click();
 }
 
 async function isolatedHelperNetwork() {

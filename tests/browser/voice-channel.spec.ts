@@ -3,7 +3,7 @@ import { routeVoiceAvatar } from './voice-fixture-routes';
 
 async function fixture(page: Page) {
   await routeVoiceAvatar(page);
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=async()=>{throw new Error("Read-only voice fixture cannot write account data")};export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/calls.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const callSnapshot=()=>({call:window.voiceFixture.direct});export async function callsConfigured(){const f=window.voiceFixture;if(f.holdConfiguration)await new Promise(resolve=>f.releaseConfiguration=resolve);f.configurationReturns=(f.configurationReturns||0)+1;return f.configured;}` }));
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices,options={}){
     const f=window.voiceFixture;f.mounts.push({roomId,voiceOnly:options.voiceOnly});f.telemetry.push(options.onTelemetry);

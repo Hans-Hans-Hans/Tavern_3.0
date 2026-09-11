@@ -20,6 +20,14 @@ API and gateway/client, with optional calls, integrations and operations profile
 require enabling every optional service. The image-only `compose.dockhand*.yaml`
 files require all selected images to be available already.
 
+When troubleshooting a failed deployment, rebuild from that same stack and
+source selection. A successful cached local build tagged `tavern:0.3.0` does not
+confirm that a separate GitHub/Dockhand `0.4.0` build was updated. The image tag
+alone is not proof of source revision. In Dockhand, retain the existing project
+and volumes, select `V3`, refresh its Git source and rebuild/redeploy the existing
+stack. To identify Compose projects without printing environment variables, run
+`sudo docker compose ls --format json` on the Docker host.
+
 Remote build contexts fetch source from this public repository. Builds need
 outbound access to GitHub, npm, PyPI and base-image registries. Runtime services
 and persistent data remain on your Docker host; a GitHub token is not required.

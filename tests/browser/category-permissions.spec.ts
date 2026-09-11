@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 test('category permission editor saves real overrides and preserves unrelated concurrent changes', async ({ page }) => {
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};export const mutateMatrixAccountData=()=>{throw new Error("Unexpected account-data write in category permissions fixture");};' }));
   await page.route('**/category-permissions-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/category-permissions.tsx')).mountFixture();</script></body></html>` }));
   await page.goto('/category-permissions-test'); await page.getByRole('combobox', { name: 'Role', exact: true }).selectOption('everyone');
   await page.getByRole('combobox', { name: 'Send messages and encrypted content', exact: true }).selectOption('-1');

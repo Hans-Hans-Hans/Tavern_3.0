@@ -14,7 +14,7 @@ import './voice-channel.css';
 
 export function useConferenceParticipants(roomId: string | null) {
   type Participant = { userId: string; name: string; devices: number; deviceIds: string[] };
-  const [observed, setObserved] = useState<{ current: () => boolean; participants: Participant[] } | null>(null);
+  const [observed, setObserved] = useState<{ roomId: string; current: () => boolean; participants: Participant[] } | null>(null);
   useEffect(() => {
     let detach = () => {}, bound: unknown, scope: unknown, stopped = false;
     const update = () => {
@@ -36,12 +36,12 @@ export function useConferenceParticipants(roomId: string | null) {
         const ids = members.get(member.userId) || new Set<string>(); ids.add(member.deviceId); members.set(member.userId, ids);
       }
       const next = [...members].slice(0, 128).map(([userId, ids]) => ({ userId, devices: ids.size, deviceIds: [...ids].sort(), name: room.getMember(userId)?.name || userId }));
-      setObserved(previous => previous?.current() && JSON.stringify(previous.participants) === JSON.stringify(next) ? previous : { current, participants: next });
+      setObserved(previous => previous?.roomId === roomId && previous.current() && JSON.stringify(previous.participants) === JSON.stringify(next) ? previous : { roomId: roomId!, current, participants: next });
     };
     update(); const off = onMatrixUpdate(update);
     return () => { stopped = true; detach(); off(); };
   }, [roomId]);
-  return observed?.current() ? observed.participants : [];
+  return observed?.roomId === roomId && observed.current() ? observed.participants : [];
 }
 
 export function VoiceChannel({ roomId, name, disabled, onProfile }: { roomId: string; name: string; disabled?: boolean; onProfile: (id: string) => void }) {

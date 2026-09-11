@@ -105,7 +105,15 @@ test('awaited record decryption rechecks current membership, ignore rules, room 
     await fixture(page); await expect(page.getByRole('button', { name: 'Refresh results' })).toBeEnabled();
     await page.evaluate(async () => {
       const f = (window as any).searchFixture, decrypt = SubtleCrypto.prototype.decrypt;
-      SubtleCrypto.prototype.decrypt = async function (...args) { const plain = await decrypt.apply(this, args); await new Promise<void>(resolve => { f.releaseQuery = resolve; }); return plain; };
+      f.holdQuery = true; const waiting: (() => void)[] = [];
+      SubtleCrypto.prototype.decrypt = async function (...args) {
+        const plain = await decrypt.apply(this, args);
+        if (f.holdQuery) await new Promise<void>(resolve => {
+          waiting.push(resolve);
+          f.releaseQuery = () => { f.holdQuery = false; for (const release of waiting.splice(0)) release(); };
+        });
+        return plain;
+      };
       f.restoreDecrypt = () => { SubtleCrypto.prototype.decrypt = decrypt; };
       const search = f.search;
       void search.searchMessages('roadmap').then(result => { f.queryResult = { ok: true, ids: result.hits.map(hit => hit.id) }; }, () => { f.queryResult = { ok: false }; });

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 async function fixture(page: Page, query = '') {
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'application/javascript', body: 'export const getMatrixClient=()=>window.profileFixture?.client;export const onMatrixUpdate=fn=>{window.profileFixture.listeners.add(fn);return()=>window.profileFixture.listeners.delete(fn)};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'application/javascript', body: 'export const mutateMatrixAccountData=()=>{throw new Error("Unexpected navigation account-data write in profile-policy-editor fixture");};export const getMatrixClient=()=>window.profileFixture?.client;export const onMatrixUpdate=fn=>{window.profileFixture.listeners.add(fn);return()=>window.profileFixture.listeners.delete(fn)};' }));
   // Keep the actual profile editor, policy resolution and publishers. Unrelated
   // server administration panels are outside this focused browser fixture.
   const boundaries: Record<string, string> = { 'category-menu': 'CategoryMenu', 'server-roles': 'ServerRoleBadges', 'category-permissions': 'CategoryPermissions', 'account-creation-date': 'AccountCreationDate', 'server-nickname': 'ServerNicknameNotice', 'server-afk': 'ServerAfkSettings', 'server-eligibility': 'ServerEligibilitySettings', 'server-profile-policy': 'ServerProfilePolicySettings' };

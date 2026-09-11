@@ -4,7 +4,7 @@ async function fixture(page: Page, query = '', splash = 'mxc://local/shared-invi
   const requests: { url: string; headers: Record<string, string> }[] = [];
   await page.goto('about:blank');
   const png = Buffer.from(await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 12; canvas.height = 4; canvas.getContext('2d')!.fillRect(0, 0, 12, 4); return canvas.toDataURL('image/png').split(',')[1]; }), 'base64');
-  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};export const matrixApi=async()=>{};' }));
+  await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=()=>{throw new Error("Unexpected navigation account-data write in server-branding fixture");};export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=()=>()=>{};export const matrixApi=async()=>{};' }));
   await page.route('**/api/matrix/_matrix/client/v1/media/thumbnail/**', async route => { requests.push({ url: route.request().url(), headers: await route.request().allHeaders() }); await route.fulfill({ contentType: 'image/png', body: png }); });
   await page.route('**/api/invitations/preview/*', route => route.fulfill({ json: { roomName: 'Gaming', roomId: '!server:local', requiresEmail: !splash, splashMxc: splash } }));
   await page.route('**/api/invitations/redeem', route => route.fulfill({ json: { roomId: '!server:local' } }));
