@@ -10,7 +10,9 @@ permissions:
   contents: read
 concurrency:
   group: tavern-checks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Let the long native call checks finish on V3; keep only the newest pending run.
+  # PR and temporary-branch runs still cancel when superseded.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/V3' }}
 jobs:
   build-and-container:
     runs-on: ubuntu-latest
