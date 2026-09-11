@@ -32,6 +32,26 @@ Remote build contexts fetch source from this public repository. Builds need
 outbound access to GitHub, npm, PyPI and base-image registries. Runtime services
 and persistent data remain on your Docker host; a GitHub token is not required.
 
+## Dockhand Git sync browser error
+
+If Dockhand shows `gitStack is undefined` or cannot read `gitStack.id` while
+syncing, its Git-stack control is missing its expected source record. The
+[matching Dockhand control](https://github.com/Finsys/dockhand/blob/v1.0.46/src/routes/stacks/%2Bpage.svelte#L2048)
+is separate from Tavern's Compose build. The exact missing-record race is not
+confirmed, and no fixed Dockhand release has been established for this error.
+
+Close the dialog, hard-refresh Dockhand, and check the deployment result before
+retrying: its [deployment job](https://github.com/Finsys/dockhand/blob/v1.0.46/src/routes/api/git/stacks/%5Bid%5D/deploy-stream/%2Bserver.ts#L64)
+can continue after the browser control fails. If Tavern already has a Git sync
+schedule, **Schedules > Tavern's Git sync > Run now** uses the schedule's stored
+identifier and avoids this particular control; it can skip deployment when no
+changes are detected. Keep the existing stack and its saved environment.
+
+For a CLI fallback, first run `sudo docker compose ls` on the Docker host to
+identify the current project and Compose path. Dockhand may store that path
+inside its own container, so do not assume a separate `~/tavern` checkout is
+the running deployment or replace its environment with sample values.
+
 ## Dockhand settings
 
 | Setting | Value |
