@@ -210,13 +210,17 @@ export async function historyRecoverySmoke({ admin, adminSession, origin, api, r
     stage = 'unlocking a fresh browser using its login password and emailed code';
     const emailDevice=await freshPage();await login(emailDevice,USERNAME,credential);
     const emailSession=await session(emailDevice);
+    stage = 'waiting for the automatic email recovery prompt';
     const dialog=emailDevice.getByRole('dialog',{name:'Unlock your message history',exact:true});
     await expect(dialog).toBeVisible({timeout:60000});
     await expect(dialog.getByLabel('Password used to protect history',{exact:true})).toHaveCount(0);
+    stage = 'reading the owned history recovery email';
     const historyCode=await mailCode('Unlock your message history',/recovery code is (\d{6})/);
+    stage = 'rejecting an incorrect email recovery code';
     await dialog.getByLabel('Email verification code',{exact:true}).fill(historyCode==='000000'?'111111':'000000');
     await dialog.getByRole('button',{name:'Unlock history',exact:true}).click();
     await expect(dialog.getByRole('alert')).toContainText('The verification code is incorrect.');
+    stage = 'restoring native history with the verified email code';
     await dialog.getByLabel('Email verification code',{exact:true}).fill(historyCode);
     await dialog.getByRole('button',{name:'Unlock history',exact:true}).click();
     await expect(dialog).toHaveCount(0,{timeout:120000});

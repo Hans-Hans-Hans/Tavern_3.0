@@ -26,6 +26,13 @@ test('native smoke accepts an already restored workspace without onboarding', as
   await dismissOptionalOnboarding(page);
 });
 
+test('native smoke leaves the intended email recovery prompt open over the ready workspace',async({page})=>{
+  await page.setContent('<main aria-hidden="true"><button>Tavern home</button></main><section role="dialog" aria-label="Unlock your message history"><label>Email verification code<input></label></section>');
+  await dismissOptionalOnboarding(page);
+  await expect(page.getByRole('dialog',{name:'Unlock your message history',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Email verification code')).toHaveValue('');
+});
+
 test('native smoke still fails when onboarding remains unusable', async ({ page }) => {
   await page.setContent(shell.replace('id="finish"', 'id="finish" disabled'));
   await expect(dismissOptionalOnboarding(page)).rejects.toThrow(/Timeout/);
