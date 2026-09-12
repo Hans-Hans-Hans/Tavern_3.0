@@ -126,14 +126,19 @@ export async function cancelVerification() { const current=request,epoch=generat
 
 export async function securityStatus() {
   const c = required(), crypto = c.getCrypto()!, own = owner(c);
-  const [identity, crossSigning, storage, backupVersion, device, recovery, backup, serverIdentity] = await Promise.all([
+  const [identity, crossSigning, storage, backupVersion, device, recovery, backup] = await Promise.all([
     crypto.isCrossSigningReady(), crypto.getCrossSigningStatus(), crypto.isSecretStorageReady(),
     crypto.getActiveSessionBackupVersion(), crypto.getDeviceVerificationStatus(c.getUserId()!, c.getDeviceId()!),
-    c.secretStorage.getKey(), discoverBackup(c), crypto.userHasCrossSigningKeys(c.getUserId()!),
+    c.secretStorage.getKey(), discoverBackup(c),
   ]);
   own.check();
   const canRestoreBackup = backup ? (await crypto.isKeyBackupTrusted(backup)).matchesDecryptionKey : false;
   own.check();
+  // Status observes the public identity already synchronized to this device.
+  // userHasCrossSigningKeys always queries our own keys, even with its default
+  // arguments. Calling it in a keys-changed observer creates redundant queries.
+  // Setup/recovery actions below still perform fresh server checks before writes.
+  const serverIdentity = crossSigning.publicKeysOnDevice === true;
   return { identity, crossSigning, storage, backupVersion, verified: device?.isVerified() ?? false, serverIdentity,
     recoveryConfigured: !!recovery, serverBackupVersion: backup?.version ?? null, canRestoreBackup };
 }

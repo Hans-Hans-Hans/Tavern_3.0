@@ -11,7 +11,7 @@ function fixture({identity=false,storage=false,backup=false}={}) {
     createRecoveryKeyFromPassphrase:async()=>({privateKey:new Uint8Array(32).fill(7),encodedPrivateKey:'valid'}),
     bootstrapSecretStorage:async opts=>{calls.push(['storage',opts]);if(opts.createSecretStorageKey){const key=await opts.createSecretStorageKey();assert.equal(key.privateKey[0],7);metadata=['key',{algorithm:'m.secret_storage.v1.aes-hmac-sha2',mac:'mac',iv:'iv'}];cache.key=new Uint8Array(key.privateKey);}if(opts.setupNewKeyBackup)backup=true;},
     bootstrapCrossSigning:async opts=>{calls.push(['sign',opts]);if(failSigning)throw new Error('Wrong password');identity=true;authenticated=true;},
-    getCrossSigningStatus:async()=>({privateKeysInSecretStorage:true,privateKeysCachedLocally:{masterKey:authenticated,selfSigningKey:authenticated,userSigningKey:authenticated}}),
+    getCrossSigningStatus:async()=>({publicKeysOnDevice:identity,privateKeysInSecretStorage:true,privateKeysCachedLocally:{masterKey:authenticated,selfSigningKey:authenticated,userSigningKey:authenticated}}),
     checkKeyBackupAndEnable:async()=>{},loadSessionBackupPrivateKeyFromSecretStorage:async()=>{},restoreKeyBackup:async()=>{},
     getActiveSessionBackupVersion:async()=>backup?'1':null,
     isSecretStorageReady:async()=>!!metadata,getDeviceVerificationStatus:async()=>({isVerified:()=>authenticated}),isKeyBackupTrusted:async()=>({matchesDecryptionKey:authenticated&&backup,trusted:authenticated}),
@@ -22,6 +22,18 @@ function fixture({identity=false,storage=false,backup=false}={}) {
 }
 test('existing public identity and secret storage block fresh setup without mutations',async()=>{
   for(const value of [{identity:true},{storage:true},{backup:true}]){const f=fixture(value);await assert.rejects(f.api.generateRecoveryKey());assert.equal(f.calls.length,0);}
+});
+
+test('displaying a locked public signing identity does not download keys on each status refresh',async()=>{
+  const f=fixture({identity:true});f.crypto.isCrossSigningReady=async()=>false;
+  f.crypto.userHasCrossSigningKeys=async()=>{throw new Error('A display refresh must not force a signing-key query.');};
+  for(let i=0;i<5;i++){const status=await f.api.securityStatus();assert.equal(status.serverIdentity,true);assert.equal(status.identity,false);}
+});
+
+test('fresh setup still checks the server when another device created an identity after the cached display read',async()=>{
+  const f=fixture();assert.equal((await f.api.securityStatus()).serverIdentity,false);
+  f.crypto.userHasCrossSigningKeys=async()=>true;
+  await assert.rejects(f.api.generateRecoveryKey(),/already has encryption/);assert.equal(f.calls.length,0);
 });
 test('UI cleanup cannot erase the operation-owned recovery key',async()=>{
   const f=fixture(),key=await f.api.generateRecoveryKey();let release;const gate=new Promise(r=>release=r);let count=0;

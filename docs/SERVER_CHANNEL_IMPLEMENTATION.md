@@ -204,6 +204,23 @@ and timeline before returning results. This avoids an empty conversation after
 call activity pushes messages outside the first sync window. Manual pagination
 remains available; no background scan of all conversations is introduced.
 
+At `baad710`, three native direct audio/cleanup probes and the conference steps
+passed again, but Games reload persistence still failed. The current native
+layout endpoint returned the saved order for both accounts; Alice's new document
+instead replayed older incremental layouts. Synapse 1.160's sync response cache
+keys omit the SDK's initial-sync cachebuster and retain completed responses for
+two minutes by default. The initializer now disables only that completed-response
+cache. The migration's fresh, existing-state and idempotence tests pass; the full
+native reload acceptance must still confirm this correction. See the pinned
+[request key](https://github.com/element-hq/synapse/blob/v1.160.0/synapse/rest/client/sync.py)
+and [response cache](https://github.com/element-hq/synapse/blob/v1.160.0/synapse/handlers/sync.py).
+
+Recovery status reads the public signing identity already synchronized to the
+device instead of forcing another key download on every status notification.
+Fresh setup actions still check server state before changing recovery settings.
+Twenty-one focused security/email model cases and fifteen recovery browser
+cases pass; the production build passes.
+
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be
 removed from another device by changing an audience or deleting a server.

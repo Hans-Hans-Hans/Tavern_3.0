@@ -56,6 +56,12 @@ data paths, volumes and environment when redeploying.
   reviewed channel/server deletion. Worker tables and deletion journals are
   additive. Existing room IDs, categories, keys and permissions are preserved;
   no existing room is automatically made private or deleted.
+- The initializer also sets `caches.sync_response_cache_duration` to `0s`.
+  Tavern reloads start a fresh room sync while retaining device encryption keys;
+  completed sync responses must not replay an older initial snapshot. The
+  migration saves `homeserver.before-sync-cache.yaml`, preserves other cache
+  tuning and credentials, and requires a Synapse restart. In-flight requests
+  still coalesce; repeated completed requests now require fresh processing.
 
 See [channel navigation](CHANNEL_NAVIGATION.md), [room deletion](ROOM_DELETION.md)
 and [validation](VALIDATION.md) for the supported scope and observed checks.

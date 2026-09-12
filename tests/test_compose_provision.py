@@ -46,6 +46,27 @@ class ProvisionTests(unittest.TestCase):
         self.run_init()
         self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
 
+    def test_sync_cache_migration_preserves_identity_and_unrelated_cache_tuning(self):
+        self.run_init()
+        config = self.config()
+        config['caches'] = {'sync_response_cache_duration': '2m', 'global_factor': 0.7, 'per_cache_factors': {'get_users_in_room': 2}}
+        source = self.root / 'synapse/homeserver.yaml'
+        source.write_text(yaml.safe_dump(config), encoding='utf-8')
+        original = source.read_bytes()
+        self.run_init()
+        expected = {**config, 'caches': {**config['caches'], 'sync_response_cache_duration': '0s'}}
+        self.assertEqual(self.config(), expected)
+        backup = self.root / 'synapse/homeserver.before-sync-cache.yaml'
+        self.assertEqual(backup.read_bytes(), original)
+        migrated = source.read_bytes()
+        self.run_init()
+        self.assertEqual(source.read_bytes(), migrated)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_new_server_does_not_replay_completed_sync_responses(self):
+        self.run_init()
+        self.assertEqual(self.config()['caches']['sync_response_cache_duration'], '0s')
+
     def test_optional_system_notice_worker_tracks_integration_profile_without_rotating_identity(self):
         self.run_init()
         def module():

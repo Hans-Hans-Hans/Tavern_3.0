@@ -113,6 +113,8 @@ def provision(root, env):
             raise ConfigurationError('TAVERN_DOMAIN differs from the existing Synapse server_name. Restore the original hostname; changing it breaks account identities.')
         if config.get('database', {}).get('name') != 'psycopg2':
             raise ConfigurationError('Existing Synapse database is not PostgreSQL. Complete a reviewed migration before using this stack.')
+        if not isinstance(config.get('caches', {}), dict):
+            raise ConfigurationError('Synapse caches must be a mapping. Restore the current configuration before updating.')
     password_path = root / 'secrets/db_password'
     if config is not None:
         existing_password = str(config.get('database', {}).get('args', {}).get('password', ''))
@@ -138,6 +140,7 @@ def provision(root, env):
             'trusted_key_servers': [], 'allow_public_rooms_without_auth': False,
             'allow_public_rooms_over_federation': False, 'max_upload_size': '10M',
             'log_config': '/data/log.config', 'suppress_key_server_warning': True,
+            'caches': {'sync_response_cache_duration': '0s'},
             'rc_login': {'address': {'per_second': 0.17, 'burst_count': 20},
                          'account': {'per_second': 0.17, 'burst_count': 5},
                          'failed_attempts': {'per_second': 0.17, 'burst_count': 3}},
@@ -150,6 +153,7 @@ def provision(root, env):
               'root': {'level': level, 'handlers': ['console']}, 'disable_existing_loggers': False}, indent=2) + '\n')
     if calls:
         provision_calls(root, config, domain, turn_domain, str(public_ip))
+    install_sync_cache_policy(root, config)
     install_policy(root, config, integrations, audio_moderation)
     # Permissions only on known configuration files/directories; never walk existing media.
     for path in (synapse, config_path, synapse / 'log.config'):
@@ -170,6 +174,26 @@ def provision(root, env):
         os.chmod(root / 'operations-secret', 0o755)
         os.chmod(root / 'operations-secret/token', 0o644)
     print('Tavern configuration validated. Existing identity, database credentials, and media preserved.')
+
+
+def install_sync_cache_policy(root, config):
+    # Reload starts a fresh in-memory Matrix sync while retaining device keys.
+    # Synapse's completed-response cache can replay a previous initial snapshot
+    # and its incremental responses for two minutes. Keep in-flight coalescing,
+    # but generate fresh responses once each request has completed.
+    caches = config.setdefault('caches', {})
+    if caches.get('sync_response_cache_duration') in ('0s', 0):
+        return
+    original = root / 'synapse/homeserver.yaml'
+    backup = root / 'synapse/homeserver.before-sync-cache.yaml'
+    write_new(backup, original.read_bytes().decode('utf-8'), 0o640)
+    own(backup, 991)
+    caches['sync_response_cache_duration'] = '0s'
+    pending = root / 'synapse/homeserver.yaml.pending'
+    pending.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+    os.chmod(pending, 0o640)
+    own(pending, 991)
+    pending.replace(original)
 
 
 def install_policy(root, config, integrations=False, audio_moderation=False):
