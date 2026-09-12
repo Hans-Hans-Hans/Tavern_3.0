@@ -46,8 +46,11 @@ export function mountFixture() {
       if (w.failSave) throw new Error('Fixture server rejected this layout.');
       if (value['io.tavern.previous_event'] !== w.revision) throw new Error('The layout changed elsewhere.');
       const { 'io.tavern.previous_event': _, ...saved } = value;
-      w.layout = saved; w.saves.push({ id, type, value }); w.revision = '$layout:' + w.saves.length;
-      localStorage.setItem('fixture-layout', JSON.stringify(saved)); w.emit(); return { event_id: w.revision };
+      w.saves.push({ id, type, value }); w.revision = '$layout:' + w.saves.length;
+      localStorage.setItem('fixture-layout', JSON.stringify(saved));
+      const sync = () => { w.layout = saved; w.emit(); };
+      if (w.holdSync) w.releaseSync = sync; else sync();
+      return { event_id: w.revision };
     },
     getAccountDataFromServer: async (type: string) => structuredClone(w.prefs[type] || {}),
     setAccountData: async (type: string, value: any) => { w.prefs[type] = value; w.emit(); },

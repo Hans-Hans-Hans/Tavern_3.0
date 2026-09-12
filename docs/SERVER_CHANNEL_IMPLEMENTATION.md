@@ -110,6 +110,10 @@ commits after the initial observation. Its fixture controls the SDK boundary;
 this establishes local rendering and ordering behavior, not network latency or
 hundreds of live voice participants. All thirteen channel-navigation browser
 regressions pass, including mobile Move controls and stale-permission rejection.
+A further regression reproduces a layout write response arriving before native
+sync. The sidebar now keeps its optimistic order visible and further edits
+pending until that order arrives, preventing a second drag against the old
+revision. All fourteen navigation cases pass with this correction.
 
 The actual isolated Synapse/PostgreSQL/LiveKit gates have passed private audience
 admission, invited-join rejection, durable membership removal/regrant and native
@@ -156,7 +160,10 @@ At `c0670f9`, all three consecutive native calls passed with bidirectional
 received audio and cleanup/reload. The same run passed fresh-device encrypted
 bot delivery, private audience admission/revocation, native deletion and
 conference connection/leave, then stopped at the Games drag/category stage.
-The complete native workflow with that fix remains required.
+At `de12e7d`, all 452 browser cases and three more consecutive native direct
+calls passed. Native acceptance again stopped at the Games drag/category stage;
+the delayed-layout-sync regression above subsequently failed before its fix and
+passed afterward. The complete native workflow with these fixes remains required.
 
 The selected conversation now reads at most three earlier SDK history pages
 when its initial sync contains only control events. It keeps undecryptable rows,

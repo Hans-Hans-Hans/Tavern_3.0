@@ -49,7 +49,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const layout = serverId && owner.current() ? readServerLayout(serverId) : empty;
   const signature = layoutKey(layout), nativeCollapsed = serverId ? collapsedCategories(serverId) : [];
   const [version, refresh] = useState(0), [optimistic, setOptimistic] = useState<{ owner: typeof owner; baseline: string; next: ServerLayout } | null>(null);
-  const [collapse, setCollapse] = useState<{ owner: typeof owner; ids: string[] } | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [collapse, setCollapse] = useState<{ owner: typeof owner; ids: string[] } | null>(null), [saving, setBusy] = useState(false), [error, setError] = useState('');
   const [editor, setEditor] = useState<{ owner: typeof owner; value: Editor } | null>(null);
   const [drag, setDrag] = useState<NavigationDrag | null>(null), [drop, setDrop] = useState<NavigationDrop | null>(null), [hoverExpanded, setHoverExpanded] = useState('');
   const nav = useRef<HTMLElement>(null), live = useRef({ owner, layout, signature }); live.current = { owner, layout, signature };
@@ -58,6 +58,10 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const categoryRequest = useRef(0);
   const hover = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null), scrolling = useRef<{ element: HTMLElement; delta: number } | null>(null), frame = useRef<number | null>(null);
   const shown = optimistic?.owner === owner && owner.current() && (signature === optimistic.baseline || signature === layoutKey(optimistic.next)) ? optimistic.next : layout;
+  // The write response can precede Matrix sync. Keep the optimistic order
+  // visible, but do not start another edit against the old native revision.
+  const awaitingSync = optimistic?.owner === owner && owner.current() && signature === optimistic.baseline && signature !== layoutKey(optimistic.next);
+  const busy = saving || awaitingSync;
   const collapsed = collapse?.owner === owner ? collapse.ids : nativeCollapsed;
   const policy = serverId ? readRolePolicy(serverId) : null;
   const canMove = !!serverId && owner.current() && canEditCommunity(serverId, 'layout') && (!policy || effectiveRolePermissions(policy, actor || '').has('manage_channels'));
@@ -110,7 +114,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
     if (layoutKey(live.current.layout) !== layoutKey(previous) && layoutKey(shown) !== layoutKey(previous)) throw new Error('The layout changed elsewhere. Reopen these controls.');
   }
   async function save(next: ServerLayout, previous = shown) {
-    if (operation.current) throw new Error('Wait for the current layout change to finish.');
+    if (operation.current || busy) throw new Error('Wait for the current layout change to finish.');
     assertEditing(previous);
     const freshPolicy = readRolePolicy(serverId!);
     if (freshPolicy && !mayEditCategoryLayout(freshPolicy, actor || '', previous, next)) throw new Error('Only the server owner can move channels across category permission boundaries.');
@@ -130,7 +134,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   }
   const report = (work: Promise<unknown>) => { void work.catch(failure => { if (owner.current()) setError((failure as Error).message); }); };
   function openEditor(type: Editor['type'], item: NavigationDrag = { kind: 'category', id: crypto.randomUUID() }) {
-    if (!owner.current() || operation.current) return;
+    if (!owner.current() || operation.current || busy) return;
     if (type !== 'permissions' && !canMove) return;
     if (type === 'permissions' && (!serverId || !canManageCategoryPermissions(serverId))) return;
     const category = shown.categories.find(value => value.id === item.id), channel = shown.channels.find(value => value.id === item.id);
@@ -196,6 +200,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
 
   return <><nav onDragLeave={event => { const next = event.relatedTarget; if (!(next instanceof Node) || !event.currentTarget.contains(next)) clearDragTarget(); }} ref={nav} aria-label='Channels' className='community-channel-navigation channel-navigation' aria-busy={busy}>
     {canMove && <div className='channel-navigation-tools'><span>CHANNELS</span><button type='button' className='channel-row-action' disabled={busy || shown.categories.length >= 100} aria-label='Create category' onClick={() => openEditor('create')}><Plus size={16}/></button></div>}
+    {awaitingSync && !saving && <p className='muted-copy' role='status'>Waiting for server updates…</p>}
     {groups.map(group => {
       const ordered = serverId ? shown.channels.filter(channel => channel.category === group.id).flatMap(channel => displayChannels.get(channel.id) || []) : [...displayChannels.values()];
       const hidden = !!group.id && collapsed.includes(group.id) && hoverExpanded !== group.id, readable = ordered.filter(channel => !muted.includes(channel.id));

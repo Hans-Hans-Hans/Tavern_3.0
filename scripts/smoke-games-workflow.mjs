@@ -55,6 +55,7 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     const source = row(alice, id), target = destination === games || destination === other ? category(alice, destination) : row(alice, destination);
     dragStage = 'locate';
     await source.scrollIntoViewIfNeeded(); await target.scrollIntoViewIfNeeded();
+    await expect(source).toHaveAttribute('draggable', 'true', { timeout: 15000 });
     const transfer = await alice.evaluateHandle(() => new DataTransfer());
     dragStage = 'start';
     await source.dispatchEvent('dragstart', { dataTransfer: transfer });

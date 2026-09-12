@@ -17,7 +17,16 @@ rejects retired readers. The complete combined native workflow remains open.
 connection. Thirty-four focused model cases, thirteen mounted browser cases
 and the production build passed. The browser proof verifies samples become
 silent and audible again on an actual WebRTC receiver. Its native two-user
-voice/sidebar acceptance remains in progress.
+voice/sidebar acceptance remains open: all 452 browser cases and three native
+direct calls passed, but its native run again stopped at Games drag/category.
+
+The large-sidebar fixture passed with 125 channels and 26 categories, exact
+position persistence and zero React commits for thirty unrelated sync updates.
+A separate write-response-before-sync case then reproduced a real readiness
+gap: the sidebar accepted another drag while still holding the old native
+revision. Keeping further edits pending until native sync closes that gap; all
+fourteen navigation browser cases pass with the fix. The Games probe now waits
+for a genuinely draggable source before dispatching its synthetic drag events.
 
 The actual TLS SMTP/native history recovery gate passed at `f958030` and again
 at `f6190e8` and `0dd7afe`: enrollment, automatic new-device email prompt,

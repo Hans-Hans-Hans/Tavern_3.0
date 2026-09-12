@@ -95,6 +95,25 @@ test('save rejection rolls back optimistic order and keeps the user draft availa
   await expect(page.locator('.channel-category').filter({ has: category(page, 'games') }).locator('[data-channel-id="!voice:local"]')).toHaveCount(1); await expect(page.getByRole('combobox', { name: 'Category', exact: true })).toHaveValue('chat');
 });
 
+test('a write acknowledgement before native sync keeps further drags pending until the saved layout arrives', async ({ page }) => {
+  await setup(page); await page.evaluate(() => { (window as any).holdSync = true; });
+  await moveDialog(page, 'Lounge'); await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('chat');
+  await page.getByRole('button', { name: 'Save position' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => typeof (window as any).releaseSync)).toBe('function');
+  await expect(page.getByRole('navigation', { name: 'Channels', exact: true })).toHaveAttribute('aria-busy', 'true');
+  await expect(channel(page, 'general')).toHaveAttribute('draggable', 'false');
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await channel(page, 'general').dispatchEvent('dragstart', { dataTransfer: transfer });
+  await category(page, 'games').dispatchEvent('drop', { dataTransfer: transfer });
+  await transfer.dispose();
+  expect(await page.evaluate(() => (window as any).saves.length)).toBe(1);
+  await page.evaluate(() => { const w = window as any; w.holdSync = false; w.releaseSync(); });
+  await expect(channel(page, 'general')).toHaveAttribute('draggable', 'true');
+  await drag(page, channel(page, 'rules'), channel(page, 'general'), 'before');
+  await expect.poll(() => page.evaluate(() => (window as any).saves.length)).toBe(2);
+});
+
 test('unrelated updates and new channel-array references preserve an open draft; concurrent layout retires drag', async ({ page }) => {
   await setup(page); await moveDialog(page, 'Lounge'); await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('chat');
   await page.evaluate(() => { for (let i = 0; i < 10; i++) { (window as any).emit(); (window as any).redraw(); } }); await expect(page.getByRole('combobox', { name: 'Category', exact: true })).toHaveValue('chat');
