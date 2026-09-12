@@ -44,7 +44,7 @@ export async function roomRemovalSmoke({ alice, aliceSession, origin, api }) {
   await session();
   const server = await create('server', true), first = await create('channel one', false, server), second = await create('channel two', false, server);
   await put(server, 'io.tavern.roles', { version: 1, owner: ACTOR, roles: [{ id: 'everyone', name: 'Member', position: 0, permissions: ['send_messages'] }], members: {}, overrides: {},
-    channelAdmissionVersion: 1, channelAdmissions: { [first]: { roleIds: ['everyone'], userIds: [] } } });
+    channelAdmissionVersion: 1, channelAdmissions: { [first]: { roleIds: ['everyone'], userIds: [] } }, 'io.tavern.previous_event': null });
   await put(server, 'io.tavern.server.layout', { version: 1, categories: [{ id: 'games', name: 'Games' }], channels: [{ id: first, category: 'games' }, { id: second, category: '' }] });
   async function remove(root, expected) {
     for (const id of expected) await inspect(id);

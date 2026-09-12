@@ -29,14 +29,15 @@ Validation: four pure ordering tests and mounted browser coverage exercise saved
 
 ## Remaining sidebar requirements
 
-Channel and server management still provide archive and leave operations, not a
-channel/server deletion workflow. Deletion needs native removal and recoverable
-partial-failure handling. The pinned conference widget's
-self-deafen limitation is recorded in [voice sidebar](VOICE_SIDEBAR.md).
+Channel and server management now include a reviewed, resumable permanent
+[deletion workflow](ROOM_DELETION.md), with recovery from partial native removal
+and metadata cleanup. Its actual Synapse deletion gate remains pending. The
+pinned conference widget's self-deafen limitation is recorded in
+[voice sidebar](VOICE_SIDEBAR.md).
 
 The full two-user Games-category acceptance sequence, including a role-restricted
 voice join and cross-client ordering after refresh, remains a deployed acceptance
-gate. Component, native write-boundary and policy tests are recorded separately
+gate in `scripts/smoke-games-workflow.mjs`. Component, native write-boundary and policy tests are recorded separately
 from that gate in [validation](VALIDATION.md).
 
 ## Role-managed private channels
