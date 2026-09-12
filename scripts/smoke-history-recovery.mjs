@@ -175,6 +175,60 @@ export async function historyRecoverySmoke({ admin, adminSession, origin, api, r
     assert.deepEqual(await backup(fresh), originalBackup); assert.deepEqual(await signing(fresh), originalSigning);
     await closeSecurity(fresh); await shown(fresh, eventId, text);
     console.log('PASS: a fresh managed browser rejects a wrong key, preserves native backup/signing identity, and restores the real encrypted history using its saved recovery key.');
+    // Extend the same real native proof through the production email flow.
+    // Read only the owned run's loopback SMTP collector and exact unique recipient;
+    // neither message contents, codes, passwords nor key packages enter diagnostics.
+    const email = 'cihistory-' + nonce + '@example.test';
+    async function mailCode(subject, pattern) {
+      for(let attempt=0;attempt<40;attempt++){
+        const response=await fetch('http://127.0.0.1:18085/messages',{signal:AbortSignal.timeout(5000),redirect:'error'});
+        assert.equal(response.status,200);
+        const mail=await response.json();assert.ok(Array.isArray(mail.messages)&&mail.messages.length<=1000);
+        const message=mail.messages.findLast(item=>item.to===email&&typeof item.subject==='string'&&item.subject.includes(subject));
+        const code=typeof message?.text==='string'?message.text.match(pattern)?.[1]:null;
+        if(code)return code;
+        await new Promise(resolve=>setTimeout(resolve,250));
+      }
+      throw new Error('The isolated history verification email was not delivered.');
+    }
+    stage = 'verifying the ordinary account email through TLS SMTP';
+    await session(fresh,thirdSession);
+    const emailRequest=checked(await api(fresh,'/api/account/email/start',{email,password:credential}));
+    const emailCode=await mailCode('Verify your email',/verification code is (\d{6})/);
+    checked(await api(fresh,'/api/account/email/complete',{challengeId:emailRequest.challengeId,code:emailCode}));
+    assert.equal((await session(fresh,thirdSession)).emailVerified,true);
+    stage = 'enabling password-protected email history recovery';
+    panel=await openSecurity(fresh);
+    const emailPanel=panel.locator('section.settings-section').filter({has:fresh.getByRole('heading',{name:'Email history recovery',exact:true})});
+    await expect(emailPanel.getByRole('button',{name:'Enable email recovery',exact:true})).toBeEnabled();
+    await emailPanel.getByLabel('Password for email recovery',{exact:true}).fill(credential);
+    await emailPanel.getByRole('button',{name:'Enable email recovery',exact:true}).click();
+    await expect(emailPanel.getByText('Email history recovery is enabled.',{exact:true})).toBeVisible({timeout:60000});
+    assert.equal(checked(await api(fresh,'/api/account/history')).configured,true);
+    assert.deepEqual(await backup(fresh),originalBackup);assert.deepEqual(await signing(fresh),originalSigning);
+    await closeSecurity(fresh);
+    stage = 'unlocking a fresh browser using its login password and emailed code';
+    const emailDevice=await freshPage();await login(emailDevice,USERNAME,credential);
+    const emailSession=await session(emailDevice);
+    const dialog=emailDevice.getByRole('dialog',{name:'Unlock your message history',exact:true});
+    await expect(dialog).toBeVisible({timeout:60000});
+    await expect(dialog.getByLabel('Password used to protect history',{exact:true})).toHaveCount(0);
+    const historyCode=await mailCode('Unlock your message history',/recovery code is (\d{6})/);
+    await dialog.getByLabel('Email verification code',{exact:true}).fill(historyCode==='000000'?'111111':'000000');
+    await dialog.getByRole('button',{name:'Unlock history',exact:true}).click();
+    await expect(dialog.getByRole('alert')).toContainText('The verification code is incorrect.');
+    await dialog.getByLabel('Email verification code',{exact:true}).fill(historyCode);
+    await dialog.getByRole('button',{name:'Unlock history',exact:true}).click();
+    await expect(dialog).toHaveCount(0,{timeout:120000});
+    await shown(emailDevice,eventId,text);await session(emailDevice,emailSession);
+    assert.deepEqual(await backup(emailDevice),originalBackup);assert.deepEqual(await signing(emailDevice),originalSigning);
+    stage = 'reusing emailed history keys on the now-known browser';
+    checked(await api(emailDevice,'/api/auth/logout',{}));await login(emailDevice,USERNAME,credential);
+    await shown(emailDevice,eventId,text);
+    await expect(emailDevice.getByRole('dialog',{name:'Unlock your message history',exact:true})).toHaveCount(0);
+    assert.deepEqual(await backup(emailDevice),originalBackup);assert.deepEqual(await signing(emailDevice),originalSigning);
+    console.log('PASS: production email history recovery verifies ordinary account email through TLS SMTP, rejects a wrong code, restores an actual encrypted message on a fresh device, and reuses its cached key on subsequent login.');
+
   } catch {
     // Playwright locator errors can quote fill() arguments. Never forward an
     // exception containing an account password or recovery key to CI logs.
