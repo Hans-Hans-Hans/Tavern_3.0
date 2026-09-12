@@ -71,8 +71,9 @@ apply. Email recovery uses the existing verified account email and SMTP service;
 
 Channel Overview contains name/topic and appearance, Behavior contains type and
 policy, Permissions contains private audiences and role/native permissions, and
-Moderation contains member actions. Invitations, integrations and reviewed deletion
-have their own applicable sections. All use the existing management helpers.
+Moderation contains member actions. Notifications contains the existing per-room
+notification editor, and the channel context action opens that section directly.
+Invitations, integrations and reviewed deletion have their own applicable sections. All use the existing management helpers.
 
 Selecting a voice channel opens its contextual view. Joining is explicit. Native
 MatrixRTC membership supplies the sidebar roster; the current embedded conference
@@ -107,15 +108,17 @@ The exact two-user Games workflow is encoded in
 [the native acceptance probe](../scripts/smoke-games-workflow.mjs): real UI creation,
 drag/drop across two clients, role-restricted voice, live sidebar participants,
 movement during the call, clean leave and reload persistence. Its latest run
-exposed the doubled API prefix now corrected; the entire workflow still needs
-its next native result.
+exposed the doubled API prefix now corrected. A later run stopped during the
+private-editor interaction; precise native UI diagnostics are in place, and the
+complete workflow remains an acceptance gate.
 
 [Direct audio acceptance](../scripts/smoke-direct-audio.mjs) requires three calls,
 actual relay media rates and synthetic audio samples in both existing remote
 playback streams. It retains failures even when confirmed cleanup permits other
-checks to continue. Repeated native direct audio, the final complete green workflow
-and audible phone/PC media on the deployed host remain open gates. No synthetic
-test can prove an unobserved physical microphone or speaker.
+checks to continue. All three consecutive calls passed at `371b91c`, including
+actual received audio and owned cleanup on each call. The final complete green
+workflow and audible phone/PC media on the deployed host remain open gates. No
+synthetic test can prove an unobserved physical microphone or speaker.
 
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be

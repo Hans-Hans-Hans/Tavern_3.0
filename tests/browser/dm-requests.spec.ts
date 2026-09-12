@@ -65,3 +65,17 @@ test('generic invitation review and invitation deep links route direct messages 
   await fixture(page, true, '#room=%21request%3Alocal'); await expect(page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
   expect(await page.evaluate(() => (window as any).workspaceCalls.some((call: any) => call[0] === 'messages' && call[2]?.conversation === '!request:local'))).toBe(false);
 });
+
+
+test('channel context notification settings opens the selected room notification editor', async ({ page }) => {
+  await fixture(page, true);
+  await page.getByRole('button', { name: 'Lobby', exact: true }).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Notification settings', exact: true }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('tab', { name: 'Notifications', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(sheet.getByRole('heading', { name: 'Channel notifications', exact: true })).toBeVisible();
+  await expect(sheet.getByRole('combobox', { name: 'Notify me about', exact: true })).toHaveValue('inherit');
+  await expect(page.getByRole('heading', { name: 'Lobby', level: 1, exact: true })).toBeHidden();
+  await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Lobby', level: 1, exact: true })).toBeVisible();
+});
