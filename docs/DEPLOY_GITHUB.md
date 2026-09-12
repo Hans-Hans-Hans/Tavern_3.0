@@ -6,6 +6,8 @@ Use [Installation and operations](INSTALLATION.md) for the complete setup and
 [V3 migration](V3_MIGRATION.md) before upgrading an existing deployment.
 For `OPEN_ID_ERROR` or HTTP 503 when joining a conference, see
 [call authentication repair and diagnostics](CALL_AUTHENTICATION.md).
+For larger attachments, see [admin file sizes and the one-time upload ceiling
+update](UPLOAD_LIMITS.md).
 
 ## Choose the source and Compose file
 

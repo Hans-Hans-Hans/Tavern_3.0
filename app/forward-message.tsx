@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { discardMatrixFile, getMatrixClient, matrixApi, matrixFileBlob, uploadMatrixFile } from '@/lib/matrix';
 import { messagePermissions } from '@/lib/interactions';
+import { maximumUploadBytes } from '@/lib/upload-limits';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { MediaAttachment } from './media-viewer';
 export function ForwardMessage({ message, onClose }: { message: { id: string; conversation_id: string; author_name: string; body: string; attachments: MediaAttachment[] }; onClose: () => void }) {
@@ -13,7 +14,7 @@ export function ForwardMessage({ message, onClose }: { message: { id: string; co
   async function forward() {
     if (!destination || busy) return; setBusy(true); setError(''); attempted.current = true;
     try {
-      if (withFiles && !uploaded.current) { for (let index = pending.current.length; index < message.attachments.length; index++) { const attachment = message.attachments[index]; setProgress('Preparing ' + attachment.name); const blob = await matrixFileBlob(attachment); const file = await uploadMatrixFile(new File([blob], attachment.name, { type: blob.type }), destination); pending.current.push(file.id); } uploaded.current = true; }
+      if (withFiles && !uploaded.current) { for (let index = pending.current.length; index < message.attachments.length; index++) { const attachment = message.attachments[index]; setProgress('Preparing ' + attachment.name); const blob = await matrixFileBlob(attachment, undefined, maximumUploadBytes); const file = await uploadMatrixFile(new File([blob], attachment.name, { type: blob.type }), destination); pending.current.push(file.id); } uploaded.current = true; }
       setProgress('Sending forwarded message');
       const body = 'Forwarded from ' + message.author_name.slice(0,100) + '\n' + message.body.slice(0, 6500).split('\n').map(line => '> ' + line).join('\n').slice(0,6000) + '\n\n' + (source.length<=1500?source:'');
       await matrixApi('send', { conversation: destination, body, suppressMentions:true, attachments: pending.current, nonce: nonce.current }); pending.current = []; toast.success('Message forwarded'); onClose();

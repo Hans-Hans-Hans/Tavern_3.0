@@ -198,7 +198,7 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
                 return web.json_response({})
             return web.json_response({"ok": True, "path": path})
 
-        upstream_app = web.Application()
+        upstream_app = web.Application(client_max_size=20 * 1024 * 1024)
         upstream_app.router.add_route("*", "/{path:.*}", upstream)
         self.upstream = TestServer(upstream_app)
         await self.upstream.start_server()

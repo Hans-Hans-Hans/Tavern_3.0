@@ -1,6 +1,7 @@
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
 import { readInstanceConfig } from './instance';
+import { maximumUploadBytes, readUploadLimit, uploadLimitMessage } from './upload-limits';
 import { markRoomsRead, roomReadCounts, watchRoomReadCounts } from './read-state';
 import { isPrivateDiscussion } from './conversation-routing';
 import { recentMessageHistory } from './recent-message-history';
@@ -293,11 +294,11 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  throw new Error('That action is not available.');
 }
 export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:AbortSignal;onProgress?:(loaded:number,total:number)=>void}={}){
- const c=requireClient(),room=roomRequired(roomId);if(file.size>10*1024*1024)throw new Error('Files can be up to 10 MB.');if(!file.size)throw new Error('This file is empty.');
+ const c=requireClient(),room=roomRequired(roomId);if(!file.size)throw new Error('This file is empty.');
  const actor=c.getUserId(),device=c.getDeviceId(),owner=accountArtworkOwner(),homeserver=c.getHomeserverUrl(),encryptedRoom=room.hasEncryptionStateEvent();
  const owned=()=>client===c&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===homeserver&&accountArtworkOwner()===owner&&c.getRoom(roomId)===room&&room.getMyMembership()==='join'&&room.hasEncryptionStateEvent()===encryptedRoom;
  const check=()=>{options.signal?.throwIfAborted();if(!owned())throw new Error('Your account, membership or encryption changed during upload. Attach the file again from the current conversation.');};
- check();
+ check();const maximum=await readUploadLimit(c);check();if(file.size>maximum)throw new Error(uploadLimitMessage(maximum));
  let descriptor:any=null,data:Blob=file;
  if(encryptedRoom){const {encryptAttachment}=await import('matrix-encrypt-attachment');check();const bytes=await file.arrayBuffer();check();const encrypted=await encryptAttachment(bytes);check();descriptor=encrypted.info;data=new Blob([encrypted.data],{type:'application/octet-stream'});}
  check();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});
@@ -334,9 +335,9 @@ export function snapshotMatrixAttachments(ids:readonly string[],roomId:string,pa
 export function discardMatrixFile(id:string){pendingFiles.delete(id);}
 export function snapshotMatrixSendAttempt(roomId:string,parent:string|undefined,nonce:string){return readMatrixSendAttempt(requireClient(),roomRequired(roomId),parent,nonce)||{};}
 export async function matrixFileBlob(a:any,signal?:AbortSignal,maxBytes=20*1024*1024){
- const c=requireClient();return readMatrixAttachment(c,a,maxBytes,()=>client===c,signal);
+ const c=requireClient(),owner=accountArtworkOwner(),actor=c.getUserId(),device=c.getDeviceId(),base=c.getHomeserverUrl();return readMatrixAttachment(c,a,maxBytes,()=>client===c&&accountArtworkOwner()===owner&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===base,signal);
 }
-export async function downloadMatrixFile(a:any){downloadBlob(await matrixFileBlob(a),a.name)}
+export async function downloadMatrixFile(a:any){downloadBlob(await matrixFileBlob(a,undefined,maximumUploadBytes),a.name)}
 function downloadBlob(blob:Blob,name:string){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000)}
 export async function exportMatrixMessages(){const c=requireClient();const messages=(await Promise.all(joined().map(r=>getRoomMessages(r)))).flat().filter(m=>m.author_id===c.getUserId());downloadBlob(new Blob([JSON.stringify({exportedAt:new Date().toISOString(),scope:'Your messages currently loaded on this device',messages},null,2)],{type:'application/json'}),'tavern-messages.json')}
 export async function exportEncryptionKeys(password:string){

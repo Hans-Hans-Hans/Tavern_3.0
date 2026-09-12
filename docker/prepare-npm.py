@@ -50,7 +50,7 @@ def prepare():
         'enable_registration': False, 'allow_guest_access': False, 'enable_3pid_lookup': False,
         'url_preview_enabled': False, 'report_stats': False, 'federation_domain_whitelist': [],
         'trusted_key_servers': [], 'allow_public_rooms_without_auth': False,
-        'allow_public_rooms_over_federation': False, 'max_upload_size': '10M',
+        'allow_public_rooms_over_federation': False, 'max_upload_size': '512M',
         'log_config': '/data/log.config', 'suppress_key_server_warning': True,
         'rc_login': {'address': {'per_second': 0.17, 'burst_count': 20},
                      'account': {'per_second': 0.17, 'burst_count': 5},

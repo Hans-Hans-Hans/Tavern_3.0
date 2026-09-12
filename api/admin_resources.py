@@ -1,12 +1,13 @@
 """Room administration and byte quotas without inspecting encrypted media."""
 import asyncio
+import errno
 import json
 import secrets
 import tempfile
 import time
 from urllib.parse import quote
 
-from aiohttp import web
+from aiohttp import web, ClientTimeout
 
 try:
     from .server import APIError, body_json, text_value
@@ -16,6 +17,7 @@ except ImportError:
     from room_authority import room_id as native_room_id
 
 DEFAULT_LIMITS = {"maxUploadBytes": 10 * 1024 * 1024, "userQuotaBytes": 1024 ** 3, "globalQuotaBytes": 10 * 1024 ** 3}
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 
 def room_identity(request):
@@ -78,9 +80,9 @@ def validate_limits(value):
     result = {}
     for name, default in DEFAULT_LIMITS.items():
         number = value.get(name, default)
-        maximum = 10 * 1024 * 1024 if name == "maxUploadBytes" else 1024 ** 5
+        maximum = MAX_UPLOAD_BYTES if name == "maxUploadBytes" else 1024 ** 5
         if type(number) is not int or not 1024 <= number <= maximum:
-            raise APIError(400, "Use byte limits of at least 1024 bytes. Individual files are limited to 10 MiB by this deployment.")
+            raise APIError(400, "Use byte limits of at least 1024 bytes. Maximum file size can be increased up to 512 MiB.")
         result[name] = number
     if result["maxUploadBytes"] > result["userQuotaBytes"] or result["userQuotaBytes"] > result["globalQuotaBytes"]:
         raise APIError(400, "File size must fit the user quota, which must fit the global quota.")
@@ -90,6 +92,10 @@ def validate_limits(value):
 class UploadQuota:
     def __init__(self, service):
         self.service = service
+        # Docker's /tmp is a small RAM filesystem. Uploads need bounded disk
+        # buffering; TemporaryFile unlinks its contents and closes on all exits.
+        self.buffer_directory = service.config.data_dir / 'upload-buffer'
+        self.buffer_directory.mkdir(mode=0o700, exist_ok=True)
         self.slots = asyncio.Semaphore(2)
         self.initialization = asyncio.Lock()
         self.reconciliation = asyncio.Lock()
@@ -178,17 +184,17 @@ class UploadQuota:
     async def upload(self, request, session, raw):
         service = self.service
         service.store.rate("uploads:" + session["user_id"], 60, 3600)
-        maximum = limits(service)["maxUploadBytes"]
+        maximum = min(limits(service)["maxUploadBytes"], MAX_UPLOAD_BYTES)
         if request.content_length is not None and request.content_length > maximum:
             raise APIError(413, "This file exceeds the upload size limit.", "M_TOO_LARGE")
         async with self.slots:
             await self.ensure_initialized()
             # Buffer to a private temporary file, not a whole-file Python bytes
             # object. No unbounded or oversized body is forwarded to Synapse.
-            with tempfile.TemporaryFile() as stream:
+            with tempfile.TemporaryFile(dir=self.buffer_directory) as stream:
                 received = 0
                 try:
-                    async with asyncio.timeout(120):
+                    async with asyncio.timeout(900):
                         async for chunk in request.content.iter_chunked(65536):
                             received += len(chunk)
                             if received > maximum:
@@ -196,6 +202,10 @@ class UploadQuota:
                             await asyncio.to_thread(stream.write, chunk)
                 except asyncio.TimeoutError:
                     raise APIError(408, "The upload timed out. Try again.") from None
+                except OSError as error:
+                    if error.errno in {errno.ENOSPC, errno.EDQUOT}:
+                        raise APIError(507, "The server has no temporary upload space. Contact your administrator.", "STORAGE_FULL") from None
+                    raise
                 if not received:
                     raise APIError(400, "This file is empty.")
                 service.require_session(request)
@@ -208,7 +218,7 @@ class UploadQuota:
 
                 # A transport failure can occur after Synapse accepted the file.
                 # Keep that reservation until reconciliation, never overbook it.
-                async with service.http.post(service.config.synapse_url + raw, data=buffered_chunks(), headers=headers, allow_redirects=False, auto_decompress=True) as response:
+                async with service.http.post(service.config.synapse_url + raw, data=buffered_chunks(), headers=headers, allow_redirects=False, auto_decompress=True, timeout=ClientTimeout(total=900, sock_connect=10, sock_read=120)) as response:
                     payload = await response.content.read(32769)
                     if len(payload) > 32768:
                         raise APIError(502, "The upload response could not be read. Check storage status before retrying.")
@@ -231,7 +241,7 @@ class UploadQuota:
         service = self.service
         initialized = service.store.get("upload_usage_initialized", False)
         row = service.store.db.execute("SELECT bytes FROM upload_usage WHERE user_id='*'").fetchone()
-        value = {**limits(service), "usageInitialized": initialized, "globalUsedBytes": row[0] if row else None, "reconciledAt": service.store.get("upload_usage_reconciled"), "scope": "Local original media bytes, including existing uploads at the last reconciliation. Thumbnails and backups are not included."}
+        value = {**limits(service), "maxUploadAllowedBytes": MAX_UPLOAD_BYTES, "usageInitialized": initialized, "globalUsedBytes": row[0] if row else None, "reconciledAt": service.store.get("upload_usage_reconciled"), "scope": "Local original media bytes, including existing uploads at the last reconciliation. Thumbnails and backups are not included."}
         if user_id:
             value['userQuotaBytes'] = service.store.account(user_id).get('upload_quota_bytes') or value['userQuotaBytes']
             row = service.store.db.execute("SELECT bytes FROM upload_usage WHERE user_id=?", (user_id,)).fetchone()
@@ -244,11 +254,20 @@ class UploadQuota:
 async def storage(request):
     service = request.app["service"]
     session = await service.require_admin(request)
-    if request.method == "PUT":
-        service.store.set("storage_limits", validate_limits(await body_json(request)))
-        service.audit(session["user_id"], "storage_limits_changed", "instance")
+    updated = validate_limits(await body_json(request)) if request.method == 'PUT' else None
     await service.uploads.ensure_initialized()
-    return web.json_response(service.uploads.view())
+    native_limit = None
+    try:
+        media = await service.matrix('GET', '/_matrix/media/v3/config', token=service.store.open(session['token']))
+        if isinstance(media, dict) and type(media.get('m.upload.size')) is int and media['m.upload.size'] > 0:
+            native_limit = media['m.upload.size']
+    except APIError:
+        pass
+    await current_admin(service, request, session)
+    if request.method == "PUT":
+        service.store.set("storage_limits", updated)
+        service.audit(session["user_id"], "storage_limits_changed", "instance")
+    return web.json_response({**service.uploads.view(), 'homeserverMaxUploadBytes': native_limit})
 
 
 async def own_storage(request):

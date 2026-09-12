@@ -51,6 +51,39 @@ test('unknown storage is never displayed as zero and reconciliation replaces it 
   await page.getByRole('button', { name: 'Reconcile storage usage' }).click(); await expect.poll(() => reconciled).toBe(true); await expect(page.locator('.admin-metric').filter({ hasText: 'Recorded instance usage' })).toContainText('2 MiB');
 });
 
+test('admin raises attachment size with a preset and the saved limit survives reload', async ({ page }) => {
+  await fixture(page); await page.setViewportSize({ width: 390, height: 844 });
+  let storage = { maxUploadBytes: 10485760, maxUploadAllowedBytes: 512 * 1048576, homeserverMaxUploadBytes: 512 * 1048576, userQuotaBytes: 1073741824, globalQuotaBytes: 10737418240, usageInitialized: true, globalUsedBytes: 0, uncertainReservations: 0, reconciledAt: 1700000000000 };
+  const writes: any[] = [];
+  await page.route('**/api/admin/storage', route => {
+    if (route.request().method() === 'PUT') { const body = route.request().postDataJSON(); writes.push(body); storage = { ...storage, ...body }; }
+    return route.fulfill({ json: storage });
+  });
+  await page.goto('/admin-integrations-test?storage');
+  await page.getByRole('button', { name: '100 MiB', exact: true }).click();
+  await expect(page.getByLabel('Maximum file size (MiB)')).toHaveValue('100');
+  await page.getByRole('button', { name: 'Save storage policy', exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ maxUploadBytes: 100 * 1048576, userQuotaBytes: 1073741824, globalQuotaBytes: 10737418240 });
+  await page.reload();
+  await expect(page.getByLabel('Maximum file size (MiB)')).toHaveValue('100');
+  await expect(page.getByLabel('Maximum file size (MiB)')).toHaveAttribute('max', '512');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: 'work/upload-admin-mobile.png' });
+});
+
+test('storage editor explains a lower native ceiling and retains a rejected draft', async ({ page }) => {
+  await fixture(page);
+  const storage = { maxUploadBytes: 10485760, maxUploadAllowedBytes: 512 * 1048576, homeserverMaxUploadBytes: 10485760, userQuotaBytes: 1073741824, globalQuotaBytes: 10737418240, usageInitialized: true, globalUsedBytes: 0, uncertainReservations: 0, reconciledAt: null };
+  await page.route('**/api/admin/storage', route => route.request().method() === 'PUT' ? route.fulfill({ status: 400, json: { error: 'File size must fit the user quota.' } }) : route.fulfill({ json: storage }));
+  await page.goto('/admin-integrations-test?storage');
+  await page.getByRole('button', { name: '250 MiB', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('exceeds the running homeserver limit');
+  await page.getByRole('button', { name: 'Save storage policy', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('File size must fit the user quota');
+  await expect(page.getByLabel('Maximum file size (MiB)')).toHaveValue('250');
+});
+
 test('webhook editing uploads an optimized avatar and preserves its token, destination and creator', async ({ page }) => {
   const current = { ...inventory, hooks: [{ ...inventory.hooks[0], name: 'Build alerts', avatarUrl: '', enabled: true, createdBy: '@owner:test', createdAt: 1700000000000 }] };
   await fixture(page, current); let submitted: any, uploadedType = '';

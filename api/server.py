@@ -1064,8 +1064,12 @@ class Service:
         for name in ("Content-Type", "Accept", "Range", "If-None-Match"):
             if name in request.headers:
                 headers[name] = request.headers[name]
+        # Large downloads can outlast the ordinary Matrix request timeout on
+        # slow connections. Keep response streaming and bounded idle timeouts.
+        media_read = request.method in {'GET', 'HEAD'} and re.match(r"/_matrix/(?:media/[^/]+|client/[^/]+/media)/(?:download|thumbnail)/", path)
+        transfer_options = {'timeout': aiohttp.ClientTimeout(total=900, sock_connect=10, sock_read=120)} if media_read else {}
         # Stream media uploads and downloads. Never cache private response bodies.
-        async with self.http.request(request.method, self.config.synapse_url + raw, data=request.content.iter_chunked(65536) if request.can_read_body else None, headers=headers, allow_redirects=False) as upstream:
+        async with self.http.request(request.method, self.config.synapse_url + raw, data=request.content.iter_chunked(65536) if request.can_read_body else None, headers=headers, allow_redirects=False, **transfer_options) as upstream:
             governed = re.fullmatch(r"/_matrix/client/(?:api/v1|[^/]+)/rooms/([^/]+)/state/(io\.tavern\.(?:roles|channel|timeout|thread|server\.layout))(?:/.*)?", path)
             if governed and request.method == "PUT" and 200 <= upstream.status < 300:
                 self.audit(session["user_id"], "room_policy_changed", governed[1], governed[2])

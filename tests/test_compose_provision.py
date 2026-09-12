@@ -46,6 +46,31 @@ class ProvisionTests(unittest.TestCase):
         self.run_init()
         self.assertFalse((self.root / 'synapse/tavern-bootstrap-allowed').exists())
 
+    def test_old_upload_ceiling_migrates_once_without_changing_identity(self):
+        self.run_init()
+        config = self.config()
+        self.assertEqual(config['max_upload_size'], '512M')
+        config['max_upload_size'] = '10M'
+        source = self.root / 'synapse/homeserver.yaml'
+        source.write_text(yaml.safe_dump(config), encoding='utf-8')
+        original = source.read_bytes()
+        self.run_init()
+        self.assertEqual(self.config(), {**config, 'max_upload_size': '512M'})
+        backup = self.root / 'synapse/homeserver.before-upload-limit.yaml'
+        self.assertEqual(backup.read_bytes(), original)
+        migrated = source.read_bytes()
+        self.run_init()
+        self.assertEqual(source.read_bytes(), migrated)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_custom_upload_ceiling_is_preserved(self):
+        self.run_init()
+        config = self.config()
+        config['max_upload_size'] = '25M'
+        (self.root / 'synapse/homeserver.yaml').write_text(yaml.safe_dump(config), encoding='utf-8')
+        self.run_init()
+        self.assertEqual(self.config(), config)
+
     def test_sync_cache_migration_preserves_identity_and_unrelated_cache_tuning(self):
         self.run_init()
         config = self.config()

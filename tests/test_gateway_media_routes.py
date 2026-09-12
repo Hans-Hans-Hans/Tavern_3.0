@@ -11,8 +11,8 @@ class GatewayMediaRoutesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = (ROOT / 'docker/npm/server.conf.template').read_text()
-        matches = re.findall(r'location ~ "([^"]+)" \{\s*(if \(\$managed_auth = true\) \{ return 403; \}\s*proxy_pass \$matrix_upstream\$request_uri;)', cls.source)
-        cls.patterns = [re.compile(pattern) for pattern, _body in matches]
+        matches = re.findall(r'location ~ "([^"]+)" \{\s*if \(\$managed_auth = true\) \{ return 403; \}\s*([^{}]*)\}', cls.source)
+        cls.patterns = [re.compile(pattern) for pattern, body in matches if 'proxy_pass $matrix_upstream$request_uri;' in body]
 
     def test_every_native_media_upload_alias_has_managed_auth_admission(self):
         for version in ('r0', 'v1', 'v3'):

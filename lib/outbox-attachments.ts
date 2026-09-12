@@ -1,7 +1,9 @@
 /** Encrypted local attachment snapshots. This is separate from Matrix E2EE:
  * the persisted media descriptor contains the key needed by a future message.
  * No filenames, descriptor keys, or original file bytes are stored in clear. */
-export const outboxFileLimit = 10 * 1024 * 1024;
+// Uploaded descriptors may refer to larger files; local byte storage remains
+// independently bounded, and chat uploads do not copy their bytes into Outbox.
+export const outboxFileLimit = 512 * 1024 * 1024;
 export const outboxByteLimit = 100 * 1024 * 1024;
 export const outboxAttachmentLimit = 5;
 export type UploadedAttachment = { id: string; roomId: string; name: string; size: number; type: string; url: string; file: Record<string, any> | null; info: Record<string, any> };
@@ -53,6 +55,7 @@ const aad = (owner: string, itemId: string, id: string) => encoder.encode(JSON.s
 export async function sealOutboxFile(key: CryptoKey, owner: string, itemId: string, attachment: QueuedAttachment, file: File, current: () => boolean): Promise<EncryptedFileRecord> {
   if (!current()) throw new Error('Your account changed.');
   if (file.size !== attachment.size || file.name !== attachment.name || file.type !== attachment.type || file.size > outboxFileLimit || !file.size) throw new Error('The original file does not match this queued attachment.');
+  if (file.size > outboxByteLimit) throw new Error('The local outbox can store up to 100 MiB of file bytes. Upload this file before queuing its message.');
   const bytes = await file.arrayBuffer();
   if (!current()) throw new Error('Your account changed.');
   const iv = crypto.getRandomValues(new Uint8Array(12)), ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(owner, itemId, attachment.id) }, key, bytes);

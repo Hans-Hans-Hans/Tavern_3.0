@@ -51,3 +51,11 @@ test('queue bounds reject foreign-room descriptors and duplicate file or transac
   assert.throws(() => model.validateQueuedAttachments([{ ...attachment, eventId: '$pretend' }], '!room:local'));
   assert.equal(model.attachmentTransaction('original-nonce', 4), 'original-nonce-f4');
 });
+
+test('large uploaded attachments retain encrypted retry metadata without requiring a local file copy', () => {
+  const size = 250 * 1024 * 1024;
+  const descriptor = { ...attachment, size, roomId: '!room:local', url: 'mxc://local/large', info: {}, file: null };
+  model.validateQueuedAttachments([{ ...attachment, size, descriptor }], '!room:local');
+  const oversized = 513 * 1024 * 1024;
+  assert.throws(() => model.validateQueuedAttachments([{ ...attachment, size: oversized, descriptor: { ...descriptor, size: oversized } }], '!room:local'));
+});

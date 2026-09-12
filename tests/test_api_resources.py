@@ -152,8 +152,37 @@ class ResourceAPITests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status, 403, path)
         denied = await self.request("PUT", "/api/admin/storage", {}, user)
         self.assertEqual(denied.status, 403)
-        invalid = await self.request("PUT", "/api/admin/storage", {"maxUploadBytes": 11 * 1024 * 1024}, owner)
+        invalid = await self.request("PUT", "/api/admin/storage", {"maxUploadBytes": 513 * 1024 * 1024}, owner)
         self.assertEqual(invalid.status, 400)
+
+    async def test_admin_raises_limit_above_ten_mib_and_actual_stream_is_accounted(self):
+        owner, _, _ = await self.login('owner')
+        user, _, _ = await self.login()
+        body = b'x' * (16 * 1024 * 1024)
+        denied = await self.upload(user, body)
+        self.assertEqual(denied.status, 413)
+        await self.set_limits(owner, maximum=16 * 1024 * 1024, user=32 * 1024 * 1024, total=64 * 1024 * 1024)
+        result = await self.upload(user, body)
+        self.assertEqual(result.status, 200, await result.text())
+        self.assertEqual(self.service.uploads.view('@alice:test')['ownUsedBytes'], len(body))
+        self.assertEqual(list(self.service.uploads.buffer_directory.iterdir()), [])
+        saved = await self.request('GET', '/api/admin/storage', cookie=owner)
+        self.assertEqual((await saved.json())['maxUploadBytes'], len(body))
+        self.assertEqual(self.service.store.get('storage_limits')['maxUploadBytes'], len(body))
+        await self.set_limits(owner)
+        blocked = await self.upload(user, b'x' * 1025)
+        self.assertEqual(blocked.status, 413)
+        self.assertEqual(self.service.uploads.view('@alice:test')['ownUsedBytes'], len(body))
+
+    async def test_file_ceiling_and_quota_relationships_still_apply_after_increase(self):
+        owner, _, _ = await self.login('owner')
+        await self.set_limits(owner, maximum=512 * 1024 * 1024, user=1024 ** 3, total=10 * 1024 ** 3)
+        good = self.service.store.get('storage_limits')
+        for patch in [{'maxUploadBytes': True}, {'maxUploadBytes': 1023}, {'maxUploadBytes': 513 * 1024 * 1024},
+                      {'maxUploadBytes': 100 * 1024 * 1024, 'userQuotaBytes': 20 * 1024 * 1024}]:
+            response = await self.request('PUT', '/api/admin/storage', {**good, **patch}, owner)
+            self.assertEqual(response.status, 400, await response.text())
+            self.assertEqual(self.service.store.get('storage_limits'), good)
 
 
 if __name__ == "__main__":

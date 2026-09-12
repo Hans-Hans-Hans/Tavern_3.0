@@ -2,6 +2,39 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## September 12 file-size controls and UX plan checkpoint
+
+Administrators can raise the individual attachment limit from its unchanged
+10 MiB default to 512 MiB in Admin → Storage. Quota ordering, actual-byte
+enforcement, uncertain-upload reservations and account ownership checks remain
+in place. The [upload guide](UPLOAD_LIMITS.md) describes the one-time initializer,
+gateway/API and Synapse update; the [UX plan](UX_IMPROVEMENT_PLAN.md) prioritizes
+the remaining usability and optional feature work.
+
+The production build, all 692 model tests and all 464 browser cases pass.
+The new model test encrypts a real 24 MiB attachment, uploads it, rejects an
+automatic preview above its smaller bound, and explicitly downloads/decrypts it
+byte-for-byte through the actual attachment reader. Browser checks cover saving
+and reloading the larger policy, a lower running Synapse ceiling, rejected-save
+draft retention and phone-width layout with the real stylesheets.
+
+The full Python run covered 780 tests with 15 platform-dependent skips. Two
+gateway configuration tests failed because their pattern assumed no directives
+between the native-route admission guard and proxy_pass. Their extraction now
+allows the new body/time limits while retaining both required checks; all 32
+cases in the affected gateway/API files pass on the final code. The remaining
+tests passed in the full run. Provisioning tests cover old-default migration,
+byte-preserving backup, repeated initialization and custom-limit preservation.
+
+A local nginx 1.28.3 process loaded the rendered production server template:
+all five supported managed upload routes forwarded an intact 16 MiB body with
+credentials; ordinary requests above 12 MiB, uploads above 512 MiB, raw upload
+bypasses and public internal callbacks were rejected. This used isolated
+loopback upstream fixtures on Windows. The Linux built-container gateway check
+now includes large-upload admission and preserved ordinary-body limits; its
+execution belongs to GitHub CI. Live deployment through Hans's NPM/Cloudflare
+and physical-phone large-file acceptance remain separate.
+
 ## September 12 mobile navigation checkpoint
 
 The production build and all 687 model tests pass. Six new mounted Workspace

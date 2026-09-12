@@ -72,6 +72,18 @@ def stub():
             self.reply(418)
 
         def do_POST(self):
+            if self.server.server_port == 8090 and self.path == '/api/matrix/_matrix/media/v3/upload':
+                remaining = int(self.headers.get('Content-Length', 0))
+                received = 0
+                while remaining:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    remaining -= len(chunk)
+                if self.headers.get('Cookie') != 'fixture=authorized' or self.headers.get('Authorization') != 'Bearer cookie-session:fixture':
+                    return self.reply(401)
+                return self.reply(200, {'received': received})
             self.rfile.read(min(int(self.headers.get('Content-Length', 0)), 32768))
             if self.server.server_port == 8090:
                 if self.path in ('/api/calls/rtc-auth/get_token', '/api/calls/rtc-auth/sfu/get'):
@@ -138,6 +150,25 @@ def main():
         else:
             raise AssertionError('The isolated gateway fixtures did not become ready.')
         headers = {'Origin': 'https://chat.example.test', 'Cookie': 'fixture=authorized'}
+        # Exercise the real nested Nginx location: only attachment uploads get
+        # the larger ceiling, retaining credentials for the quota-enforcing API.
+        payload = b'x' * (16 * 1024 * 1024)
+        status, body = request('/api/matrix/_matrix/media/v3/upload', 'POST', {**headers, 'Authorization': 'Bearer cookie-session:fixture'}, payload)
+        assert status == 200 and json.loads(body)['received'] == len(payload), 'Attachments above the old gateway limit must reach the managed API intact.'
+        for path, length in (('/api/matrix/_matrix/client/v3/rooms/room/send/m.room.message/1', len(payload)),
+                             ('/api/admin/storage', len(payload)),
+                             ('/api/matrix/_matrix/media/v3/upload', 512 * 1024 * 1024 + 1)):
+            connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+            try:
+                # A known oversized body must be refused from headers alone.
+                connection.putrequest('POST', path, skip_host=True)
+                connection.putheader('Host', 'chat.example.test')
+                connection.putheader('Content-Length', str(length))
+                connection.endheaders()
+                assert connection.getresponse().status == 413, 'Route must keep its bounded body limit: ' + path
+            finally:
+                connection.close()
+        del payload
         for path in ('rtc', 'rtc/validate', 'rtc/v1', 'rtc/v1/validate'):
             public = '/livekit/sfu/' + path + '?access_token=fixture'
             assert request(public)[0] == 403, 'Unauthenticated signaling must be denied before the SFU.'

@@ -138,7 +138,7 @@ def provision(root, env):
             'enable_registration': False, 'allow_guest_access': False, 'enable_3pid_lookup': False,
             'url_preview_enabled': False, 'report_stats': False, 'federation_domain_whitelist': [],
             'trusted_key_servers': [], 'allow_public_rooms_without_auth': False,
-            'allow_public_rooms_over_federation': False, 'max_upload_size': '10M',
+            'allow_public_rooms_over_federation': False, 'max_upload_size': '512M',
             'log_config': '/data/log.config', 'suppress_key_server_warning': True,
             'caches': {'sync_response_cache_duration': '0s'},
             'rc_login': {'address': {'per_second': 0.17, 'burst_count': 20},
@@ -153,6 +153,7 @@ def provision(root, env):
               'root': {'level': level, 'handlers': ['console']}, 'disable_existing_loggers': False}, indent=2) + '\n')
     if calls:
         provision_calls(root, config, domain, turn_domain, str(public_ip))
+    install_upload_ceiling(root, config)
     install_sync_cache_policy(root, config)
     install_policy(root, config, integrations, audio_moderation)
     # Permissions only on known configuration files/directories; never walk existing media.
@@ -174,6 +175,23 @@ def provision(root, env):
         os.chmod(root / 'operations-secret', 0o755)
         os.chmod(root / 'operations-secret/token', 0o644)
     print('Tavern configuration validated. Existing identity, database credentials, and media preserved.')
+
+
+def install_upload_ceiling(root, config):
+    # Only migrate Tavern's old generated default. A deliberate operator limit
+    # stays intact; clients also respect Synapse's advertised effective limit.
+    if config.get('max_upload_size') not in ('10M', 10 * 1024 * 1024):
+        return
+    original = root / 'synapse/homeserver.yaml'
+    backup = root / 'synapse/homeserver.before-upload-limit.yaml'
+    write_new(backup, original.read_bytes().decode('utf-8'), 0o640)
+    own(backup, 991)
+    config['max_upload_size'] = '512M'
+    pending = root / 'synapse/homeserver.yaml.pending'
+    pending.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+    os.chmod(pending, 0o640)
+    own(pending, 991)
+    pending.replace(original)
 
 
 def install_sync_cache_policy(root, config):

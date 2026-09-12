@@ -30,8 +30,11 @@ acknowledged messages, recipients' copies, or backups.
 A delivery already in progress must settle before its local entry can be
 cancelled; cancellation cannot retract an in-flight request.
 
-The local queue permits 100 items, five files per message, files up to 10 MiB,
-and 100 MiB of pending original-file copies in total. Uploaded descriptors are
+The local queue permits 100 items, five files per message, uploaded attachments
+up to 512 MiB each, and 100 MiB of pending original-file copies in total. Files
+larger than that local budget must upload before they can be queued. The
+[administrator's upload limit](UPLOAD_LIMITS.md) still applies to every upload.
+Uploaded descriptors are
 small and replace the local file copy after a successful checkpoint. These are
 local retry limits, separate from the server's upload/storage limits. Scheduling
 still applies to text messages; ordinary attachment Send and explicit retries
