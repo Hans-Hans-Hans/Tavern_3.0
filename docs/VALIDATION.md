@@ -746,3 +746,12 @@ transport state on failure and require three consecutive direct calls. Addresses
 credentials and audio samples remain excluded. A crowded full-rail browser test
 and the existing readiness/navigation regressions pass; this is separate from
 the pending native rerun and deployed phone/PC acceptance.
+
+At `823dc05`, [run 34679476679](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34679476679)
+passed native conference connection/leave and two consecutive actual direct
+calls with relay media rates and received synthetic audio on both sides. The
+third probe failed an ordinary-device prerequisite before placing a call. Its
+preflight is now separated into native-room/device proof, synthetic capture,
+existing media and TURN credential checks, with finite observations only. The
+run subsequently hit the private-editor API prefix defect corrected at `d878de5`.
+This is two passed calls, not the required three-call pass or a green workflow.

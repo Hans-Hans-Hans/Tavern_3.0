@@ -90,6 +90,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
     &&aliceSession.deviceId&&bobSession.deviceId&&alice!==bob&&alice.context()!==bob.context()&&typeof api==='function'&&typeof ready==='function');
   const owners=new Map([[alice,aliceSession],[bob,bobSession]]),changed=new Set(),opened=new Set();
   let stage='isolated-turn',success=false,cleanupFailed=false,failure;
+  let side='unavailable',scopeCheck='none',devices='unavailable',panels=null,frames=null;
   const expected=page=>({[page===alice?BOB:ALICE]:[roomId]});
   const accountPath=page=>'/_matrix/client/v3/user/'+encodeURIComponent(owners.get(page).userId)+'/account_data/m.direct';
   async function session(page){
@@ -99,8 +100,11 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
   }
   async function native(page,path,body,method){await session(page);return matrixSmokeRequest(()=>api(page,path,body,true,false,method));}
   async function scope(page){
-    const state=await native(page,'/_matrix/client/v3/rooms/'+encodeURIComponent(roomId)+'/state');requireProof(state.status===200);proveConferenceRoom(roomId,state.data);
-    const who=await native(page,'/_matrix/client/v3/account/whoami');requireProof(who.status===200&&who.data.user_id===owners.get(page).userId&&who.data.device_id===owners.get(page).deviceId);
+    scopeCheck='native-room-status';
+    const state=await native(page,'/_matrix/client/v3/rooms/'+encodeURIComponent(roomId)+'/state');requireProof(state.status===200);
+    scopeCheck='native-room-proof';proveConferenceRoom(roomId,state.data);
+    scopeCheck='native-device';const who=await native(page,'/_matrix/client/v3/account/whoami');requireProof(who.status===200&&who.data.user_id===owners.get(page).userId&&who.data.device_id===owners.get(page).deviceId);
+    scopeCheck='none';
   }
   try{
     const [network,container]=await Promise.all([
@@ -108,10 +112,12 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
       docker(['inspect','tavern-ci-coturn-1','--format','{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"command":{{json .Config.Cmd}},"labels":{{json .Config.Labels}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}},"networks":{{json .NetworkSettings.Networks}}}']),
     ]);proveDirectEndpoint(JSON.parse(network),JSON.parse(container));
     for(const page of owners.keys()){
+      side=page===alice?'caller':'callee';devices='unavailable';panels=null;frames=null;
       stage='ordinary-device-scope';await scope(page);
-      requireProof(await page.evaluate(inspectSyntheticDevices)==='synthetic');
-      requireProof(await page.locator('.call-panel,iframe[title="Tavern encrypted conference"]').count()===0);
-      const relay=await native(page,'/_matrix/client/v3/voip/turnServer');
+      stage='synthetic-devices';const inspected=await page.evaluate(inspectSyntheticDevices);
+      devices=['synthetic','missing','unlabeled','unexpected','unavailable'].includes(inspected)?inspected:'unavailable';requireProof(devices==='synthetic');
+      stage='existing-media';panels=Math.min(10,await page.locator('.call-panel').count());frames=Math.min(10,await page.locator('iframe[title="Tavern encrypted conference"]').count());requireProof(panels===0&&frames===0);
+      stage='turn-credentials';const relay=await native(page,'/_matrix/client/v3/voip/turnServer');
       requireProof(relay.status===200&&JSON.stringify(relay.data.uris)===JSON.stringify(['turn:172.30.239.3:3478?transport=udp','turn:172.30.239.3:3478?transport=tcp']));
       stage='owned-dm-section';const previous=await native(page,accountPath(page));
       requireProof(previous.status===404&&previous.data.errcode==='M_NOT_FOUND'||previous.status===200&&previous.data&&typeof previous.data==='object'&&!Array.isArray(previous.data)&&Object.keys(previous.data).length===0);
@@ -152,7 +158,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         return {result:['relay','no-relay','timeout'].includes(result?.result)?result.result:'unavailable',codes:Array.isArray(result?.codes)?result.codes.filter(code=>Number.isInteger(code)&&code>=300&&code<=799).slice(0,8):[]};
       }catch{return {result:'unavailable',codes:[]};}
     })):[];
-    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
+    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded preflight: '+JSON.stringify({side,scopeCheck,devices,panels,frames})+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
   }
   finally{
     for(const page of opened){
