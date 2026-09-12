@@ -238,7 +238,7 @@ try {
   console.log('PASS: encrypted edits and thread replies decrypt for the other user; reactions synchronize.');
 
   const fileName = 'ci-encrypted-proof.bin', fileBytes = Buffer.concat([Buffer.from('Tavern private file proof '), randomBytes(4096)]);
-  const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files (up to 10 MB each)', exact: true }).click()]);
+  const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files', exact: true }).click()]);
   const upload = await responseDuring(alice, response => response.request().method() === 'POST' && /\/_matrix\/(media|client)\/.*\/upload(?:\?|$)/.test(response.url()), () => chooser.setFiles({ name: fileName, mimeType: 'application/octet-stream', buffer: fileBytes }));
   assert.equal(upload.status(), 200);
   // Chromium does not expose every Blob upload through postDataBuffer(). Read

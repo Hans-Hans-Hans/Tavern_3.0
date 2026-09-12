@@ -124,7 +124,7 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
     const beforeText = 'CI before acceptance ' + nonce;
     const beforeId = await send(alice, accepted, beforeText);
     const fileName = 'ci-before-acceptance-' + nonce + '.bin', bytes = Buffer.concat([Buffer.from('CI DM private attachment '), randomBytes(512)]);
-    const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files (up to 10 MB each)', exact: true }).click()]);
+    const [chooser] = await Promise.all([alice.waitForEvent('filechooser'), alice.getByRole('button', { name: 'Attach files', exact: true }).click()]);
     const [upload] = await Promise.all([
       alice.waitForResponse(response => response.request().method() === 'POST' && /\/_matrix\/(media|client)\/.*\/upload(?:\?|$)/.test(response.url())),
       chooser.setFiles({ name: fileName, mimeType: 'application/octet-stream', buffer: bytes }),
