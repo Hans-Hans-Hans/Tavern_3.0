@@ -79,6 +79,10 @@ async def require_room_eligibility(service, session, identity, current=None):
     reason = await policy.denial(identity, current if current is not None else await read_state(identity), actor)
     if reason:
         raise APIError(403, reason, 'SERVER_ELIGIBILITY_REQUIRED')
+    admission = model.ChannelAdmissionPolicy(adapter, model.valid_policy, model.native_member_power)
+    reason = await admission.denial(identity, current if current is not None else await read_state(identity), actor)
+    if reason:
+        raise APIError(403, reason, 'CHANNEL_ACCESS_DENIED')
     # Native account availability is mandatory for RTC even when this room has
     # no optional age/email policy (or the actor is its exempt creator). Read
     # it after room-policy awaits so native suspension cannot hide behind them.

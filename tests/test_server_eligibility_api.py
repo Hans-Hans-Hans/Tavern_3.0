@@ -112,6 +112,26 @@ class EligibilityAPITests(unittest.IsolatedAsyncioTestCase):
         await require_room_eligibility(self.service, self.session, self.room, self.current)
         self.assertTrue(any(path == '/_synapse/admin/v2/users/' + self.actor for _, path, _, _ in self.upstream_calls))
 
+    async def test_shared_rtc_admission_reads_current_private_audience_and_server_membership(self):
+        await self.setup_authority()
+        self.events[-1]['content'] = config(requireVerifiedEmail=False)
+        policy = {'version': 1, 'owner': '@owner:test', 'roles': [{'id': 'everyone', 'name': 'Member', 'position': 0, 'permissions': ['join_calls']}],
+                  'members': {}, 'overrides': {}, 'channelAdmissionVersion': 1,
+                  'channelAdmissions': {self.room: {'roleIds': [], 'userIds': []}}}
+        self.events.extend([
+            {'type': 'io.tavern.roles', 'state_key': '', 'sender': '@owner:test', 'event_id': '$audience', 'content': policy},
+            {'type': 'm.room.member', 'state_key': self.actor, 'sender': self.actor, 'event_id': '$joined', 'content': {'membership': 'join'}},
+        ])
+        with self.assertRaises(APIError) as denied:
+            await require_room_eligibility(self.service, self.session, self.room, self.current)
+        self.assertEqual(denied.exception.code, 'CHANNEL_ACCESS_DENIED')
+        policy['channelAdmissions'][self.room]['userIds'].append(self.actor)
+        await require_room_eligibility(self.service, self.session, self.room, self.current)
+        self.events[-1]['content'] = {'membership': 'leave'}
+        with self.assertRaises(APIError) as denied:
+            await require_room_eligibility(self.service, self.session, self.room, self.current)
+        self.assertEqual(denied.exception.code, 'CHANNEL_ACCESS_DENIED')
+
     async def test_native_malformed_user_identity_and_future_millisecond_age_fail_closed(self):
         await self.setup_authority()
         self.events[-1]['content'] = config(requireVerifiedEmail=False, minimumAccountAgeSeconds=300)

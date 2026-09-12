@@ -1,4 +1,5 @@
 import copy
+import json
 import sqlite3
 from types import SimpleNamespace
 import unittest
@@ -13,11 +14,12 @@ class RevocationTests(unittest.IsolatedAsyncioTestCase):
         self.db = sqlite3.connect(':memory:')
         self.addCleanup(self.db.close)
         self.db.executescript('''
-            CREATE TABLE current_state_events(room_id TEXT,type TEXT);
+            CREATE TABLE current_state_events(room_id TEXT,type TEXT,event_id TEXT);
+            CREATE TABLE event_json(event_id TEXT,json TEXT);
             CREATE TABLE events(stream_ordering INTEGER,event_id TEXT,room_id TEXT,type TEXT,outlier INTEGER);
             CREATE TABLE rejections(event_id TEXT,reason TEXT);
         ''')
-        self.db.execute('INSERT INTO current_state_events VALUES(?,?)', (SERVER, POLICY))
+        self.db.execute('INSERT INTO current_state_events VALUES(?,?,?)', (SERVER, POLICY, '$policy'))
         self.states = {ROOM: {('m.room.create', ''): event({'m.federate': False}),
                              ('m.space.parent', SERVER): event({'canonical': True, 'via': ['test.invalid']}),
                              **{('m.room.member', user): event({'membership': 'join'}) for user in (OWNER, ALICE, BOB)}},
@@ -116,6 +118,19 @@ class RevocationTests(unittest.IsolatedAsyncioTestCase):
         await restarted.initialize()
         self.assertIn(SERVER, self.dirty()); self.assertIn(ROOM, self.dirty())
         self.assertEqual(self.db.execute('SELECT position FROM tavern_channel_cursor').fetchone()[0], 105)
+
+    async def test_startup_recovers_private_discussion_bindings_and_source_changes_enqueue_them(self):
+        private = '!discussion'
+        creation = {'type': 'io.tavern.private_thread', 'm.federate': False,
+                    'io.tavern.private_thread': {'version': 1, 'source_room_id': ROOM, 'source_event_id': ''}}
+        self.db.execute('INSERT INTO current_state_events VALUES(?,?,?)', (private, 'm.room.create', '$create'))
+        self.db.execute('INSERT INTO event_json VALUES(?,?)', ('$create', json.dumps({'content': creation})))
+        await self.worker.initialize()
+        self.assertIn(private, self.dirty())
+        self.assertEqual(self.db.execute('SELECT source_id,room_id FROM tavern_channel_discussions').fetchall(), [(ROOM, private)])
+        self.db.execute('DELETE FROM tavern_channel_dirty')
+        await self.worker.reconcile(ROOM)
+        self.assertIn(private, self.dirty())
 
 
 if __name__ == '__main__':

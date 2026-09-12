@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
-    from channel_admission import valid_admissions
+    from channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES
+    from channel_revocation import ChannelRevocationWorker
     from conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -24,7 +25,8 @@ try:
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
-    from synapse_modules.channel_admission import valid_admissions
+    from synapse_modules.channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES
+    from synapse_modules.channel_revocation import ChannelRevocationWorker
     from synapse_modules.conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from synapse_modules.call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -265,6 +267,8 @@ def may_assign_native_members(previous, proposed, state, actor):
 class TavernPolicy:
     def __init__(self, config, api):
         self.api = api
+        self.channel_admission = ChannelAdmissionPolicy(api, valid_policy, native_member_power)
+        self.channel_revocation = ChannelRevocationWorker(api, self.channel_admission) if config.get('channel_admission_enabled', False) else None
         self.channels = ChannelPolicy(api, permissions, rank)
         self.threads = ThreadPolicy(api, self.channels)
         self.invitations = InvitationPolicy(config, api)
@@ -282,7 +286,17 @@ class TavernPolicy:
             valid_policy=valid_policy, permissions=permissions, native_member_power=native_member_power))
         api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_with_errors, on_create_room=self.on_create_room,
             check_visibility_can_be_modified=self.private_threads.visibility, check_threepid_can_be_invited=self.private_threads.threepid,
-            on_new_event=self.system_messages.on_new_event)
+            on_new_event=self.on_new_event)
+
+    async def on_new_event(self, event, state):
+        if self.channel_revocation:
+            try:
+                await self.channel_revocation.on_new_event(event, state)
+            except Exception:
+                # The committed stream and startup scan recover missed hooks.
+                import logging
+                logging.getLogger(__name__).warning('Private-channel change will be reconciled from the native event stream.')
+        await self.system_messages.on_new_event(event, state)
 
     async def on_create_room(self, requester, request_content, is_requester_admin):
         error = await self.private_threads.create(requester.user.to_string(), request_content)
@@ -292,6 +306,9 @@ class TavernPolicy:
             for actor in [requester.user.to_string()] + request_content.get('invite', []):
                 if not await self.server_eligibility.eligible('', state, actor):
                     error = 'The source server account requirements do not permit this private discussion.'
+                    break
+                if await self.channel_admission.denial('', state, actor):
+                    error = 'The source private channel does not permit this private discussion.'
                     break
         if error:
             from synapse.module_api.errors import SynapseError
@@ -316,8 +333,12 @@ class TavernPolicy:
         audio_moderation_enabled = config.get('audio_moderation_enabled', False)
         if type(audio_moderation_enabled) is not bool:
             raise ValueError('audio_moderation_enabled must be a boolean')
+        channel_admission_enabled = config.get('channel_admission_enabled', False)
+        if type(channel_admission_enabled) is not bool:
+            raise ValueError('channel_admission_enabled must be a boolean')
         return {'privacy_api_url': url.rstrip('/'), 'privacy_key_file': config.get('privacy_key_file', '/data/tavern-privacy.key'),
-            'system_messages_enabled': system_messages_enabled, 'audio_moderation_enabled': audio_moderation_enabled}
+            'system_messages_enabled': system_messages_enabled, 'audio_moderation_enabled': audio_moderation_enabled,
+            'channel_admission_enabled': channel_admission_enabled}
 
     async def _policies(self, event, state):
         own = content(state, POLICY)
@@ -344,6 +365,11 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        if event.type == POLICY and any(key in value for value in (event.content, content(state_events, POLICY)) for key in (ADMISSION_VERSION, AUDIENCES)):
+            if not self.channel_revocation or not self.channel_revocation.ready:
+                return False, None
+        if not await self.channel_admission.check(event, state_events):
+            return False, None
         if not await self.server_eligibility.check(event, state_events):
             return False, None
         if eligibility_cleanup(event, state_events):

@@ -128,6 +128,25 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
     async def test_existing_unmanaged_rooms_unchanged(self):
         self.assertEqual(await self.module.check_event_allowed(event('m.room.message'), {}), (True, None))
 
+    async def test_private_audience_rejects_native_join_and_send_before_later_policy_callbacks(self):
+        self.policy.update(channelAdmissionVersion=1, channelAdmissions={'!channel:local': {'roleIds': [], 'userIds': []}})
+        self.server.update({
+            ('m.room.create', ''): event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False}),
+            ('m.room.member', '@member:local'): event('m.room.member', body={'membership': 'join'}),
+        })
+        async def room_state(identity, event_filter=None):
+            return self.server if identity == '!server:local' else self.room
+        self.module.api.get_room_state = room_state
+        for proposed in [event('m.room.encrypted'), event('m.room.member', key='@member:local', body={'membership': 'join'})]:
+            self.assertEqual(await self.module.check_event_allowed(proposed, self.room), (False, None))
+        self.assertEqual(await self.module.check_event_allowed(event('m.room.member', key='@member:local', body={'membership': 'leave'}), self.room), (True, None))
+        self.policy['channelAdmissions']['!channel:local']['userIds'].append('@member:local')
+        self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (True, None))
+
+    async def test_audience_cannot_be_enabled_without_the_durable_worker(self):
+        proposed = {**self.policy, 'channelAdmissionVersion': 1, 'channelAdmissions': {}}
+        self.assertEqual(await self.module.check_event_allowed(event('io.tavern.roles', sender='@owner:local', room='!server:local', key='', body=proposed), self.server), (False, None))
+
     async def test_direct_encrypted_api_message_obeys_channel_deny(self):
         self.policy['overrides']['!channel:local'] = {'roles': {'everyone': {'send_messages': -1}}, 'users': {}}
         self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (False, None))

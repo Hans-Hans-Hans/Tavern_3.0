@@ -75,7 +75,7 @@ async function freshRoles(owner: ReturnType<typeof roleWriteOwner>, serverId: st
   owner.assertCurrent();
   if (raw && !parseRolePolicy(raw)) throw new Error('The saved role policy is invalid.');
   let revision: string | null = null;
-  if (raw?.callPublicationVersion === 1) {
+  if (raw?.callPublicationVersion === 1 || raw?.channelAdmissionVersion === 1) {
     const events = await owner.client.roomState(serverId); owner.assertCurrent();
     const saved = events.filter(item => item.type === rolesEvent && item.state_key === '');
     if (saved.length !== 1 || typeof saved[0].event_id !== 'string' || stableRoleJson(raw) !== stableRoleJson(saved[0].content)) throw new Error('Server roles changed while loading. Reload and retry.');
@@ -113,6 +113,7 @@ export async function saveRolePolicy(serverId: string, policy: RolePolicy, previ
   assertScope();
   const owner = roleWriteOwner(serverId), fresh = await freshRoles(owner, serverId); assertScope();
   if (fresh.policy?.callPublicationVersion !== policy.callPublicationVersion) throw new Error('Conference permissions changed. Reopen server roles; enabling them requires the separate migration action.');
+  if (fresh.policy?.channelAdmissionVersion !== policy.channelAdmissionVersion || stableRoleJson(fresh.policy?.channelAdmissions) !== stableRoleJson(policy.channelAdmissions)) throw new Error('Private-channel access changed. Reopen server roles; change its audience in channel settings.');
   // This editor owns roles, assignments and channel overrides. Preserve its
   // draft instead of overwriting a concurrent editor; category writes are
   // independently merged below and remain untouched by ordinary role edits.

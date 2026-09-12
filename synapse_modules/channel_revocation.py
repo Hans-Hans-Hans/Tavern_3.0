@@ -6,15 +6,18 @@ denial in the membership callback, immediately before native self-leave auth.
 """
 from collections.abc import Mapping
 import logging
+import json
 import time
 
 try:
-    from channel_admission import AUDIENCES, MARKER, POLICY, DENIED, content, revocation_guard
+    from channel_admission import AUDIENCES, MARKER, POLICY, DENIED, PRIVATE, content, revocation_guard
+    from private_thread import binding
 except ImportError:
-    from synapse_modules.channel_admission import AUDIENCES, MARKER, POLICY, DENIED, content, revocation_guard
+    from synapse_modules.channel_admission import AUDIENCES, MARKER, POLICY, DENIED, PRIVATE, content, revocation_guard
+    from synapse_modules.private_thread import binding
 
 logger = logging.getLogger(__name__)
-CHANGES = frozenset({POLICY, 'm.room.member', 'm.space.parent', 'm.space.child'})
+CHANGES = frozenset({POLICY, 'm.room.create', 'm.room.member', 'm.space.parent', 'm.space.child'})
 
 
 class ChannelRevocationWorker:
@@ -39,6 +42,7 @@ class ChannelRevocationWorker:
             txn.execute('CREATE TABLE IF NOT EXISTS tavern_channel_dirty(room_id TEXT PRIMARY KEY,revision BIGINT NOT NULL,next_attempt BIGINT NOT NULL)')
             txn.execute('CREATE TABLE IF NOT EXISTS tavern_channel_bindings(server_id TEXT NOT NULL,room_id TEXT NOT NULL,PRIMARY KEY(server_id,room_id))')
             txn.execute('CREATE TABLE IF NOT EXISTS tavern_channel_cursor(id INTEGER PRIMARY KEY,position BIGINT NOT NULL)')
+            txn.execute('CREATE TABLE IF NOT EXISTS tavern_channel_discussions(source_id TEXT NOT NULL,room_id TEXT PRIMARY KEY)')
             # Reconcile current state on every startup, including assignments
             # accepted before this module was loaded. Never expire revocations.
             txn.execute('SELECT DISTINCT room_id FROM current_state_events WHERE type=?', (POLICY,))
@@ -46,6 +50,19 @@ class ChannelRevocationWorker:
             txn.execute('SELECT server_id,room_id FROM tavern_channel_bindings')
             for server, room in txn.fetchall():
                 scopes.update((server, room))
+            # Existing private discussions predate this worker. Recover only
+            # their immutable native source bindings; never publish this index.
+            txn.execute('SELECT c.room_id,j.json FROM current_state_events c JOIN event_json j USING(event_id) '
+                        'WHERE c.type=? AND j.json LIKE ?', ('m.room.create', '%' + PRIVATE + '%'))
+            for discussion, raw in txn.fetchall():
+                source = binding(json.loads(raw).get('content'))
+                if source:
+                    txn.execute('INSERT INTO tavern_channel_discussions(source_id,room_id) VALUES(?,?) '
+                                'ON CONFLICT(room_id) DO NOTHING', (source['source_room_id'], discussion))
+                    scopes.update((source['source_room_id'], discussion))
+            txn.execute('SELECT source_id,room_id FROM tavern_channel_discussions')
+            for source, discussion in txn.fetchall():
+                scopes.update((source, discussion))
             for room in scopes:
                 self.enqueue(txn, room)
             txn.execute('INSERT INTO tavern_channel_cursor(id,position) VALUES(1,?) '
@@ -77,6 +94,15 @@ class ChannelRevocationWorker:
 
     async def reconcile(self, room):
         state = await self.api.get_room_state(room)
+        source = binding(content(state, 'm.room.create'))
+        def discussions(txn):
+            if source:
+                txn.execute('INSERT INTO tavern_channel_discussions(source_id,room_id) VALUES(?,?) '
+                            'ON CONFLICT(room_id) DO NOTHING', (source['source_room_id'], room))
+            txn.execute('SELECT room_id FROM tavern_channel_discussions WHERE source_id=?', (room,))
+            for (discussion,) in txn.fetchall():
+                self.enqueue(txn, discussion)
+        await self.transaction('discussions', discussions)
         if content(state, 'm.room.create').get('type') == 'm.space':
             policy = content(state, POLICY)
             opted_in = MARKER in policy or AUDIENCES in policy

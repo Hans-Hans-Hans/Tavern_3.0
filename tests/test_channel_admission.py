@@ -136,6 +136,18 @@ class AdmissionDecisionTests(unittest.IsolatedAsyncioTestCase):
         del self.states[SERVER]
         self.assertNotEqual(await self.admission.denial(ROOM, self.states[ROOM], BOB), DENIED)
 
+    async def test_private_discussion_also_requires_current_membership_of_its_restricted_source(self):
+        discussion = '!discussion'
+        self.states[discussion] = {('m.room.create', ''): event({
+            'type': 'io.tavern.private_thread', 'm.federate': False,
+            'io.tavern.private_thread': {'version': 1, 'source_room_id': ROOM, 'source_event_id': ''},
+        })}
+        self.states[ROOM]['m.room.member', ALICE] = event({'membership': 'join'})
+        self.assertIsNone(await self.admission.denial(discussion, self.states[discussion], ALICE))
+        self.states[ROOM]['m.room.member', ALICE] = event({'membership': 'leave'}, '$left')
+        self.assertEqual(await self.admission.denial(discussion, self.states[discussion], ALICE), DENIED)
+        self.assertIsNone(await self.admission.denial(ROOM, self.states[ROOM], ALICE), 'Selected server members can still rejoin the source itself.')
+
     async def test_native_invited_join_and_invite_both_enforce_the_selected_audience(self):
         self.states[ROOM]['m.room.member', BOB] = event({'membership': 'invite'})
         for membership, sender in [('join', BOB), ('invite', OWNER)]:

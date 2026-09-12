@@ -132,6 +132,10 @@ class ChannelAdmissionPolicy:
                                getattr(parent.get(('m.room.member', actor)), 'event_id', None),
                                getattr(parent.get(('m.space.child', source)), 'event_id', None))
                       for server, parent in scopes.items()}
+            source_member = None
+            if source != room:
+                source_state = await self.api.get_room_state(source)
+                source_member = source_state.get(('m.room.member', actor))
             fresh = await self.api.get_room_state(room) if room else state
             fresh_source, latest = await self.scopes(room, fresh)
             after = {server: (getattr(parent.get((POLICY, '')), 'event_id', None),
@@ -140,6 +144,13 @@ class ChannelAdmissionPolicy:
                      for server, parent in latest.items()}
             if source != fresh_source or before != after:
                 return CHANGED
+            if source != room:
+                source_state = await self.api.get_room_state(source)
+                latest_member = source_state.get(('m.room.member', actor))
+                if getattr(source_member, 'event_id', None) != getattr(latest_member, 'event_id', None):
+                    return CHANGED
+                if not latest_member or latest_member.content.get('membership') != 'join':
+                    return DENIED
             return None if all(self.allowed_in_scope(parent, source, actor) for parent in latest.values()) else DENIED
         except Exception:
             return UNAVAILABLE
