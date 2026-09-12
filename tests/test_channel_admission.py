@@ -181,6 +181,21 @@ class AdmissionDecisionTests(unittest.IsolatedAsyncioTestCase):
             proposed.type, proposed.room_id, proposed.state_key = kind, identity, state_key
             self.assertFalse(await self.admission.check(proposed, self.states[identity]))
 
+    async def test_only_the_native_owner_can_remove_an_audience_after_an_actual_empty_room_purge(self):
+        desired = {**policy(), AUDIENCES: {}, 'io.tavern.previous_event': '$one'}
+        proposed = event(desired)
+        proposed.type, proposed.room_id, proposed.state_key = POLICY, SERVER, ''
+        self.states[ROOM] = {}
+        self.assertTrue(await self.admission.check(proposed, self.states[SERVER]))
+        proposed.sender = BOB
+        self.assertFalse(await self.admission.check(proposed, self.states[SERVER]))
+        proposed.sender = OWNER
+        for invalid in [None, {('m.room.create', ''): event({'m.federate': False})}]:
+            self.states[ROOM] = invalid
+            self.assertFalse(await self.admission.check(proposed, self.states[SERVER]))
+        del self.states[ROOM]
+        self.assertFalse(await self.admission.check(proposed, self.states[SERVER]), 'An unavailable read is not evidence of a purge.')
+
 
 if __name__ == '__main__':
     unittest.main()

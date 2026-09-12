@@ -18,6 +18,8 @@ CALL_MEMBER = 'org.matrix.msc3401.call.member'
 
 
 async def call_authority(service, session, identity):
+    if getattr(service, 'room_removals', None):
+        service.room_removals.deny_calls(identity)
     authority = await room_authority(service, session, identity)
     current, actor, model = authority.state, authority.actor, authority.model
     creation = content(current, 'm.room.create')

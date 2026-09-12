@@ -67,7 +67,12 @@ async def catalog(request):
             # Page the inspected native candidates, including denied entries.
             # This bounds privileged reads without disclosing a denied name.
             for identity in candidates[:25]:
-                channel = await read(identity)
+                try:
+                    channel = await read(identity)
+                except APIError as error:
+                    if error.status == 404:
+                        continue  # Native purge may finish before parent metadata cleanup.
+                    raise
                 if (not content(current, 'm.space.child', identity).get('via')
                         or content(channel, 'm.space.parent', server).get('canonical') is not True
                         or not content(channel, 'm.space.parent', server).get('via')

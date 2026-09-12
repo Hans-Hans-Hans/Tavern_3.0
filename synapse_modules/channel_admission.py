@@ -192,6 +192,11 @@ class ChannelAdmissionPolicy:
             if before.get(room) == after.get(room):
                 continue
             channel = await self.api.get_room_state(room)
+            # A completed native room purge leaves no current state. Only the
+            # already verified native server owner may remove that obsolete
+            # audience entry; unavailable/nonempty state still fails closed.
+            if room in before and room not in after and isinstance(channel, Mapping) and not channel:
+                continue
             creation, parent = content(channel, 'm.room.create'), content(channel, 'm.space.parent', event.room_id)
             rules, powers = content(channel, 'm.room.join_rules'), content(channel, 'm.room.power_levels')
             power = self.native_power(channel, event.sender) if self.native_power else None
