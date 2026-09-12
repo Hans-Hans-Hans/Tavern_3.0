@@ -14,7 +14,7 @@ it does not create a second membership or call service.
 
 | Area | Main implementation files | Behavior |
 | --- | --- | --- |
-| Server rail and mobile navigation | [server navigation model](../lib/server-navigation.ts), [rail](../app/server-navigation.tsx), [mobile switcher](../app/mobile-server-navigation.tsx), [workspace](../app/tavern.tsx) | Personal server/folder order, context actions and a separate DM selection. |
+| Server rail and mobile navigation | [server navigation model](../lib/server-navigation.ts), [rail](../app/server-navigation.tsx), [mobile navigation](MOBILE_NAVIGATION.md), [workspace](../app/tavern.tsx) | Personal server/folder order, context actions, centered DM entry, shared mobile rail and phone bottom shortcuts with automatic device/keyboard layout. |
 | Channels and categories | [navigation model](../lib/channel-navigation.ts), [sidebar](../app/channel-navigation.tsx), [native layout writer](../lib/community.ts) | Ordered categories/channels, full-row drag/drop, exact-position Move actions and saved collapse preferences. |
 | Creation and settings | [creation model](../lib/channel-creation.ts), [form](../app/channel-creation.tsx), [native management](../app/channel-admin.tsx), [roles](../app/server-roles.tsx) | Typed encrypted rooms, explicit invitations, same-room partial setup repair and scoped settings sections. |
 | Private audiences | [audience writer](../lib/channel-admission.ts), [editor](../app/channel-audience.tsx), [discovery](../app/available-channels.tsx), [catalog API](../api/channel_catalog.py), [native enforcement](../synapse_modules/channel_admission.py) | Selected roles/members govern discovery, native joining and continued membership. |

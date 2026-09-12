@@ -6,6 +6,7 @@ import { PanelLeftIcon } from "lucide-react"
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -67,7 +68,10 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void
 }) {
   const isMobile = useIsMobile()
+  const viewport = useMobileViewport(isMobile)
   const [openMobile, setOpenMobile] = React.useState(false)
+
+  React.useEffect(() => { if (!isMobile) setOpenMobile(false) }, [isMobile])
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -131,10 +135,13 @@ function SidebarProvider({
       <TooltipProvider delayDuration={0}>
         <div
           data-slot="sidebar-wrapper"
+          data-interface={isMobile ? "mobile" : "desktop"}
+          data-keyboard={viewport.keyboard ? "open" : undefined}
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH,
               "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+              "--mobile-viewport-height": viewport.height ? `${viewport.height}px` : undefined,
               ...style,
             } as React.CSSProperties
           }
@@ -157,11 +164,13 @@ function Sidebar({
   collapsible = "offcanvas",
   className,
   children,
+  mobileRail,
   ...props
 }: React.ComponentProps<"div"> & {
   side?: "left" | "right"
   variant?: "sidebar" | "floating" | "inset"
   collapsible?: "offcanvas" | "icon" | "none"
+  mobileRail?: React.ReactNode
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
 
@@ -187,7 +196,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className={cn("w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden", mobileRail && "tavern-mobile-sidebar")}
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -196,10 +205,13 @@ function Sidebar({
           side={side}
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+            <SheetTitle>Navigation</SheetTitle>
+            <SheetDescription>Choose a server, channel, or direct message.</SheetDescription>
           </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
+          <div className="flex h-full min-h-0 w-full">
+            {mobileRail && <div className="sidebar-mobile-rail">{mobileRail}</div>}
+            <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+          </div>
         </SheetContent>
       </Sheet>
     )

@@ -6,7 +6,7 @@ async function fixture(page: Page, options: { deny?: boolean; holdTurn?: boolean
   page.on('console', event => consoleMessages.push(event.text()));
   await page.route('**/api/admin/**', route => route.fulfill({ json: { users: 1, rooms: 1, checks: [{ component: 'TURN', status: 'not_tested', detail: 'Server HTTP cannot prove public UDP.' }], checkedAt: Date.now() } }));
   let admins = 0, revoked = false;
-  await page.route('**/api/auth/session', route => { admins++; calls.push({ path: new URL(route.request().url()).pathname, headers: route.request().headers() }); return route.fulfill({ json: { userId: '@admin:local', deviceId: 'TURN-DEVICE', baseUrl: 'http://127.0.0.1:5173/api/matrix', admin: !options.deny && !revoked, passwordChangeRequired: false, mfaEnrollmentRequired: false } }); });
+  await page.route('**/api/auth/session', route => { admins++; calls.push({ path: new URL(route.request().url()).pathname, headers: route.request().headers() }); return route.fulfill({ json: { userId: '@admin:local', deviceId: 'TURN-DEVICE', baseUrl: new URL('/api/matrix', route.request().url()).href, admin: !options.deny && !revoked, passwordChangeRequired: false, mfaEnrollmentRequired: false } }); });
   await page.route('**/api/matrix/**', async route => {
     calls.push({ path: new URL(route.request().url()).pathname, headers: route.request().headers() });
     if (options.holdTurn) await block;

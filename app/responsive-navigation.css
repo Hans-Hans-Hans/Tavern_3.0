@@ -1,0 +1,105 @@
+/* Icons and text share the same center, including the direct-message entry. */
+.workspace-icon { display:grid; place-items:center; padding:0; line-height:1; }
+.workspace-icon > svg { display:block; margin:0; }
+.workspace-header .workspace-select strong { font-family:inherit; font-size:18px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.workspace-select > span { min-width:0; }
+.workspace-select > svg { flex-shrink:0; }
+.mobile-navigation, .mobile-nav-close { display:none; }
+
+[data-interface=mobile] { --mobile-navigation-height:64px; }
+#root .tavern-root[data-interface=mobile] { height:calc(var(--mobile-viewport-height,100dvh) - var(--tavern-status-height,0px)); }
+[data-interface=mobile] > .workspace-rail { display:none; }
+[data-interface=mobile] .main-workspace { min-height:0; }
+[data-interface=mobile] .mobile-sidebar-trigger { display:inline-flex!important; min-width:44px; min-height:44px; }
+[data-interface=mobile] .global-header { height:52px; padding:0 12px; gap:8px; flex-shrink:0; }
+[data-interface=mobile] .breadcrumb { flex:none; }
+[data-interface=mobile] .breadcrumb > span,
+[data-interface=mobile] .breadcrumb > svg,
+[data-interface=mobile] .breadcrumb > strong,
+[data-interface=mobile] .header-end,
+[data-interface=mobile] .global-search kbd { display:none; }
+[data-interface=mobile] .global-search { flex:1; width:auto; min-width:0; min-height:38px; }
+[data-interface=mobile] .channel-header { padding:10px 12px; gap:8px; min-height:60px; flex-wrap:wrap; }
+[data-interface=mobile] .channel-heading { flex:1; min-width:0; }
+[data-interface=mobile] .channel-heading h1 { font-size:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+[data-interface=mobile] .channel-heading p { display:none; }
+[data-interface=mobile] .channel-symbol { display:none; }
+[data-interface=mobile] .channel-controls { gap:2px; margin-left:auto; }
+[data-interface=mobile] .channel-controls .icon-button { min-width:44px; min-height:44px; }
+[data-interface=mobile] .channel-controls .member-pill,
+[data-interface=mobile] .channel-controls .control-divider { display:none; }
+[data-interface=mobile] .channel-overview { display:none; }
+[data-interface=mobile] .channel-tabs { padding:0 12px; min-width:0; overflow-x:auto; flex-shrink:0; }
+[data-interface=mobile] .channel-tabs [data-slot=tabs-list] { gap:18px; }
+[data-interface=mobile] .channel-caption { display:none; }
+[data-interface=mobile] .conversation-layout,
+[data-interface=mobile] .conversation-main { min-height:0; overflow:hidden; }
+[data-interface=mobile] .message-scroll { padding-top:12px; padding-bottom:8px; }
+[data-interface=mobile] .message { padding-left:12px; padding-right:12px; }
+[data-interface=mobile] .composer-wrap { padding:0 10px; }
+[data-interface=mobile] .composer textarea { font-size:max(16px,var(--chat-font-size,16px)); min-height:48px; }
+[data-interface=mobile] .composer-toolbar { gap:4px; padding:2px 6px 6px; }
+[data-interface=mobile] .composer-tools { min-width:0; overflow-x:auto; }
+[data-interface=mobile] .composer-tools .icon-button { min-width:44px; min-height:44px; }
+[data-interface=mobile] .send-controls { flex-shrink:0; gap:2px; }
+[data-interface=mobile] .send-controls .icon-button { min-width:44px; min-height:44px; }
+[data-interface=mobile] .send-button { min-height:44px; }
+[data-interface=mobile] .composer-footnote { display:none; }
+[data-interface=mobile] .mobile-navigation {
+  color:var(--sidebar-foreground); --muted-foreground:#b4b8b1;
+  --accent:var(--sidebar-accent); --accent-foreground:var(--sidebar-accent-foreground);
+  display:flex; align-items:center; gap:2px; flex-shrink:0;
+  min-height:var(--mobile-navigation-height); padding:6px max(6px,env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));
+  background:var(--sidebar); border-top:1px solid var(--border);
+}
+.mobile-profile { display:flex; align-items:center; min-height:48px; gap:8px; flex:1; min-width:48px; padding:4px; border-radius:10px; text-align:left; }
+.mobile-profile > span:last-child { min-width:0; }
+.mobile-profile strong { display:block; font-size:13px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; max-width:110px; }
+.mobile-profile small { font-size:11px; color:var(--muted-foreground); }
+.mobile-nav-action { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; min-width:48px; min-height:48px; padding:4px 6px; border-radius:10px; color:var(--muted-foreground); }
+.mobile-nav-action span { font-size:10px; line-height:1.2; }
+.mobile-nav-action[aria-current=page] { background:var(--accent); color:var(--accent-foreground); }
+.mobile-profile:focus-visible,.mobile-nav-action:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+.tavern-mobile-sidebar { width:min(100vw,440px)!important; max-width:100vw!important; gap:0; }
+.sidebar-mobile-rail { flex:0 0 64px; min-height:0; background:var(--rail); padding-top:env(safe-area-inset-top); }
+.sidebar-mobile-rail .workspace-rail { display:flex; width:64px; height:100%; min-height:0; padding:12px 0; gap:12px; overflow:hidden; }
+.sidebar-mobile-rail .workspace-icon { width:44px; height:44px; border-radius:14px; }
+.sidebar-mobile-rail .icon-button { width:44px; height:44px; }
+.sidebar-mobile-rail .workspace-icon.selected:before { left:-10px; }
+.sidebar-mobile-rail .server-rail-navigation { flex:1; max-height:none; width:64px; overflow-x:hidden; }
+.sidebar-mobile-rail .brand-mark { width:44px; height:44px; flex-shrink:0; }
+.sidebar-mobile-rail .rail-spacer { display:none; }
+.tavern-mobile-sidebar .workspace-header { position:relative; height:auto; padding:8px 10px!important; padding-top:max(8px,env(safe-area-inset-top))!important; gap:4px; }
+.tavern-mobile-sidebar .workspace-select { min-height:44px; padding:8px 34px 8px 2px; }
+.tavern-mobile-sidebar .workspace-select small { display:none; }
+.tavern-mobile-sidebar .workspace-select strong { font-size:16px; }
+.tavern-mobile-sidebar .mobile-nav-close { display:grid; place-items:center; position:absolute; right:5px; top:max(8px,env(safe-area-inset-top)); width:44px; height:44px; z-index:1; }
+.tavern-mobile-sidebar .mobile-server-navigation-trigger { display:flex!important; align-items:center; justify-content:center; gap:8px; min-height:44px; font-size:12px; }
+.tavern-mobile-sidebar .channel-link,.tavern-mobile-sidebar .channel-nav-button,.tavern-mobile-sidebar .quick-nav button { min-height:44px; }
+.tavern-mobile-sidebar .navigation-content { min-height:0; padding:8px!important; }
+.tavern-mobile-sidebar .quick-nav { padding-bottom:12px; }
+.tavern-mobile-sidebar .sidebar-footer { padding:8px 10px max(8px,env(safe-area-inset-bottom)); }
+.tavern-mobile-sidebar .connection { display:none; }
+.tavern-mobile-sidebar .invite-sidebar { display:none; }
+.sidebar-mobile-rail .rail-profile { display:none; }
+[data-interface=mobile][data-keyboard=open] .mobile-navigation { display:none; }
+[data-interface=mobile][data-keyboard=open] .global-header,
+[data-interface=mobile][data-keyboard=open] .channel-tabs { display:none; }
+@media(max-height:500px) {
+  [data-interface=mobile] .global-header { display:none; }
+  [data-interface=mobile] .channel-header { min-height:44px; padding-block:4px; flex-shrink:0; }
+  [data-interface=mobile] .channel-tabs { height:36px; }
+  [data-interface=mobile] .matrix-banner { padding:6px 12px; flex-shrink:0; }
+  [data-interface=mobile] .composer textarea { height:48px; padding-top:8px; resize:none; }
+  [data-interface=mobile] .typing-indicator { min-height:16px; height:16px; }
+  [data-interface=mobile] .composer-wrap { margin-top:0; }
+  .sidebar-mobile-rail .workspace-rail { gap:6px; padding-block:6px; overflow-y:auto; }
+  .sidebar-mobile-rail .server-rail-navigation { flex:1 0 auto; }
+  .sidebar-mobile-rail .workspace-rail > * { flex-shrink:0; }
+}
+@media(max-width:359px) { .mobile-profile > span:last-child { display:none; } .mobile-nav-action { padding-inline:4px; } }
+@media(pointer:coarse) {
+  .channel-link { min-height:44px; }
+  /* The larger touch Move control must not cover the server icon's center. */
+  .server-rail-item > .server-organize-button { bottom:-8px; }
+}

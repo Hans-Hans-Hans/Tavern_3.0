@@ -30,6 +30,7 @@ const MobileServerNavigation=()=>null,toast={error:error=>{throw error;}},naviga
 const SidebarHeader=({children,...props})=><header {...props}>{children}</header>;
 export function WorkspaceMenu(){
  const[selectedServer,setSelected]=useState('all'),[modal,setModal]=useState('');
+ const isMobile=false,browseSection=setSelected,setOpenMobile=()=>{};
  const directSection=selectedServer==='dms';const prefs={muted:[],focus:false},data={workspace:{name:'Tavern'},conversations:[],servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
  const readAction={run:()=>{}},setCreationCategory=()=>{},setCategoryRequest=()=>{},setReportTarget=()=>{},setConfirmAction=()=>{},loadBootstrap=async()=>{},openServerSettings=id=>{chooseServer(id);setModal('serverSettings');};
  ${serverActions}

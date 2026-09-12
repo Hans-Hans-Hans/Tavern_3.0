@@ -2,6 +2,29 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## September 12 mobile navigation checkpoint
+
+The production build and all 687 model tests pass. Six new mounted Workspace
+browser cases cover DM icon centering, 320px/390px phone navigation, preserving
+the selected channel when opening navigation or returning from Mentions,
+landscape phone controls, desktop resize cleanup, actual emulated touch taps,
+keyboard viewport sizing, pinch zoom and a roomy tablet's server columns.
+
+Those checks reproduced and corrected two interaction failures: the composer
+overlapping bottom navigation in short landscape windows, and the larger touch
+Move control covering the server icon's center. The keyboard test also caught
+the PWA height rule overriding the smaller visual viewport. Screenshots were
+reviewed for desktop, portrait, landscape, the drawer and keyboard layouts.
+Physical-device Safari/Android acceptance remains separate from Chromium
+emulation. See [mobile navigation](MOBILE_NAVIGATION.md).
+
+All 462 browser cases passed across the full run and affected-fixture rerun:
+438 passed initially; the remaining failures came from the local headless-shell
+notification permission limitation, fixed-port fixture assumptions, and the
+extracted header fixture missing its new navigation context. All 31 cases in
+the affected files passed with full Chromium and corrected fixtures. The
+repository credential/ignored-file check passed for all 930 tracked files.
+
 ## September 12 recovery and channel-management checkpoint
 
 At `76cc571`, [native CI run 34694752390](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34694752390)
@@ -22,18 +45,13 @@ now permits that longer reported cooldown within a ninety-second bound, while
 ordinary request retries retain their thirty-second bound. All fifteen helper
 tests pass, including a regression that failed before this correction.
 
-On the target deployment, the user still reports both call types joining and
-disconnecting; the conference reports `SFU_ERROR` / `InternalError`. Public
-frontend verification matched the `76cc571` entry asset. The user confirmed the
-TURN hostname is `turn.tavern.hans-homelab.com`; the earlier check of
-`turn.hans-homelab.com` used the wrong name and does not diagnose this deployment.
-On September 12 at approximately 13:29 UTC, both Google and Cloudflare DNS
-resolved the corrected hostname to `71.69.81.95`, with no AAAA record. From the
-operator PC, STUN binding requests succeeded over both UDP and TCP port 3478,
-and TCP port 7881 accepted a connection. These checks establish listener
-reachability from that network, not authenticated relay allocation or end-to-end
-media delivery. The actual running media IP/TURN-host read is still pending;
-the deployed disconnect remains unresolved.
+On September 12, the operator confirmed calls work after allowing inbound
+traffic through the firewall. The ports had been forwarded, but the firewall
+had still blocked inbound connections. This closes the reported LAN-versus-
+external call failure based on the operator's deployment test; it is separate
+from the automated native media checks above. The correct TURN hostname is
+`turn.tavern.hans-homelab.com`. Earlier successful LAN listener and relay checks
+did not establish external reachability.
 
 At `4122bbe`, all 455 browser cases and three more native direct audio/cleanup
 probes passed. Native Games diagnostics isolated the first category move, and

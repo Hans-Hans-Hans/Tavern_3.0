@@ -50,7 +50,7 @@ test('manager creates and recopies a custom link with existing restrictions', as
   await expect(page.getByRole('button', { name: 'Copy custom link guild-night' })).toBeVisible();
   expect(submitted).toMatchObject({ roomId: '!guild:test', customSlug: 'guild-night', maxUses: 3, email: 'friend@example.test', defaultRoleIds: [] });
   await page.getByRole('button', { name: 'Copy custom link guild-night' }).click();
-  expect(await page.evaluate(() => (window as any).copiedInvites)).toEqual(['http://127.0.0.1:5173/invite/guild-night']);
+  expect(await page.evaluate(() => (window as any).copiedInvites)).toEqual([new URL('/invite/guild-night', page.url()).href]);
 });
 
 test('late create results cannot cross an account generation and room changes clear the draft', async ({ page }) => {

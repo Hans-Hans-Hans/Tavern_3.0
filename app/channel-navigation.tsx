@@ -199,7 +199,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const editModal = (patch: Partial<Editor>) => setEditor(previous => previous?.owner === owner ? { owner, value: { ...previous.value, ...patch } } : previous);
 
   return <><nav onDragLeave={event => { const next = event.relatedTarget; if (!(next instanceof Node) || !event.currentTarget.contains(next)) clearDragTarget(); }} ref={nav} aria-label='Channels' className='community-channel-navigation channel-navigation' aria-busy={busy}>
-    {canMove && <div className='channel-navigation-tools'><span>CHANNELS</span><button type='button' className='channel-row-action' disabled={busy || shown.categories.length >= 100} aria-label='Create category' onClick={() => openEditor('create')}><Plus size={16}/></button></div>}
+    {canMove && <div className='channel-navigation-tools'><span>Categories</span><button type='button' className='channel-row-action' disabled={busy || shown.categories.length >= 100} aria-label='Create category' onClick={() => openEditor('create')}><Plus size={16}/></button></div>}
     {awaitingSync && !saving && <p className='muted-copy' role='status'>Waiting for server updates…</p>}
     {groups.map(group => {
       const ordered = serverId ? shown.channels.filter(channel => channel.category === group.id).flatMap(channel => displayChannels.get(channel.id) || []) : [...displayChannels.values()];

@@ -63,5 +63,5 @@ export function mountFixture() {
     }
     return Promise.resolve();
   };
-  createRoot(document.getElementById('root')!).render(<TooltipProvider><SidebarProvider><Workspace/></SidebarProvider></TooltipProvider>);
+  createRoot(document.getElementById('root')!).render(<TooltipProvider><SidebarProvider className="tavern-root"><Workspace/></SidebarProvider></TooltipProvider>);
 }

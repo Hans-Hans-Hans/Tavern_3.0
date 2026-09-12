@@ -15,8 +15,8 @@ async function fixture(page: Page, workspace = false, hash = '') {
     await page.route(url => url.pathname === '/lib/interactions.ts', route => route.fulfill({ contentType: 'application/javascript', body: 'export const blockUser=(...args)=>window.dmFixture.blockUser(...args);' }));
   }
   await page.route('**/config.json', route => route.fulfill({ json: { homeserverUrl: 'http://127.0.0.1:5173', serverRolePolicy: true, callsEnabled: false } }));
-  await page.route('**/dm-requests-test*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/' + (workspace ? 'dm-workspace' : 'dm-requests') + '.tsx")).mountFixture();</script></body></html>' }));
-  await page.goto('/dm-requests-test' + hash); await expect(workspace ? page.locator('.profile-button') : page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
+  await page.route('**/dm-requests-test*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/' + (workspace ? 'dm-workspace' : 'dm-requests') + '.tsx")).mountFixture();</script></body></html>' }));
+  await page.goto('/dm-requests-test' + hash); await expect(workspace ? page.locator('.profile-button:visible, .mobile-profile:visible') : page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
 }
 
 async function channelContextAction(page: Page, trigger: ReturnType<Page['locator']>, action: string) {
@@ -37,6 +37,144 @@ async function channelContextAction(page: Page, trigger: ReturnType<Page['locato
   catch (error) { console.error('Channel menu interaction:', await page.evaluate(() => (window as any).channelMenuTrace).catch(() => 'unavailable')); throw error; }
   finally { await page.evaluate(() => (window as any).stopChannelMenuTrace?.()).catch(() => {}); }
 }
+
+test('responsive navigation centers the DM icon on desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await fixture(page, true, '?management=1');
+  const dm = page.getByRole('button', { name: 'Direct messages', exact: true });
+  for (const selected of [false, true]) {
+    if (selected) await dm.click();
+    const button = (await dm.boundingBox())!, icon = (await dm.locator('svg').boundingBox())!;
+    expect(Math.abs(button.x + button.width / 2 - icon.x - icon.width / 2)).toBeLessThan(1);
+    expect(Math.abs(button.y + button.height / 2 - icon.y - icon.height / 2)).toBeLessThan(1);
+  }
+  await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toHaveCount(0);
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+  await page.screenshot({ path: 'work/navigation-desktop.png' });
+});
+
+for (const width of [320, 390]) test(`responsive navigation opens servers and DMs on a ${width}px phone`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await fixture(page, true, '?management=1');
+  const dock = page.getByRole('navigation', { name: 'Mobile navigation' });
+  await expect(dock).toBeVisible();
+  const bounds = (await dock.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole('button', { name: 'Games server', exact: true }).click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Gaming Voice', exact: true })).toBeVisible();
+  const sheet = (await drawer.boundingBox())!;
+  expect(sheet.width).toBeLessThanOrEqual(width);
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+  await page.screenshot({ path: `work/navigation-phone-${width}-drawer.png` });
+  await drawer.getByRole('button', { name: 'Lobby', exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Lobby', level: 1, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Gaming Voice', exact: true }).click();
+  const selected = page.url();
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Close navigation', exact: true }).click();
+  expect(page.url()).toBe(selected);
+  await expect(page.getByRole('heading', { name: 'Gaming Voice', level: 1, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Your mentions', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Close navigation', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Gaming Voice', level: 1, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Browse direct messages', exact: true }).click();
+  await expect(drawer.locator('.workspace-select')).toContainText('Direct messages');
+  await expect(drawer.locator('.channel-navigation')).toHaveCount(0);
+  await expect(drawer.getByRole('button', { name: 'New message', exact: true })).toBeVisible();
+  await drawer.getByRole('button', { name: 'Close navigation', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  await expect(drawer.locator('.workspace-select')).toContainText('Games server');
+  await drawer.getByRole('button', { name: 'Lobby', exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+  await page.screenshot({ path: `work/navigation-phone-${width}.png` });
+});
+
+test('responsive navigation retains phone controls in landscape and releases desktop overlays', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' }));
+  await page.setViewportSize({ width: 844, height: 390 });
+  await fixture(page, true, '?management=1');
+  await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible();
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
+  await expect(drawer).toBeVisible();
+  await drawer.getByRole('button', { name: 'Games server', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Lobby', exact: true }).click();
+  await expect(drawer).toHaveCount(0);
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))));
+  await page.screenshot({ path: 'work/navigation-landscape.png' });
+  await page.getByRole('button', { name: 'Browse servers', exact: true }).click();
+  await page.evaluate(() => Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Desktop browser' }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
+  await expect(page.locator('.workspace-select')).toContainText('Direct messages');
+});
+
+test('responsive navigation keeps the phone composer above the keyboard and preserves zoom', async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
+  const page = await context.newPage();
+  try {
+    await fixture(page, true, '?management=1');
+    const dock = page.getByRole('navigation', { name: 'Mobile navigation' });
+    await page.getByRole('button', { name: 'Browse servers', exact: true }).tap();
+    const drawer = page.getByRole('dialog', { name: 'Navigation', exact: true });
+    await drawer.getByRole('button', { name: 'Games server', exact: true }).tap();
+    await expect(drawer.locator('.workspace-select')).toContainText('Games server');
+    await drawer.getByRole('button', { name: 'Lobby', exact: true }).tap();
+    await expect(drawer).toHaveCount(0);
+    const input = page.getByRole('textbox', { name: 'Message Lobby', exact: true });
+    await input.focus();
+    await page.evaluate(() => {
+      Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 520 });
+      window.visualViewport!.dispatchEvent(new Event('resize'));
+    });
+    await expect(dock).toBeHidden();
+    await expect(page.locator('.tavern-root')).toHaveAttribute('data-keyboard', 'open');
+    await expect.poll(async () => (await page.locator('.tavern-root').boundingBox())?.height).toBe(520);
+    const composer = (await input.boundingBox())!;
+    expect(composer.y).toBeGreaterThanOrEqual(0);
+    expect(composer.y + composer.height).toBeLessThanOrEqual(520);
+    await page.screenshot({ path: 'work/navigation-phone-keyboard.png' });
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement)?.blur();
+      Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 844 });
+      window.visualViewport!.dispatchEvent(new Event('resize'));
+    });
+    await expect(dock).toBeVisible();
+    await expect.poll(async () => (await page.locator('.tavern-root').boundingBox())?.height).toBe(844);
+    await page.evaluate(() => {
+      Object.defineProperty(window.visualViewport, 'scale', { configurable: true, value: 2 });
+      Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 422 });
+      window.visualViewport!.dispatchEvent(new Event('resize'));
+    });
+    await expect(dock).toBeVisible();
+    expect((await page.locator('.tavern-root').boundingBox())?.height).toBe(844);
+  } finally { await context.close().catch(() => {}); }
+});
+
+test('responsive navigation gives a roomy touch tablet the full server columns', async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)' });
+  const page = await context.newPage();
+  try {
+    await fixture(page, true, '?management=1');
+    await expect(page.locator('.tavern-root')).toHaveAttribute('data-interface', 'desktop');
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Games server', exact: true }).tap();
+    await expect(page.locator('.workspace-select')).toContainText('Games server');
+    await expect(page.getByRole('button', { name: 'Gaming Voice', exact: true })).toBeVisible();
+  } finally { await context.close().catch(() => {}); }
+});
 
 test('native invitation inbox shows identity and scope without fetching previews, then classifies the accepted room', async ({ page }) => {
   await fixture(page); await expect(page.getByText('Invited by @alice:local')).toBeVisible(); await expect(page.getByText(/does not prove who else can read/)).toBeVisible();
