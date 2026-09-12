@@ -92,7 +92,7 @@ export function ConferencePanel() {
     };
     const scopedClose = { generation, roomId, close }; closeRef.current = scopedClose;
     if (!client) { clearConference(generation); return; }
-    const sidebar = bindVoiceSidebar({ roomId, generation, isCurrent: () => !disposed && !closing && owner.current(), setMicrophone: enabled => changeDevices({ audio_enabled: enabled }), disconnect: close,
+    const sidebar = bindVoiceSidebar({ roomId, generation, isCurrent: () => !disposed && !closing && owner.current(), setMicrophone: enabled => changeDevices({ audio_enabled: enabled }), setDeafened: changeDeafened, disconnect: close,
       openSettings: () => { if (owner.current()) { setShowTools(true); minimizeConference(false); } } });
     sidebarRef.current = sidebar;
     void import('@/lib/conference').then(module => module.mountConference(client, roomId, iframe, () => void close(), controller.signal, () => conferenceJoined(generation), true, value => { if (!disposed && !closing && owner.current()) { setDevices(previous => ({ ...previous, ...value })); sidebar.update({ devices: value }); } }, {voiceOnly,onTelemetry:value=>{if(!disposed&&!closing&&getMatrixClient()===client&&accountArtworkOwner()===account){setObservation({roomId,generation,value});sidebar.update({telemetry:value});}}})).then(cleanup => {
@@ -125,6 +125,18 @@ export function ConferencePanel() {
     catch (error) { if (current()) toast.error((error as Error).message); }
     finally { if (current()) { deviceOperation.current = null; setDeviceBusy(false); } }
   }
+  async function changeDeafened(deafened: boolean) {
+    const admission = controlsRef.current;
+    if (!admission?.owner.current() || deviceOperation.current) throw new Error('Voice audio controls are not ready for this call.');
+    const operation = {}; deviceOperation.current = operation; setDeviceBusy(true);
+    const current = () => deviceOperation.current === operation && controlsRef.current === admission && admission.owner.current();
+    try {
+      // Never restore microphone capture as a side effect of restoring playback.
+      await admission.controls.setDevices({ audio_enabled: false });
+      if (!current()) throw new Error('This voice call has ended.');
+      await admission.controls.setDeafened(deafened);
+    } finally { if (current()) { deviceOperation.current = null; setDeviceBusy(false); } }
+  }
   function selectRemoval(member: { userId: string; name: string }) {
     const owner = operationOwner(session.roomId!, session.generation);
     if (!owner.current() || removalOperation.current) return;
@@ -152,7 +164,7 @@ export function ConferencePanel() {
   const voiceReady = voiceOnly && telemetry?.connected === true && !telemetry.failure;
   return <section className={'conference-panel persistent-conference' + (session.minimized ? ' conference-minimized' : '') + (voiceOnly?' voice-conference':'') + (inline?' voice-inline':'')} style={inline?{left:inline.left,top:inline.top,width:inline.width,height:inline.height}:undefined} aria-label={'Conference in ' + (room?.name || 'conversation')}>
     <header><div><strong>{room?.name || 'Tavern conference'}</strong><small aria-live="polite">{telemetry?.failure ? 'Connection needs attention' : session.phase === 'joining' ? 'Preparing your conference' : session.phase === 'joined' ? 'Conference active' : session.phase === 'closing' ? 'Leaving conference' : 'Connection needs attention'} · {participants.length} participating</small></div><div className="inline-actions">
-      <button className="icon-button" disabled={deviceBusy || devices.audio_enabled === undefined || session.phase === 'closing'} aria-label={devices.audio_enabled ? 'Mute conference microphone' : 'Unmute conference microphone'} aria-pressed={devices.audio_enabled === false} onClick={() => void changeDevices({ audio_enabled: !devices.audio_enabled })}>{devices.audio_enabled ? <Mic/> : <MicOff/>}</button>
+      <button className="icon-button" disabled={deviceBusy || devices.audio_enabled === undefined || session.phase === 'closing' || telemetry?.deafened === true} aria-label={devices.audio_enabled ? 'Mute conference microphone' : 'Unmute conference microphone'} aria-pressed={devices.audio_enabled === false} onClick={() => void changeDevices({ audio_enabled: !devices.audio_enabled })}>{devices.audio_enabled ? <Mic/> : <MicOff/>}</button>
       {!voiceOnly&&<button className="icon-button" disabled={deviceBusy || devices.video_enabled === undefined || session.phase === 'closing'} aria-label={devices.video_enabled ? 'Disable conference camera' : 'Enable conference camera'} aria-pressed={devices.video_enabled} onClick={() => void changeDevices({ video_enabled: !devices.video_enabled })}>{devices.video_enabled ? <Video/> : <VideoOff/>}</button>}
       <button className="icon-button" aria-label={session.minimized ? 'Expand conference' : 'Minimize conference'} title={session.minimized ? 'Expand conference' : 'Keep talking while browsing'} onClick={() => minimizeConference(!session.minimized)}>{session.minimized ? <Maximize2/> : <Minimize2/>}</button>
       <button disabled={session.phase === 'closing'} className="icon-button call-end" aria-label="Leave conference" onClick={() => void closeRef.current?.close()}><PhoneOff/></button>

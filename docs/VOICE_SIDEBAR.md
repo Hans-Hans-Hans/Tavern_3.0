@@ -20,10 +20,19 @@ acknowledged device API. Disconnect uses the existing call cleanup path. Setting
 opens the same mounted widget's controls, preserving the conference and any
 voice-only camera/screen restrictions.
 
-The pinned widget API does not expose a supported self-deafen control or a
-participant deafened-state observation. The sidebar therefore exposes call
-settings rather than a simulated deafen toggle. Server moderation remains in
-the existing authorized call moderation interface.
+Self-deafen uses the existing acknowledged microphone API, followed by an
+explicit, acknowledged playback command to the same widget document. Its local
+adapter disables the existing remote audio receiver tracks, including screen-share
+audio. It does not open a microphone, replace a connection, change subscriptions,
+or alter another participant's sending state. Newly subscribed tracks are gated
+immediately, and the gate survives reconnects and view-model replacement in the
+same call. Leaving does not briefly restore sound before native teardown.
+Undeafen restores each receiver's previous state and leaves the microphone muted.
+
+The local participant's deafen indicator is shown only for its exact observed
+device. The pinned widget has no remote deafen observation; another participant
+or another device of the same account remains unknown. Server moderation remains
+in the existing authorized call moderation interface.
 
 The shared observation bridge is bound to the exact conference generation and
 native account/room owner. Late telemetry, disposal and control completions
@@ -36,4 +45,7 @@ device replacement, partial and missing telemetry, microphone acknowledgements,
 navigation without remounting, stale account completions and a 320px sidebar.
 The browser fixtures use real Matrix Room/profile components and the actual
 panel/bridge; their widget network boundary is controlled. They do not replace
-the separate real embedded-conference CI acceptance test.
+the separate real embedded-conference CI acceptance test. A real browser WebRTC
+receiver test measures sound before deafen, silence during it, and sound afterward
+without replacing the connection. The native Games voice acceptance also requires
+the shipped widget's receiver tracks and acknowledged dock controls to change.

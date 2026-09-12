@@ -1,6 +1,8 @@
 export const CALL_TELEMETRY_TYPE = 'io.tavern.call.telemetry';
 export const CALL_TELEMETRY_READY = 'io.tavern.call.telemetry.ready';
 export const CALL_TELEMETRY_BIND = 'io.tavern.call.telemetry.bind';
+export const CALL_AUDIO_SET = 'io.tavern.call.audio.set';
+export const CALL_AUDIO_ACK = 'io.tavern.call.audio.ack';
 export const TELEMETRY_LIMIT = 128;
 export const CONFERENCE_FAILURE_CODES = ['MISSING_MATRIX_RTC_TRANSPORT', 'CONNECTION_LOST_ERROR', 'INTERNAL_MEMBERSHIP_MANAGER', 'FAILED_TO_START_LIVEKIT', 'INSUFFICIENT_CAPACITY_ERROR', 'E2EE_NOT_SUPPORTED', 'STICKY_EVENTS_NOT_SUPPORTED', 'OPEN_ID_ERROR', 'NO_MATRIX_2_0_AUTHORIZATION_SERVICE', 'SFU_ERROR', 'UNKNOWN_ERROR'] as const;
 const failureCauses = ['MatrixError', 'ConnectionError', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'AbortError', 'Error', 'unknown'] as const;
@@ -14,7 +16,7 @@ export type ConferenceParticipant = {
   e2eeEnabled: boolean | null; encrypted: boolean | null;
 };
 export type ConferenceMetrics = { rttMs: number | null; jitterMs: number | null; packetLossPercent: number | null; sampledTracks: number; totalTracks: number };
-export type ConferenceTelemetry = { connected: boolean; reconnecting: boolean; participants: ConferenceParticipant[]; complete: boolean; e2eeEnabled: boolean | null; metrics: ConferenceMetrics; failure?: ConferenceFailure | null };
+export type ConferenceTelemetry = { connected: boolean; reconnecting: boolean; participants: ConferenceParticipant[]; complete: boolean; e2eeEnabled: boolean | null; metrics: ConferenceMetrics; failure?: ConferenceFailure | null; deafened?: boolean | null };
 export type ConferenceTelemetryMessage = ConferenceTelemetry & { type: typeof CALL_TELEMETRY_TYPE; version: 1; widgetId: string; session: string; roomId: string; document: string; sequence: number };
 export const emptyConferenceMetrics = (): ConferenceMetrics => ({ rttMs: null, jitterMs: null, packetLossPercent: null, sampledTracks: 0, totalTracks: 0 });
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -51,11 +53,11 @@ export function conferenceFailure(error: unknown): ConferenceFailure {
   return failure;
 }
 export function parseConferenceTelemetry(value: unknown): ConferenceTelemetryMessage | null {
-  if (!record(value) || !keys(value, ['type', 'version', 'widgetId', 'session', 'roomId', 'document', 'sequence', 'connected', 'reconnecting', 'participants', 'complete', 'e2eeEnabled', 'metrics', ...(Object.hasOwn(value, 'failure') ? ['failure'] : [])]) ||
+  if (!record(value) || !keys(value, ['type', 'version', 'widgetId', 'session', 'roomId', 'document', 'sequence', 'connected', 'reconnecting', 'participants', 'complete', 'e2eeEnabled', 'metrics', ...(Object.hasOwn(value, 'failure') ? ['failure'] : []), ...(Object.hasOwn(value, 'deafened') ? ['deafened'] : [])]) ||
       value.type !== CALL_TELEMETRY_TYPE || value.version !== 1 || !telemetryNonce(value.widgetId) || !telemetryNonce(value.session) || !telemetryNonce(value.document) ||
       !telemetryString(value.roomId, 255) || !value.roomId.startsWith('!') || !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1 ||
       typeof value.connected !== 'boolean' || typeof value.reconnecting !== 'boolean' || typeof value.complete !== 'boolean' || !boolOrNull(value.e2eeEnabled) ||
-      !Array.isArray(value.participants) || value.participants.length > TELEMETRY_LIMIT) return null;
+      !Array.isArray(value.participants) || value.participants.length > TELEMETRY_LIMIT || value.deafened !== undefined && !boolOrNull(value.deafened)) return null;
   const failure = value.failure === undefined || value.failure === null ? null : parseFailure(value.failure);
   if (value.failure !== undefined && value.failure !== null && !failure) return null;
   const identities = new Set<string>();

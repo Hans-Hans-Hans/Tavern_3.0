@@ -4,8 +4,8 @@ import type { ConferenceParticipant, ConferenceTelemetry } from './conference-te
 
 export type VoiceParticipantState = Readonly<{ speaking: boolean | null; muted: boolean | null; camera: boolean | null; sharing: boolean | null; deafened: boolean | null }>;
 const unknown: VoiceParticipantState = Object.freeze({ speaking: null, muted: null, camera: null, sharing: null, deafened: null });
-export type VoiceDockState = Readonly<{ roomId: string; generation: number; phase: 'joining' | 'connected' | 'reconnecting' | 'closing' | 'error' | 'unknown'; microphone: boolean | null; busy: boolean; ready: boolean }>;
-type Binding = { roomId: string; generation: number; isCurrent: () => boolean; setMicrophone: (enabled: boolean) => Promise<void>; disconnect: () => Promise<unknown>; openSettings: () => void };
+export type VoiceDockState = Readonly<{ roomId: string; generation: number; phase: 'joining' | 'connected' | 'reconnecting' | 'closing' | 'error' | 'unknown'; microphone: boolean | null; deafened: boolean | null; busy: boolean; ready: boolean }>;
+type Binding = { roomId: string; generation: number; isCurrent: () => boolean; setMicrophone: (enabled: boolean) => Promise<void>; setDeafened?: (deafened: boolean) => Promise<void>; disconnect: () => Promise<unknown>; openSettings: () => void };
 type Update = { telemetry?: ConferenceTelemetry | null; devices?: ConferenceDevices; busy?: boolean; ready?: boolean };
 type Active = ReturnType<typeof conferenceSnapshot>;
 
@@ -24,7 +24,7 @@ export function createVoiceSidebarStore(active: () => Active, subscribeActive: (
     const session = active();
     const phase: VoiceDockState['phase'] = session.phase === 'closing' ? 'closing' : session.phase === 'error' || telemetry?.failure ? 'error' :
       telemetry?.reconnecting ? 'reconnecting' : telemetry?.connected ? 'connected' : session.phase === 'joining' ? 'joining' : 'unknown';
-    const next: VoiceDockState | null = valid() ? { roomId: binding!.roomId, generation: binding!.generation, phase, microphone: typeof devices.audio_enabled === 'boolean' ? devices.audio_enabled : null, busy: busy || !!operation, ready } : null;
+    const next: VoiceDockState | null = valid() ? { roomId: binding!.roomId, generation: binding!.generation, phase, microphone: typeof devices.audio_enabled === 'boolean' ? devices.audio_enabled : null, deafened: binding!.setDeafened && telemetry?.connected && !telemetry.failure && typeof telemetry.deafened === 'boolean' ? telemetry.deafened : null, busy: busy || !!operation, ready } : null;
     if (dock && owners.get(dock) !== binding || JSON.stringify(next) !== JSON.stringify(dock)) { dock = next; if (dock && binding) owners.set(dock, binding); dockListeners.forEach(fn => fn()); }
   };
   const readDock = () => valid() ? dock : null;
@@ -36,7 +36,7 @@ export function createVoiceSidebarStore(active: () => Active, subscribeActive: (
     const complete = telemetry.complete && new Set(matches.map(peer => peer.deviceId)).size === deviceIds.length;
     const any = (key: 'speaking' | 'microphoneEnabled' | 'cameraEnabled' | 'screenShareEnabled') => matches.some(peer => peer[key]) ? true : complete ? false : null;
     const microphone = any('microphoneEnabled');
-    const next: VoiceParticipantState = { speaking: any('speaking'), muted: microphone === null ? null : !microphone, camera: any('cameraEnabled'), sharing: any('screenShareEnabled'), deafened: null };
+    const next: VoiceParticipantState = { speaking: any('speaking'), muted: microphone === null ? null : !microphone, camera: any('cameraEnabled'), sharing: any('screenShareEnabled'), deafened: matches.length === 1 && deviceIds.length === 1 && matches[0].local && typeof telemetry.deafened === 'boolean' ? telemetry.deafened : null };
     const key = JSON.stringify([userId, deviceIds]), previous = cached.get(key);
     if (previous && Object.keys(next).every(key => next[key as keyof VoiceParticipantState] === previous[key as keyof VoiceParticipantState])) return previous;
     if (cached.size >= 256) cached.clear();
@@ -76,15 +76,23 @@ export function createVoiceSidebarStore(active: () => Active, subscribeActive: (
   async function microphone(expected: VoiceDockState, enabled: boolean) {
     const owner = binding;
     if (!owner || !valid() || expected !== dock || !ready || busy || operation || typeof devices.audio_enabled !== 'boolean' || active().phase === 'closing') throw new Error('Voice controls are no longer available for this call.');
+    if (enabled && telemetry?.deafened === true) throw new Error('Turn call sound back on before unmuting your microphone.');
     const token = {}; operation = token; refreshDock();
     try { await owner.setMicrophone(enabled); }
+    finally { if (binding === owner && operation === token) { operation = null; refreshDock(); } }
+  }
+  async function deafen(expected: VoiceDockState, deafened: boolean) {
+    const owner = binding;
+    if (!owner?.setDeafened || !valid() || expected !== dock || !ready || busy || operation || typeof dock.deafened !== 'boolean' || active().phase === 'closing') throw new Error('Voice audio controls are no longer available for this call.');
+    const token = {}; operation = token; refreshDock();
+    try { await owner.setDeafened(deafened); }
     finally { if (binding === owner && operation === token) { operation = null; refreshDock(); } }
   }
   function action(expected: VoiceDockState, kind: 'disconnect' | 'settings') {
     if (!binding || !valid() || expected !== dock || active().phase === 'closing') throw new Error('This voice call is no longer available.');
     return kind === 'disconnect' ? binding.disconnect() : binding.openSettings();
   }
-  return { bind, readDock, owns, participant, microphone, action,
+  return { bind, readDock, owns, participant, microphone, deafen, action,
     subscribeDock(fn: () => void) { dockListeners.add(fn); return () => { dockListeners.delete(fn); }; },
     subscribeRoom(roomId: string, fn: () => void) { const entries = listeners.get(roomId) || new Set(); entries.add(fn); listeners.set(roomId, entries); return () => { entries.delete(fn); if (!entries.size) listeners.delete(roomId); }; },
   };

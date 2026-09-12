@@ -233,6 +233,22 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       const value = await observation(page);
       requireProof(value?.status === 'ready' && value.stableMs >= 20000 && value.ageMs <= 5000 && value.packets >= 10, 'Both embedded calls must retain fresh, complete encrypted two-device observations for twenty seconds.');
     }
+    if (voiceFixture) {
+      await scope(alice);
+      const receivers = () => alice.frameLocator(FRAME).locator('audio').evaluateAll(elements => elements.flatMap(element => element.srcObject instanceof MediaStream ? element.srcObject.getAudioTracks().filter(track => track.readyState === 'live').map(track => track.enabled) : []));
+      const before = await run(receivers, 'voice-output-before');
+      requireProof(before.length > 0 && before.every(Boolean), 'Native voice requires an existing playing remote receiver before testing deafen.');
+      await run(() => alice.getByRole('button', { name: 'Deafen voice', exact: true }).click({ timeout: 10000 }), 'voice-deafen', 10000);
+      await run(() => alice.getByRole('button', { name: 'Undeafen voice', exact: true }).waitFor({ state: 'visible', timeout: 10000 }), 'voice-deafen-ack', 10000);
+      const muted = await run(receivers, 'voice-output-silent');
+      requireProof(muted.length === before.length && muted.every(value => value === false), 'The native widget must silence all of its existing receiver tracks.');
+      await run(() => alice.getByRole('button', { name: 'Undeafen voice', exact: true }).click({ timeout: 10000 }), 'voice-undeafen', 10000);
+      await run(() => alice.getByRole('button', { name: 'Deafen voice', exact: true }).waitFor({ state: 'visible', timeout: 10000 }), 'voice-undeafen-ack', 10000);
+      const restored = await run(receivers, 'voice-output-restored');
+      requireProof(restored.length === before.length && restored.every(Boolean), 'Native voice receiver playback must be restored without replacing the call.');
+      requireProof(await run(() => alice.getByRole('button', { name: 'Unmute voice microphone', exact: true }).count(), 'voice-mic-stays-muted') === 1, 'Restoring playback must not unmute the microphone.');
+      await scope(alice);
+    }
     if (onConnected) { requireProof(!!voiceFixture && typeof onConnected === 'function', 'Connected workflow requires its marked voice fixture.'); await run(onConnected, 'connected-workflow', 45000); }
     succeeded = true;
   } catch {

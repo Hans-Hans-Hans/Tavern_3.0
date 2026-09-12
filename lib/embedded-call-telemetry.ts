@@ -1,9 +1,11 @@
-import { CALL_TELEMETRY_TYPE, CALL_TELEMETRY_BIND, CALL_TELEMETRY_READY, TELEMETRY_LIMIT, conferenceFailure, emptyConferenceMetrics, parseConferenceTelemetry, telemetryNonce, telemetryString, type ConferenceFailure, type ConferenceMetrics, type ConferenceParticipant } from './conference-telemetry-protocol.js';
+import { CALL_TELEMETRY_TYPE, CALL_TELEMETRY_BIND, CALL_TELEMETRY_READY, CALL_AUDIO_SET, CALL_AUDIO_ACK, TELEMETRY_LIMIT, conferenceFailure, emptyConferenceMetrics, parseConferenceTelemetry, telemetryNonce, telemetryString, type ConferenceFailure, type ConferenceMetrics, type ConferenceParticipant } from './conference-telemetry-protocol.js';
+import { createConferenceOutputGate } from './conference-output.js';
 
 // These objects belong to pinned Element Call. Only its existing attested
 // members, public LiveKit track APIs, and observable cleanup scope are observed.
 type Native = any;
 const installations = new WeakMap<object, () => void>();
+const outputs = new WeakMap<object, { binding: string; client: Native; room: Native; gate: ReturnType<typeof createConferenceOutputGate>; dispose: () => void }>();
 const sequences = new WeakMap<object, { binding: string; value: number }>();
 const participantEvents = ['isSpeakingChanged', 'trackMuted', 'trackUnmuted', 'trackPublished', 'trackUnpublished', 'trackSubscribed', 'trackUnsubscribed', 'localTrackPublished', 'localTrackUnpublished'];
 const bool = (v: unknown) => typeof v === 'boolean' ? v : null;
@@ -20,10 +22,21 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     const client = matrixRoom.client, actor = client?.getUserId(), device = client?.getDeviceId(), base = client?.getHomeserverUrl();
     if (!telemetryString(actor, 255) || !telemetryString(device, 255) || client.getRoom(roomId) !== matrixRoom) return view;
     installations.get(host)?.();
+    let playback = outputs.get(host);
+    if (playback && (playback.binding !== url.href || playback.client !== client || playback.room !== matrixRoom)) { playback.dispose(); playback = undefined; }
+    if (!playback) {
+      const gate = createConferenceOutputGate();
+      const dispose = () => { gate.stop(); host.removeEventListener('pagehide', dispose); if (outputs.get(host)?.gate === gate) outputs.delete(host); };
+      playback = { binding: url.href, client, room: matrixRoom, gate, dispose }; outputs.set(host, playback);
+      host.addEventListener('pagehide', dispose, { once: true });
+    }
     const sequence = sequences.get(host)?.binding === url.href ? sequences.get(host)! : { binding: url.href, value: 0 }; sequences.set(host, sequence);
     let stopped = false, revision = 0, scheduled: ReturnType<typeof setTimeout> | undefined, gathering = false;
     let metrics = emptyConferenceMetrics(), document = '';
     let failure: ConferenceFailure | null = null;
+    const output = playback.gate;
+    let audioSequence = 0;
+    let audioAvailable = false;
     const nested = new Map<Native, () => void>(), trackCounters = new WeakMap<object, Map<string, { received: number; lost: number }>>(), statsReads = new WeakMap<object, Promise<Native>>();
     const value = (observable: Native) => observable?.value;
     const members = () => { const local = value(view.localMatrixLivekitMember$), remote = value(view.remoteMatrixLivekitMembers$); return [...(local ? [local] : []), ...(Array.isArray(remote) ? remote.slice(0, TELEMETRY_LIMIT) : [])]; };
@@ -48,6 +61,25 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
       return result;
     };
     const current = () => !stopped && host.location.href === url.href && matrixRoom.client === client && client.getUserId() === actor && client.getDeviceId() === device && client.getHomeserverUrl() === base && client.getRoom(roomId) === matrixRoom && matrixRoom.getMyMembership() === 'join';
+    const receiverTracks = () => {
+      if (members().length > TELEMETRY_LIMIT) throw new Error('Call audio controls are unavailable.');
+      const tracks: MediaStreamTrack[] = [];
+      for (const entry of entries()) {
+        if (entry.participant.isLocal === true) continue;
+        const publications = entry.participant.audioTrackPublications;
+        if (!(publications instanceof Map)) throw new Error('Call audio controls are unavailable.');
+        for (const publication of publications.values()) {
+          const track = publication.track?.mediaStreamTrack;
+          if (track?.kind === 'audio' && track.readyState === 'live') tracks.push(track);
+          if (tracks.length > 512) throw new Error('Call audio controls are unavailable.');
+        }
+      }
+      return tracks;
+    };
+    const refreshOutput = () => {
+      try { if (current()) { output.refresh(receiverTracks()); audioAvailable = true; } }
+      catch { audioAvailable = false; /* unavailable audio observations must not break the native call */ }
+    };
     const emit = () => {
       clearTimeout(scheduled); scheduled = undefined; if (!current()) { stop(); return; } if (!document) return;
       const list = failure ? [] : entries(), active = !failure && value(view.connected$) === true;
@@ -55,10 +87,11 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
       const remote = value(view.remoteMatrixLivekitMembers$), memberCount = (value(view.localMatrixLivekitMember$) ? 1 : 0) + (Array.isArray(remote) ? remote.length : 0);
       const body = parseConferenceTelemetry({ type: CALL_TELEMETRY_TYPE, version: 1, widgetId, session, roomId, document, sequence: ++sequence.value,
         connected: active, reconnecting: value(view.reconnecting$) === true, participants: list.map(p => p.data), complete: memberCount <= TELEMETRY_LIMIT,
-        e2eeEnabled: enabled, metrics: failure ? emptyConferenceMetrics() : metrics, failure });
+        e2eeEnabled: enabled, metrics: failure ? emptyConferenceMetrics() : metrics, failure, deafened: active && audioAvailable ? output.read() : null });
       if (body) host.parent.postMessage(body, url.origin);
     };
     const schedule = () => { if (!stopped && !scheduled) scheduled = setTimeout(() => { try { emit(); } catch { stop(); } }, 200); };
+    const participantChanged = () => { refreshOutput(); schedule(); };
     const subscribe = (observable: Native, listener: () => void, into = cleanups) => {
       const subscription = observable?.subscribe?.({ next: listener, error: schedule });
       if (subscription) into.push(() => subscription.unsubscribe());
@@ -72,13 +105,13 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
         const changed = () => {
           revision++; metrics = emptyConferenceMetrics();
           const participant = value(member.participant?.value$);
-          if (prior !== participant) { if (prior) for (const event of participantEvents) prior.off(event, schedule); prior = participant; if (prior) for (const event of participantEvents) prior.on(event, schedule); }
-          schedule();
+          if (prior !== participant) { if (prior) for (const event of participantEvents) prior.off(event, participantChanged); prior = participant; if (prior) for (const event of participantEvents) prior.on(event, participantChanged); }
+          participantChanged();
         };
-        nested.set(member, () => { for (const dispose of disposals) dispose(); if (prior) for (const event of participantEvents) prior.off(event, schedule); });
+        nested.set(member, () => { for (const dispose of disposals) dispose(); if (prior) for (const event of participantEvents) prior.off(event, participantChanged); });
         for (const observable of [member.membership$, member.connection$, member.participant?.value$]) subscribe(observable, changed, disposals);
       }
-      schedule();
+      participantChanged();
     };
     const gather = async () => {
       if (!current()) { stop(); return; } if (gathering) return;
@@ -132,16 +165,29 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     installations.set(host, stop); scope.onEnd(stop); if (stopped) return view;
     subscribe(view.localMatrixLivekitMember$, refreshMembers); subscribe(view.remoteMatrixLivekitMembers$, refreshMembers);
     subscribe(view.connected$, schedule); subscribe(view.reconnecting$, schedule);
-    const heartbeat = setInterval(() => { try { if (!current()) stop(); else schedule(); } catch { stop(); } }, 1000), stats = setInterval(() => { void gather().catch(stop); }, 2000);
+    const heartbeat = setInterval(() => { try { if (!current()) stop(); else participantChanged(); } catch { stop(); } }, 1000), stats = setInterval(() => { void gather().catch(stop); }, 2000);
     cleanups.push(() => clearInterval(heartbeat), () => clearInterval(stats));
     host.addEventListener('pagehide', stop); cleanups.push(() => host.removeEventListener('pagehide', stop));
     const bind = (event: MessageEvent) => {
       const data = event.data;
       if (!current() || event.source !== host.parent || event.origin !== url.origin || !data || typeof data !== 'object' || Object.keys(data).length !== 6 ||
           data.type !== CALL_TELEMETRY_BIND || data.version !== 1 || data.widgetId !== widgetId || data.session !== session || data.roomId !== roomId || !telemetryNonce(data.document)) return;
+      if (document !== data.document) audioSequence = 0;
       document = data.document; if (failure) { try { emit(); } catch { stop(); } } else schedule();
     };
     host.addEventListener('message', bind); cleanups.push(() => host.removeEventListener('message', bind));
+    const audio = (event: MessageEvent) => {
+      const data = event.data;
+      if (!current() || event.source !== host.parent || event.origin !== url.origin || !document || !data || typeof data !== 'object' || Object.keys(data).length !== 8 ||
+          data.type !== CALL_AUDIO_SET || data.version !== 1 || data.widgetId !== widgetId || data.session !== session || data.roomId !== roomId || data.document !== document ||
+          !Number.isSafeInteger(data.sequence) || data.sequence <= audioSequence || typeof data.deafened !== 'boolean') return;
+      audioSequence = data.sequence;
+      let applied = false;
+      try { if (!failure && value(view.connected$) === true) { output.set(data.deafened, receiverTracks()); audioAvailable = true; applied = output.read() === data.deafened; } } catch { audioAvailable = false; /* finite acknowledgement only */ }
+      host.parent.postMessage({ type: CALL_AUDIO_ACK, version: 1, widgetId, session, roomId, document, sequence: data.sequence, applied }, url.origin);
+      schedule();
+    };
+    host.addEventListener('message', audio); cleanups.push(() => host.removeEventListener('message', audio));
     const fatal = view.fatalError$?.subscribe?.({ next: (error: unknown) => {
       if (error === null || error === undefined || failure || !current()) return;
       try { failure = conferenceFailure(error); emit(); } catch { stop(); }

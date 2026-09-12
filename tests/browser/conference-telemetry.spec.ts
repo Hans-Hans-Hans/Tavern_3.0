@@ -19,6 +19,21 @@ function payload(sequence = 1) {
       local: false, speaking: true, microphoneEnabled: true, cameraEnabled: false, screenShareEnabled: false, e2eeEnabled: true, encrypted: true }], complete: true, e2eeEnabled: true,
     metrics: { rttMs: 23, jitterMs: 2, packetLossPercent: null, sampledTracks: 1, totalTracks: 1 } };
 }
+
+test('local audio controls require acknowledgement from the current iframe document and reject late owners', async ({ page }) => {
+  await fixture(page); await send(page, { ...payload(), deafened: false });
+  const frame = page.frames().find(frame => frame.url().includes('telemetry-child?call'))!;
+  await frame.evaluate(() => { (window as any).commands = []; addEventListener('message', event => { if (event.data.type === 'io.tavern.call.audio.set') (window as any).commands.push(event.data); }); });
+  await page.evaluate(() => { (window as any).audioResult = 'pending'; (window as any).telemetryStop.setDeafened(true).then(() => (window as any).audioResult = 'acknowledged', () => (window as any).audioResult = 'rejected'); });
+  await frame.waitForFunction(() => (window as any).commands.length === 1);
+  const command = await frame.evaluate(() => (window as any).commands[0]);
+  const ack = { ...command, type: 'io.tavern.call.audio.ack', applied: true }; delete ack.deafened;
+  await send(page, ack, true); expect(await page.evaluate(() => (window as any).audioResult)).toBe('pending');
+  await send(page, { ...ack, document: 'wrong-document' }); expect(await page.evaluate(() => (window as any).audioResult)).toBe('pending');
+  await send(page, ack); await expect.poll(() => page.evaluate(() => (window as any).audioResult)).toBe('acknowledged');
+  await page.evaluate(() => { (window as any).audioResult = 'pending'; (window as any).telemetryStop.setDeafened(false).then(() => (window as any).audioResult = 'acknowledged', () => (window as any).audioResult = 'rejected'); (window as any).owner = {}; });
+  await expect.poll(() => page.evaluate(() => (window as any).audioResult)).toBe('rejected');
+});
 async function send(page: Page, value: any, other = false) {
   const owned = page.frames().find(frame => frame.url().includes('telemetry-child?call'))!;
   const document = await owned.evaluate(() => (window as any).telemetryDocument);
@@ -44,7 +59,7 @@ test('same iframe navigated to a foreign origin cannot report telemetry for the 
   await page.locator('#call').evaluate((frame: HTMLIFrameElement) => { frame.src = 'http://foreign.telemetry.invalid/frame'; });
   await expect.poll(() => page.frames().some(frame => frame.url().includes('foreign.telemetry.invalid'))).toBe(true);
   const foreign = page.frames().find(frame => frame.url().includes('foreign.telemetry.invalid'))!;
-  await foreign.evaluate(data => parent.postMessage(data, 'http://127.0.0.1:5173'), { ...payload(), document });
+  await foreign.evaluate(({ data, origin }) => parent.postMessage(data, origin), { data: { ...payload(), document }, origin: new URL(page.url()).origin });
   await expect.poll(() => page.evaluate(() => (window as any).messageEvents)).toBe(1);
   expect(await page.evaluate(() => (window as any).updates)).toEqual([null]);
 });

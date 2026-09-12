@@ -96,7 +96,7 @@ export class TavernCallDriver extends WidgetDriver {
 }
 
 export type ConferenceDevices = { audio_enabled?: boolean; video_enabled?: boolean };
-export type ConferenceControls = (() => Promise<void>) & { setDevices: (devices: ConferenceDevices) => Promise<void> };
+export type ConferenceControls = (() => Promise<void>) & { setDevices: (devices: ConferenceDevices) => Promise<void>; setDeafened: (deafened: boolean) => Promise<void> };
 export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void,options:{voiceOnly?:boolean;onTelemetry?:(value:ConferenceTelemetry|null)=>void}={}):Promise<ConferenceControls>{
   signal?.throwIfAborted();if(!managedSession)claimMedia('conference');
   try {
@@ -136,6 +136,6 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
       if(iframe.src===url.href)iframe.src='about:blank';
     }
   })();
-  return Object.assign(cleanup,{setDevices:async(patch:ConferenceDevices)=>{if(stopped)throw new Error('The conference has ended.');const result=devices(await api.transport.send('io.element.device_mute',patch));if(stopped)return;onDevices?.(result);if(Object.entries(patch).some(([key,value])=>(result as any)[key]!==value))throw new Error('The call is still preparing this device. Check its settings in the conference.');}});
+  return Object.assign(cleanup,{setDeafened:stopTelemetry.setDeafened,setDevices:async(patch:ConferenceDevices)=>{if(stopped)throw new Error('The conference has ended.');const result=devices(await api.transport.send('io.element.device_mute',patch));if(stopped)return;onDevices?.(result);if(Object.entries(patch).some(([key,value])=>(result as any)[key]!==value))throw new Error('The call is still preparing this device. Check its settings in the conference.');}});
   }catch(error){if(!managedSession)releaseMedia('conference');throw error;}
 }

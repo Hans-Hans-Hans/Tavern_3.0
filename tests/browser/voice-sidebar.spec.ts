@@ -8,7 +8,8 @@ async function fixture(page: Page) {
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices,options={}){
     const f=window.voiceFixture;f.mounts.push({roomId,voiceOnly:options.voiceOnly});f.telemetry.push(options.onTelemetry);
     frame.srcdoc='<button>Widget device controls</button>';onJoined();onDevices({audio_enabled:true,video_enabled:!options.voiceOnly});
-    const stop=async()=>{f.stops.push(roomId)};stop.setDevices=async value=>{f.deviceChanges??=[];f.deviceChanges.push(value);if(f.holdDevice)await new Promise(resolve=>f.releaseDevice=resolve);onDevices(value)};return stop;
+    const stop=async()=>{f.stops.push(roomId)};stop.setDevices=async value=>{f.deviceChanges??=[];f.deviceChanges.push(value);if(f.holdDevice)await new Promise(resolve=>f.releaseDevice=resolve);onDevices(value)};
+    stop.setDeafened=async value=>{f.audioChanges??=[];f.audioChanges.push(value);if(f.holdAudio)await new Promise(resolve=>f.releaseAudio=resolve);options.onTelemetry({...f.sample(),deafened:value})};return stop;
   }` }));
   await page.route('**/voice-sidebar-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset='utf-8'></head><body><div id='root'></div><script type='module'>import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/voice-sidebar.tsx')).mountFixture();</script></body></html>` }));
   await page.goto('/voice-sidebar-test'); await expect(page.getByRole('button', { name: 'Join voice', exact: true })).toBeVisible();
@@ -19,6 +20,23 @@ async function join(page: Page) {
   await expect(page.getByRole('region', { name: 'Current voice call' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Mute voice microphone', exact: true })).toBeEnabled();
 }
+
+test('dock deafen mutes the microphone first, waits for playback acknowledgement and keeps it muted when restoring sound', async ({ page }) => {
+  const sidebar = await fixture(page); await join(page);
+  const dock = sidebar.getByRole('region', { name: 'Current voice call' });
+  await page.evaluate(() => { const f = (window as any).voiceFixture; f.holdAudio = true; f.publish({ ...f.sample(), deafened: false }); });
+  const deafen = dock.getByRole('button', { name: 'Deafen voice', exact: true });
+  await deafen.click(); await expect(deafen).toBeDisabled(); await expect(deafen).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.evaluate(() => (window as any).voiceFixture.deviceChanges)).toEqual([{ audio_enabled: false }]);
+  await page.waitForFunction(() => (window as any).voiceFixture.releaseAudio);
+  await page.evaluate(() => { const f = (window as any).voiceFixture; f.holdAudio = false; f.releaseAudio(); });
+  await expect(dock.getByRole('button', { name: 'Undeafen voice', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dock.getByRole('button', { name: 'Unmute voice microphone', exact: true })).toBeDisabled();
+  await dock.getByRole('button', { name: 'Undeafen voice', exact: true }).click();
+  await expect(deafen).toHaveAttribute('aria-pressed', 'false');
+  await expect(dock.getByRole('button', { name: 'Unmute voice microphone', exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => { const f = (window as any).voiceFixture; return { devices: f.deviceChanges, audio: f.audioChanges, captures: f.captures, mounts: f.mounts.length }; })).toEqual({ devices: [{ audio_enabled: false }, { audio_enabled: false }], audio: [true, false], captures: 0, mounts: 1 });
+});
 
 test('sidebar rows come from native call devices, expire and disappear on kick without opening a call', async ({ page }) => {
   const sidebar = await fixture(page), list = sidebar.getByRole('list', { name: 'Voice participants in Voice lounge', exact: true });
@@ -63,7 +81,7 @@ test('bottom dock controls the persistent widget and navigation never remounts i
   await dock.getByRole('button', { name: 'Open voice channel Voice lounge', exact: true }).click();
   expect(await page.evaluate(() => (window as any).voiceFixture.selected)).toBe('!voice:local');
   expect(await page.evaluate(() => (window as any).voiceFixture.mounts.length)).toBe(1);
-  await expect(dock.getByRole('button', { name: /deafen/i })).toHaveCount(0);
+  await expect(dock.getByRole('button', { name: 'Deafen voice', exact: true })).toBeDisabled();
   await dock.getByRole('button', { name: 'Disconnect voice', exact: true }).click(); await expect(dock).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).voiceFixture.stops)).toEqual(['!voice:local']);
 });

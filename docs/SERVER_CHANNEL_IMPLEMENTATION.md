@@ -86,9 +86,10 @@ Missing telemetry is not represented as muted, inactive or connected. The voice
 dock follows that existing session across navigation and disconnects through its
 native cleanup path. Empty/expired/departed memberships remove obsolete rows.
 
-The pinned conference widget has no supported self-deafen API or remote deafen
-observation. Call settings remain available; no fake toggle or status is shown.
-See [voice sidebar](VOICE_SIDEBAR.md) for the exact observation scope.
+The dock now supports self-deafen through an acknowledged local adapter for the
+existing receiver tracks and the native microphone API. Restoring playback leaves
+the microphone muted. Remote deafen remains unknown when it cannot be observed.
+See [voice sidebar](VOICE_SIDEBAR.md) for the exact control and observation scope.
 
 ## Verification and remaining gates
 
@@ -119,7 +120,8 @@ The Linux menu trace identified an opening right-button release landing on an
 animated item and triggering an unintended Radix click. Context menus now consume
 that release; deliberate primary clicks, touch taps and keyboard selection retain
 their normal paths. The exact event sequence failed before the fix and passes
-with it, along with the full-workspace editing cases. Native revalidation remains.
+with it, along with the full-workspace editing cases. At `ad5b7e7`, all 449 browser
+cases and the complete native Games workflow passed with this fix.
 
 [Direct audio acceptance](../scripts/smoke-direct-audio.mjs) requires three calls,
 actual relay media rates and synthetic audio samples in both existing remote
@@ -132,8 +134,18 @@ synthetic test can prove an unobserved physical microphone or speaker.
 At `3cc6b62`, native avatar persistence, encrypted messages/files, email-code
 history recovery and known-browser login also passed. The overall run stopped
 when a fresh encrypted system-bot notice was unreadable by its recipients.
-Offline exact-version matrix-nio to Rust crypto interoperability passes; native
-key-delivery diagnostics are being used to isolate the remaining failure.
+Offline exact-version matrix-nio to Rust crypto interoperability passes. At
+`679bd78`, the full native bot proof also passed on fresh ordinary devices: both
+recipients decrypted notices, independent pins blocked unapproved delivery,
+queue/store restart produced one confirmed notice, and disabling the route or
+adding an outsider stopped further sends. This establishes fresh-device delivery;
+it does not explain the earlier failure after the combined media/history workload.
+
+The native repeated-call probe then identified an old incoming invitation replayed
+after reload. `c0670f9` retains bounded, short-lived handled call IDs in this tab,
+scoped to the native account/device/homeserver, and closes a replayed peer without
+sending another hangup. New call IDs remain usable; 28 focused call checks passed.
+The complete native workflow with that fix remains required.
 
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be

@@ -8,7 +8,7 @@ import { loadTs } from './load-ts.mjs';
 import { PINNED_CALL_ASSET, transformCallTelemetry } from '../scripts/transform-call-telemetry.mjs';
 
 const protocol = loadTs('../lib/conference-telemetry-protocol.ts', {});
-const { attachEmbeddedCallTelemetry } = loadTs('../lib/embedded-call-telemetry.ts', { './conference-telemetry-protocol.js': protocol });
+const { attachEmbeddedCallTelemetry } = loadTs('../lib/embedded-call-telemetry.ts', { './conference-telemetry-protocol.js': protocol, './conference-output.js': loadTs('../lib/conference-output.ts', {}) });
 const nonce = 'abcdefgh-1234-4567-8901-abcdefgh1234', widget = 'widgetab-1234-4567-8901-abcdefgh1234', roomId = '!voice:local';
 class Behavior {
   listeners = new Set();
@@ -158,6 +158,28 @@ test('producer waits for a strictly bound parent document challenge and ignores 
   const replacement = 'reloaded-1234-4567-8901-abcdefgh1234'; bind({ document: replacement });
   assert.equal(f.messages.at(-1).body.document, replacement);
   const before = f.messages.length; f.ends[0](); bind(); assert.equal(f.messages.length, before);
+});
+
+test('only acknowledged audio commands from the owned parent gate attested remote tracks and include later subscriptions', context => {
+  const f = fixture(context), remote = { kind: 'audio', readyState: 'live', enabled: true }, share = { kind: 'audio', readyState: 'live', enabled: true };
+  f.track.mediaStreamTrack = remote; f.participant.audioTrackPublications = new Map([['mic', f.audio]]);
+  attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host); context.mock.timers.tick(200);
+  const command = (sequence, deafened, patch = {}, source = f.host.parent) => {
+    const event = new Event('message'); Object.assign(event, { source, origin: 'https://tavern.test', data: { type: protocol.CALL_AUDIO_SET, version: 1, widgetId: widget, session: nonce, roomId, document: 'document-1234-4567-8901-abcdefgh1234', sequence, deafened, ...patch } }); f.host.dispatchEvent(event);
+  };
+  command(1, true, { document: 'old-document' }); command(1, true, {}, {}); assert.equal(remote.enabled, true);
+  command(1, true); assert.equal(remote.enabled, false); assert.equal(f.messages.at(-1).body.type, protocol.CALL_AUDIO_ACK); assert.equal(f.messages.at(-1).body.applied, true);
+  command(1, false); assert.equal(remote.enabled, false, 'replayed sequences cannot unmute');
+  f.participant.audioTrackPublications.set('share', { track: { mediaStreamTrack: share } }); f.participant.emit('trackSubscribed'); assert.equal(share.enabled, false);
+  f.connection.livekitRoom.state = 'reconnecting'; f.member.connection$.set(f.connection); assert.equal(remote.enabled, false);
+  f.connection.livekitRoom.state = 'connected'; f.member.connection$.set(f.connection);
+  command(2, false); assert.equal(remote.enabled, true); assert.equal(share.enabled, true);
+  command(3, true); f.ends[0](); assert.equal(remote.enabled, false, 'view teardown must not resume playback');
+  command(4, false); assert.equal(remote.enabled, false, 'retired view cannot control playback');
+  attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host); context.mock.timers.tick(200);
+  assert.equal(f.messages.at(-1).body.deafened, true, 'same call view replacement preserves deafen');
+  command(1, false); assert.equal(remote.enabled, true, 'new attested view can restore the original receiver state');
+  command(2, true); f.host.dispatchEvent(new Event('pagehide')); assert.equal(remote.enabled, false);
 });
 
 test('actual pinned Element Call errors project only fixed safe diagnostic categories', () => {

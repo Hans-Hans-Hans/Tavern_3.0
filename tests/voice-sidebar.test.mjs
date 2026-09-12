@@ -14,6 +14,21 @@ function fixture() {
 const peer = (deviceId = 'ONE', patch = {}) => ({ identity: deviceId, userId: '@guest:local', deviceId, displayName: 'Guest', avatarMxc: null, local: false, speaking: false, microphoneEnabled: false, cameraEnabled: false, screenShareEnabled: false, e2eeEnabled: true, encrypted: true, ...patch });
 const observation = (participants, complete = true) => ({ connected: true, reconnecting: false, complete, participants, e2eeEnabled: true, metrics: { rttMs: 10, jitterMs: 1, packetLossPercent: 0, sampledTracks: 1, totalTracks: 1 } });
 
+test('deafen waits for the bound call acknowledgement and refuses stale controls or unmute while deafened', async () => {
+  const f = fixture(); let resolve;
+  const bound = f.store.bind({ ...f.binding(), setDeafened: () => new Promise(done => { resolve = done; }) });
+  bound.update({ telemetry: { ...observation([peer('ONE', { local: true })]), deafened: false }, devices: { audio_enabled: true }, ready: true });
+  const before = f.store.readDock(), pending = f.store.deafen(before, true);
+  assert.equal(f.store.readDock().deafened, false); assert.equal(f.store.readDock().busy, true);
+  bound.update({ telemetry: { ...observation([peer('ONE', { local: true })]), deafened: true }, devices: { audio_enabled: false } });
+  resolve(); await pending; assert.equal(f.store.readDock().deafened, true); assert.equal(f.store.readDock().busy, false);
+  assert.equal(f.store.participant('!voice:local', '@guest:local', ['ONE']).deafened, true);
+  assert.equal(f.store.participant('!voice:local', '@guest:local', ['ONE','OTHER']).deafened, null);
+  await assert.rejects(f.store.microphone(f.store.readDock(), true), /sound back on/);
+  await assert.rejects(f.store.deafen(before, false), /no longer/);
+  f.retire(); await assert.rejects(f.store.deafen(f.store.readDock(), false), /no longer/);
+});
+
 test('participant state uses only current native devices, with honest partial and unobservable flags', () => {
   const f = fixture();
   f.bound.update({ telemetry: observation([peer('OLD', { speaking: true }), peer('ONE')]) });
