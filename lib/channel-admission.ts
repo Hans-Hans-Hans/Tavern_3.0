@@ -12,7 +12,7 @@ function nativePower(events: NativeEvent[], actor: string) {
 }
 
 export async function channelAdmissionAvailable() {
-  const response = await requestApi('/api/channels/admission/capability');
+  const response = await requestApi('/channels/admission/capability');
   return response.version === 1 && response.available === true;
 }
 

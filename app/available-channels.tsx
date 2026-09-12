@@ -24,7 +24,7 @@ function ChannelList({ serverId, onOpen }: { serverId: string; onOpen: (id: stri
   async function load(after = '') {
     setBusy(true); setError('');
     try {
-      const data = await requestApi('/api/servers/' + encodeURIComponent(serverId) + '/channels/available' + (after ? '?after=' + encodeURIComponent(after) : ''));
+      const data = await requestApi('/servers/' + encodeURIComponent(serverId) + '/channels/available' + (after ? '?after=' + encodeURIComponent(after) : ''));
       if (!current()) return;
       if (!Array.isArray(data.channels) || data.channels.length > 25 || data.channels.some((row: Channel) => !row || typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.kind !== 'string' || typeof row.joined !== 'boolean') || data.next !== null && typeof data.next !== 'string') throw new Error('The channel list could not be read.');
       setRows(previous => after ? [...previous, ...data.channels.filter((row: Channel) => !previous.some(item => item.id === row.id))] : data.channels); setNext(data.next);

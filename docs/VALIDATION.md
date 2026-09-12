@@ -24,6 +24,13 @@ Voice, and both clients received the expected drag/drop order. A nested test
 selector failed to find the correctly displayed category. Checkpoint `a554f45`
 corrects that selector and uses the actual channel context-menu editor. Full
 role-restricted voice/sidebar/reload acceptance is still pending its native run.
+The following native run reached the actual private-voice editor and exposed
+an erroneous doubled `/api` prefix in its capability request. The same defect
+affected private-channel discovery. Both callers now pass API-relative paths;
+eleven mounted creation/editor/discovery checks run through the production
+`requestApi` wrapper and mocked HTTP responses, and eight policy/writer checks
+pass. This fixes the real client request boundary; the full native workflow
+still needs its next run.
 
 Repeated direct audio remains under investigation. Several native runs passed
 both relay rates and actual synthetic samples in each existing remote playback

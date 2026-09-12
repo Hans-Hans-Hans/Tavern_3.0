@@ -5,7 +5,7 @@ import { loadTs } from './load-ts.mjs';
 const server = '!server:local', room = '!channel:local', owner = '@owner:local', peer = '@peer:local', policyType = 'io.tavern.roles';
 function fixture() {
   const f = { account: {}, actor: owner, ready: true, writes: [], beforeRead: null, beforeWrite: null, afterWrite: null };
-  const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account, requestApi: async () => ({ version: 1, available: f.ready }) };
+  const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account, requestApi: async path => { assert.equal(path, '/channels/admission/capability'); return { version: 1, available: f.ready }; } };
   const roles = loadTs('../lib/roles.ts', { './matrix': matrix, './api': api, './conference-publication': loadTs('../lib/conference-publication.ts', {}) });
   const event = (type, content, state_key = '') => ({ type, state_key, content, sender: owner, event_id: '$' + type + state_key });
   f.states = {

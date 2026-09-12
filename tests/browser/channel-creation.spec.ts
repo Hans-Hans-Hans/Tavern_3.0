@@ -1,7 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
 async function fixture(page: Page, strict = false) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.client;export const onMatrixUpdate=fn=>{window.listeners.push(fn);return()=>{window.listeners=window.listeners.filter(v=>v!==fn);};};' }));
-  await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const accountArtworkOwner=()=>window.accountOwner;export const requestApi=async path=>{if(path==="/api/channels/admission/capability")return {version:1,available:window.admissionReady!==false};if(path.startsWith("/api/servers/")&&path.includes("/channels/available"))return structuredClone(window.catalog);throw Error("Unexpected fixture API route");};' }));
+  // Keep requestApi's production URL/credential behavior; only account ownership
+  // and the HTTP server boundary belong to this component fixture.
+  await page.route(url => url.pathname === '/lib/api.ts' && !url.searchParams.has('channel-real-api'), route => route.fulfill({ contentType: 'text/javascript', body: 'export { requestApi } from "/lib/api.ts?channel-real-api";export const accountArtworkOwner=()=>window.accountOwner;' }));
+  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    const path = new URL(route.request().url()).pathname;
+    expect(route.request().method()).toBe('GET');
+    if (path === '/api/channels/admission/capability') return route.fulfill({ json: await page.evaluate(() => ({ version: 1, available: (window as any).admissionReady !== false })) });
+    if (path === '/api/servers/!server%3Alocal/channels/available') return route.fulfill({ json: await page.evaluate(() => structuredClone((window as any).catalog)) });
+    return route.fulfill({ status: 404, json: { error: 'Unknown fixture HTTP endpoint.' } });
+  });
   await page.route(url => url.pathname === '/lib/instance.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const readInstanceConfig=async()=>({serverRolePolicy:window.policyEnabled!==false,callsEnabled:window.callsEnabled!==false});' }));
   await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const readServerLayout=()=>structuredClone(window.layout);export function normalizeServerLayout(raw,ids){const value=structuredClone(raw||{version:1,categories:[],channels:[]});for(const id of ids||[])if(!value.channels.some(c=>c.id===id))value.channels.push({id,category:''});return value;}` }));
   await page.route('**/channel-creation-test*', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id='root'></div><script type='module'>import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/channel-creation.tsx')).mountFixture();</script></body></html>` }));
