@@ -15,7 +15,7 @@ configured, add:
 COMPOSE_PROFILES=calls
 CALLS_ENABLED=true
 SFU_AUDIO_MODERATION_ENABLED=true
-TURN_DOMAIN=turn.hans-homelab.com
+TURN_DOMAIN=turn.tavern.hans-homelab.com
 PUBLIC_IP=YOUR_PUBLIC_WAN_IPV4
 ```
 

@@ -24,11 +24,16 @@ tests pass, including a regression that failed before this correction.
 
 On the target deployment, the user still reports both call types joining and
 disconnecting; the conference reports `SFU_ERROR` / `InternalError`. Public
-frontend verification matched the `76cc571` entry asset. On September 12 at
-approximately 13:05 UTC, both Google and Cloudflare DNS returned NXDOMAIN for
-the previously configured `turn.hans-homelab.com`. The actual running media
-IP/TURN-host read is pending. These findings do not establish a working deployed
-call, and the missing record is relevant only if that hostname is still configured.
+frontend verification matched the `76cc571` entry asset. The user confirmed the
+TURN hostname is `turn.tavern.hans-homelab.com`; the earlier check of
+`turn.hans-homelab.com` used the wrong name and does not diagnose this deployment.
+On September 12 at approximately 13:29 UTC, both Google and Cloudflare DNS
+resolved the corrected hostname to `71.69.81.95`, with no AAAA record. From the
+operator PC, STUN binding requests succeeded over both UDP and TCP port 3478,
+and TCP port 7881 accepted a connection. These checks establish listener
+reachability from that network, not authenticated relay allocation or end-to-end
+media delivery. The actual running media IP/TURN-host read is still pending;
+the deployed disconnect remains unresolved.
 
 At `4122bbe`, all 455 browser cases and three more native direct audio/cleanup
 probes passed. Native Games diagnostics isolated the first category move, and

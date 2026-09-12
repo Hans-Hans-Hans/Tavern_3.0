@@ -111,7 +111,7 @@ To enable calls, add these values using your real public WAN IPv4:
 ```dotenv
 COMPOSE_PROFILES=calls
 CALLS_ENABLED=true
-TURN_DOMAIN=turn.hans-homelab.com
+TURN_DOMAIN=turn.tavern.hans-homelab.com
 PUBLIC_IP=YOUR_PUBLIC_WAN_IPV4
 ```
 
