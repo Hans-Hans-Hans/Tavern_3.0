@@ -245,7 +245,11 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  }
  if(action==='createServer'){
   const name=safeString(p.name).trim().slice(0,60);if(!name)throw new Error('A server name is required.');
-  const r=await c.createRoom({name,topic:safeString(p.description).slice(0,200),visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,creation_content:{type:'m.space','m.federate':false},initial_state:serverCreationState(me,p,(await readInstanceConfig()).serverRolePolicy===true)});
+  const account=accountArtworkOwner(),device=c.getDeviceId(),base=c.getHomeserverUrl();
+  const current=()=>{if(client!==c||c.getUserId()!==me||c.getDeviceId()!==device||c.getHomeserverUrl()!==base||accountArtworkOwner()!==account)throw new Error('Your account changed. Reopen server creation.');};
+  const instance=await readInstanceConfig();current();
+  const r=await c.createRoom({name,topic:safeString(p.description).slice(0,200),visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,creation_content:{type:'m.space','m.federate':false},initial_state:serverCreationState(me,p,instance.serverRolePolicy===true)});
+  current();
   notify();return {id:r.room_id};
  }
  if(action==='roomSettings'){

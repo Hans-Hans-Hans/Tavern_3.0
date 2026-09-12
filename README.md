@@ -19,6 +19,9 @@ See [Calls](docs/CALLS.md), [Integrations](docs/INTEGRATIONS.md),
 [Troubleshooting](docs/TROUBLESHOOTING.md). Existing operators: review the
 [V3 hardening settings and redeploy steps](docs/V3_HARDENING.md) before updating.
 
+See the [community experience roadmap](docs/COMMUNITY_UX_ROADMAP.md) for the V3
+feature audit, guided server creation update and upcoming improvements.
+
 
 For a **fresh test installation** of the development version:
 

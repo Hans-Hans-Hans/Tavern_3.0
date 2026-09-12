@@ -3,7 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 async function fixture(page: Page, mode = '') {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const mutateMatrixAccountData=()=>{throw new Error("Unexpected navigation account-data write in server-defaults fixture");};export const getMatrixClient=()=>window.fixtureClient;export const onMatrixUpdate=fn=>{window.listeners.push(fn);return()=>{};};export const matrixApi=async(action,value)=>{window.actions.push([action,value]);return {id:'!created:local'};};` }));
   await page.route(url => url.pathname === '/lib/notifications.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const synchronizeNotificationRules=async()=>{};export const browserNotificationsEnabled=()=>false;export const disableBrowserNotifications=()=>{};export const enableBrowserNotifications=async()=>{};export const playNotificationSound=async()=>{};export const notificationDefaultsSyncError=()=>'';` }));
-  await page.route(url => url.pathname === '/app/community-settings.tsx', route => route.fulfill({ contentType: 'text/javascript', body: 'export const ServerWelcome=()=>null;' }));
+  await page.route(url => url.pathname === '/app/community-settings.tsx', route => route.fulfill({ contentType: 'text/javascript', body: 'export const ServerWelcome=()=>null;export const ImageEditor=()=>null;export const CommunityImage=()=>null;' }));
   await page.route('**/server-defaults-test*', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/server-defaults.tsx')).mountFixture();</script></body></html>` }));
   await page.goto('/server-defaults-test?' + mode);
 }
@@ -38,13 +38,15 @@ test('settings hide without custom authority and reject permissions removed whil
 test('creation submits welcome and notification choices and welcome rules links join the actual channel', async ({ page }) => {
   await fixture(page, 'create');
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Gaming');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByText('Welcome and notifications',{exact:true}).click();
   await page.getByRole('combobox', { name: 'Default notifications' }).selectOption('all');
   await page.getByRole('textbox', { name: 'Welcome message' }).fill('Welcome to Gaming!');
   await page.getByRole('button', { name: 'Create server', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).created)).toBe('!created:local');
   const actions = await page.evaluate(() => (window as any).actions);
-  expect(actions[0]).toEqual(['createServer', { name: 'Gaming', description: '', notificationMode: 'all', welcome: 'Welcome to Gaming!', welcomeEnabled: true }]);
+  expect(actions[0]).toEqual(['createServer', { name: 'Gaming', description: '', notificationMode: 'all', welcome: 'Welcome to Gaming!', welcomeEnabled: true, categories: [], icon: '' }]);
   await fixture(page, 'welcome');
   await page.getByRole('button', { name: 'Read the rules: Rules', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).selected)).toBe('!rules:local');

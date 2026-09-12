@@ -26,7 +26,7 @@ function fixture(managed = true) {
 function defaultsFixture() {
   const f = fixture(), matrix = { getMatrixClient: () => f.active };
   const preferences = loadTs('../lib/notification-preferences.ts', { './matrix': matrix });
-  f.defaults = loadTs('../lib/server-defaults.ts', { './matrix': matrix, './channel-administration': f.api, './notification-preferences': preferences, './roles': f.roles });
+  f.defaults = loadTs('../lib/server-defaults.ts', { './matrix': matrix, './channel-administration': f.api, './notification-preferences': preferences, './roles': f.roles, './server-templates': loadTs('../lib/server-templates.ts', {}) });
   f.server.isSpaceRoom = () => true;
   f.onboarding = loadTs('../lib/server-onboarding.ts', { './matrix': matrix, './channel-administration': f.api, './community': { serverChannelIds: () => ['!room:test'] } });
   return f;
@@ -114,6 +114,19 @@ test('server creation includes configured welcome and notification defaults and 
   assert.equal(roles.roles.length, 1); assert.equal(roles.roles[0].permissions.includes('manage_webhooks'), false);
   assert.equal(state.find(event => event.type === 'io.tavern.server.onboarding').content.enabled, true);
   assert.equal(f.defaults.serverCreationState('@creator:test', {}, false).some(event => event.type === 'io.tavern.roles'), false);
+});
+
+test('starter categories and uploaded icon are included in native initial state without adding authority', () => {
+  const f = defaultsFixture(), categories = [{ id: 'community', name: ' Community ', icon: '' }];
+  for (const enabled of [true, false]) {
+    const state = f.defaults.serverCreationState('@creator:test', { categories, icon: 'mxc://test/icon' }, enabled);
+    assert.deepEqual(state.find(event => event.type === 'io.tavern.server.layout').content, { version: 1, categories: [{ id: 'community', name: 'Community', icon: '' }], channels: [] });
+    assert.deepEqual(state.find(event => event.type === 'm.room.avatar').content, { url: 'mxc://test/icon' });
+    assert.equal(state.some(event => event.type === 'm.room.power_levels'), false);
+    assert.equal(state.some(event => event.type === 'io.tavern.roles'), enabled);
+  }
+  for (const icon of ['https://example.test/image.png', 'javascript:alert(1)', 'mxc://test/icon?token=x', 'mxc://test/a/b', 'mxc://test/\nicon']) assert.throws(() => f.defaults.serverCreationState('@creator:test', { icon }, true), /uploaded server icon/);
+  assert.throws(() => f.defaults.serverCreationState('@creator:test', { categories: [{ ...categories[0], id: '__bad/category' }] }, true), /category/);
 });
 
 test('custom role manager can edit channel details but native power remains an owner action', () => {

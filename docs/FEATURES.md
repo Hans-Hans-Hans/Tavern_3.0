@@ -4,6 +4,11 @@ Tavern keeps the existing Matrix architecture for encrypted messaging and builds
 
 The [UX improvement plan](UX_IMPROVEMENT_PLAN.md) prioritizes usability refinements and optional community features.
 
+The [community experience roadmap](COMMUNITY_UX_ROADMAP.md) audits the current V3
+features and defines the next eight phases. Its first phase adds guided server
+creation with eight editable layouts, categories, optional artwork and a review
+step, preserving existing permission enforcement and partial-creation recovery.
+
 The [V3 usability update](UX_UPDATE.md) adds Home and conversation resume, quieter
 recovery prompts, server templates, access explanations, notification presets,
 an admin overview, sticker packs, event RSVPs/time-zone comparison and personal
