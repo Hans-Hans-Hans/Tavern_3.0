@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as pause } from 'node:timers/promises';
-import { isCiRoomId } from './ci-room-id.mjs';
+import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
 const ORIGIN = 'https://chat.example.test';
@@ -82,6 +82,29 @@ export function proveConferenceRoom(roomId, events) {
   requireProof(joined.length === 2 && joined[0] === ALICE && joined[1] === BOB, 'Conference requires exactly the two joined owning CI accounts.');
 }
 
+export function proveVoiceConferenceRoom(roomId, events, fixture, parentEvents) {
+  requireProof(fixture?.roomId === roomId && isCiRoomId(roomId) && isCiRoomId(fixture.serverId) && /^[a-f0-9]{24}$/.test(fixture.runId), 'Voice acceptance requires its exact fresh hierarchy fixture.');
+  const parent = assertCiRoomCreation({ id: fixture.serverId, events: parentEvents, creator: ALICE, name: 'CI Games ' + fixture.runId, marker: 'io.tavern.ci_games_workflow', runId: fixture.runId, space: true });
+  requireProof(Array.isArray(events) && events.length <= 100, 'Voice fixture state must remain bounded.');
+  const unique = new Set();
+  for (const event of events) {
+    requireProof(object(event) && typeof event.type === 'string' && typeof event.state_key === 'string' && object(event.content)
+      && (event.room_id === undefined || event.room_id === roomId), 'Voice fixture state belongs to its exact room.');
+    const key = JSON.stringify([event.type, event.state_key]); requireProof(!unique.has(key), 'Voice fixture state must be unambiguous.'); unique.add(key);
+  }
+  const find = (kind, key = '') => events.find(event => event.type === kind && event.state_key === key);
+  const create = find('m.room.create'), parents = events.filter(event => event.type === 'm.space.parent' && event.content?.canonical === true && event.content?.via?.length);
+  requireProof(create?.sender === ALICE && create.content?.['m.federate'] === false && !create.content.type && !create.content.additional_creators && (roomId.includes(':') ? create.content.room_version !== '12' : create.content.room_version === '12'), 'Voice fixture must retain ordinary local native ownership.');
+  requireProof(find('m.room.name')?.content?.name === 'Gaming Voice' && find('m.room.encryption')?.content?.algorithm === 'm.megolm.v1.aes-sha2'
+    && find('io.tavern.channel')?.content?.kind === 'voice' && find('m.room.join_rules')?.content?.join_rule === 'restricted'
+    && find('m.room.power_levels')?.content?.events?.['org.matrix.msc3401.call.member'] === 0
+    && parents.length === 1 && parents[0].state_key === fixture.serverId && parent('m.space.child', roomId)?.content?.via?.length, 'The selected voice channel must belong only to its marked parent.');
+  const policy = parent('io.tavern.roles')?.content, audience = policy?.channelAdmissions?.[roomId];
+  requireProof(policy?.owner === ALICE && policy.channelAdmissionVersion === 1 && JSON.stringify(audience?.roleIds) === '["gaming"]' && JSON.stringify(audience.userIds) === '[]'
+    && JSON.stringify(policy.members?.[BOB]) === '["gaming"]', 'Only the fixture Gaming role may access this channel.');
+  requireProof(events.filter(event => event.type === 'm.room.member' && event.content?.membership === 'join').map(event => event.state_key).sort().join(',') === [ALICE, BOB].join(','), 'The voice fixture must contain only both owning CI accounts.');
+}
+
 /** Serialized into the parent page. Read-only listeners in both documents
  * observe the real parent's fresh challenge and the exact iframe's replies.
  * Retain only booleans/counts/time and allowlisted failure categories. */
@@ -135,7 +158,7 @@ export function installConferenceObserver({ nonce, roomId, owner, owners, failur
   return true;
 }
 
-export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api }, { docker = dockerRead } = {}) {
+export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api }, { docker = dockerRead, voiceFixture, onConnected } = {}) {
   const ownerValid = (value, id) => object(value) && value.userId === id && value.admin === false && typeof value.deviceId === 'string' && /^[A-Za-z0-9_-]{1,255}$/.test(value.deviceId);
   requireProof(process.env.TAVERN_CI_SMOKE === 'true' && process.env.TAVERN_CI_TLS === '/tmp/tavern-ci-tls' && origin === ORIGIN && isCiRoomId(roomId)
     && ownerValid(aliceSession, ALICE) && ownerValid(bobSession, BOB) && typeof api === 'function', 'Embedded conference requires the exact isolated CI stack and ordinary accounts.');
@@ -166,7 +189,14 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     await session(page); const expected = owners.get(page), who = await read(page, '/_matrix/client/v3/account/whoami', true);
     requireProof(who?.status === 200 && who.data?.user_id === expected.userId && who.data?.device_id === expected.deviceId, 'Embedded conference native account changed.');
     const state = await read(page, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/state', true);
-    requireProof(state?.status === 200, 'Embedded conference native room is unavailable.'); proveConferenceRoom(roomId, state.data); await session(page); return state.data;
+    requireProof(state?.status === 200, 'Embedded conference native room is unavailable.');
+    if (voiceFixture) {
+      requireProof(voiceFixture.roomId === roomId && isCiRoomId(voiceFixture.serverId), 'Voice workflow fixture changed.');
+      const parent = await read(page, '/_matrix/client/v3/rooms/' + encodeURIComponent(voiceFixture.serverId) + '/state', true);
+      requireProof(parent.status === 200, 'The marked CI voice parent must remain readable.');
+      proveVoiceConferenceRoom(roomId, state.data, voiceFixture, parent.data);
+    } else proveConferenceRoom(roomId, state.data);
+    await session(page); return state.data;
   }
   async function observation(page) {
     return run(() => page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; return probe?.nonce === nonce ? probe.read() : null; }, nonce), 'observation');
@@ -186,7 +216,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     }
     for (const page of owners.keys()) {
       await scope(page); opened.add(page);
-      await run(() => page.getByRole('button', { name: 'Join conference', exact: true }).click({ timeout: 15000 }), 'open-widget');
+      await run(() => page.getByRole('button', { name: voiceFixture ? 'Join voice' : 'Join conference', exact: true }).click({ timeout: 15000 }), 'open-widget');
       const lobby = page.frameLocator(FRAME).getByTestId('lobby_joinCall');
       await run(() => lobby.waitFor({ state: 'visible', timeout: 45000 }), 'widget-lobby', 45000);
       await scope(page);
@@ -203,6 +233,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       const value = await observation(page);
       requireProof(value?.status === 'ready' && value.stableMs >= 20000 && value.ageMs <= 5000 && value.packets >= 10, 'Both embedded calls must retain fresh, complete encrypted two-device observations for twenty seconds.');
     }
+    if (onConnected) { requireProof(!!voiceFixture && typeof onConnected === 'function', 'Connected workflow requires its marked voice fixture.'); await run(onConnected, 'connected-workflow', 45000); }
     succeeded = true;
   } catch {
     const allowed = new Set(['waiting', 'disconnected', 'participants', 'encryption', 'ready', 'scope', 'stale', 'fatal']);
@@ -231,7 +262,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
           return url.origin === location.origin && params.get('roomId') === roomId && probe?.nonce === nonce && probe.owns() ? 'owned' : 'changed';
         }, { nonce, roomId }), 'leave-scope', 5000);
         if (owned === 'changed') throw new Error();
-        if (owned === 'owned') { cleanupStage = 'leave-widget'; await run(() => page.getByRole('button', { name: 'Leave conference', exact: true }).click({ timeout: 10000 }), 'leave-widget', 10000); cleanupStage = 'leave-frame'; await run(() => page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }), 'leave-frame', 15000); }
+        if (owned === 'owned') { cleanupStage = 'leave-widget'; await run(() => page.getByRole('button', { name: voiceFixture ? 'Disconnect voice' : 'Leave conference', exact: true }).click({ timeout: 10000 }), 'leave-widget', 10000); cleanupStage = 'leave-frame'; await run(() => page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }), 'leave-frame', 15000); }
         cleanupStage = 'native-membership';
         const owner = owners.get(page), keys = new Set([owner.userId, '_' + owner.userId + '_' + owner.deviceId + '_m.call', owner.userId + '_' + owner.deviceId + '_m.call']);
         const until = Math.min(deadline, Date.now() + 10000);

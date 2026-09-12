@@ -14,6 +14,7 @@ import { dmRequestsSmoke } from './smoke-dm-requests.mjs';
 import { invitationPrivacySmoke } from './smoke-invitation-privacy.mjs';
 import { channelAdmissionSmoke } from './smoke-channel-admission.mjs';
 import { roomRemovalSmoke } from './smoke-room-removal.mjs';
+import { gamesWorkflowSmoke } from './smoke-games-workflow.mjs';
 import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
 import { callAudioSmoke } from './smoke-call-audio.mjs';
 import { rtcAuthSmoke } from './smoke-rtc-auth.mjs';
@@ -145,6 +146,9 @@ try {
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   await channelAdmissionSmoke({ alice, bob, aliceSession, bobSession, origin, api });
   await roomRemovalSmoke({ alice, aliceSession, origin, api });
+  conferenceProbe = true;
+  try { await gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready }); }
+  finally { conferenceProbe = false; }
   await rtcAuthSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
   conferenceProbe = true;
   try {
