@@ -755,3 +755,14 @@ preflight is now separated into native-room/device proof, synthetic capture,
 existing media and TURN credential checks, with finite observations only. The
 run subsequently hit the private-editor API prefix defect corrected at `d878de5`.
 This is two passed calls, not the required three-call pass or a green workflow.
+
+At `371b91c`, [run 34680038316](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34680038316)
+passed all three consecutive direct calls, with actual relay rates, received
+synthetic audio in both existing playback streams and owned call/DM cleanup.
+Conference connection/leave and native private membership/deletion also passed.
+The run failed the Games private-editor interaction before its voice/sidebar
+phase. Finer native UI stages and finite visibility/accessibility observations
+now distinguish a closed sheet from inaccessible controls. A separate local
+production menu/sheet/tab reproduction completed four open/edit/close cycles;
+it did not reproduce this full-workspace failure. Deployed audibility is still
+an independent acceptance check.

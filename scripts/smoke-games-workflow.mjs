@@ -109,14 +109,21 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     for (const page of owners.keys()) await ordering(page, games, [tarkov, voice, minecraft]);
     stage = 'private-voice-editor';
     await sidebar(alice).getByRole('button', { name: 'Gaming Voice', exact: true }).click({ button: 'right' });
+    stage = 'open-channel-settings';
     await alice.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true }).click();
+    stage = 'open-permissions-section';
     await alice.getByRole('tab', { name: 'Permissions', exact: true }).click();
     const access = alice.getByRole('region', { name: 'Private channel access', exact: true });
+    stage = 'enable-private-audience';
     await access.getByRole('checkbox', { name: 'Use selected roles and members', exact: true }).check();
+    stage = 'choose-gaming-role';
     await access.getByRole('checkbox', { name: 'Gaming', exact: true }).check();
+    stage = 'save-private-audience';
     await access.getByRole('button', { name: 'Save channel access', exact: true }).click();
+    stage = 'confirm-private-audience';
     await expect(access.getByRole('status')).toContainText('Private channel access saved');
     await alice.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+    stage = 'select-voice-for-both-accounts';
     for (const page of owners.keys()) await page.getByRole('button', { name: 'Gaming Voice', exact: true }).click();
     stage = 'two-user-voice';
     await conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId: voice, origin, api }, { voiceFixture: { roomId: voice, serverId: server, runId }, onConnected: async () => {
@@ -131,5 +138,19 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
       await expect(sidebar(page).getByRole('list', { name: 'Voice participants in Gaming Voice', exact: true })).toHaveCount(0);
     }
     console.log('PASS: real UI creates Games, tarkov, minecraft and Gaming Voice; drag/drop synchronizes and persists, selected Gaming roles govern voice, and both native conference participants appear and leave correctly.');
-  } catch { throw new Error('Native Games workflow failed at bounded stage: ' + stage); }
+  } catch {
+    const ui = await Promise.all([...owners.keys()].map(async page => {
+      let timer;
+      try { return await Promise.race([page.evaluate(() => {
+        const state = (element) => !element ? 'missing' : element.closest('[aria-hidden="true"]') ? 'aria-hidden' : element.closest('[inert]') ? 'inert' : !element.getClientRects().length ? 'hidden' : element.disabled ? 'disabled' : 'visible';
+        const tabs = document.querySelector('[aria-label="Channel settings sections"]');
+        return { channel: state(document.querySelector('.channel-navigation button[aria-label="Gaming Voice"]')),
+          settings: state(tabs), permissions: state([...tabs?.querySelectorAll('[role="tab"]') || []].find(tab => tab.textContent === 'Permissions')),
+          sheet: state(document.querySelector('.detail-sheet')), dialogs: Math.min(10, document.querySelectorAll('[role="dialog"]').length),
+          audience: state(document.querySelector('[aria-label="Private channel access"]')) };
+      }), new Promise(resolve => { timer = setTimeout(() => resolve({ state: 'unavailable' }), 2500); })]); }
+      catch { return { state: 'unavailable' }; } finally { clearTimeout(timer); }
+    }));
+    throw new Error('Native Games workflow failed at bounded stage: ' + stage + '. UI observations: ' + JSON.stringify(ui));
+  }
 }
