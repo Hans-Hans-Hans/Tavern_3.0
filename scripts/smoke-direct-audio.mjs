@@ -12,6 +12,9 @@ const COMMAND='exec /usr/bin/turnserver -c /config/turnserver.ci.conf --relay-ip
 const execute=promisify(execFile);
 const dockerRead=async args=>(await execute('docker',args,{timeout:10000,maxBuffer:1024*1024,windowsHide:true})).stdout.trim();
 const requireProof=value=>{if(!value)throw new Error('The direct-audio CI scope could not be verified.');};
+export class DirectAudioAcceptanceError extends Error {
+  constructor(message, cleanupConfirmed) { super(message); this.name = 'DirectAudioAcceptanceError'; this.cleanupConfirmed = cleanupConfirmed; }
+}
 
 export function directAudioDiagnostic(values){
   const choose=(key,allowed)=>allowed.includes(values?.[key])?values[key]:'unavailable';
@@ -83,7 +86,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
     &&aliceSession?.userId===ALICE&&bobSession?.userId===BOB&&aliceSession.admin===false&&bobSession.admin===false
     &&aliceSession.deviceId&&bobSession.deviceId&&alice!==bob&&alice.context()!==bob.context()&&typeof api==='function'&&typeof ready==='function');
   const owners=new Map([[alice,aliceSession],[bob,bobSession]]),changed=new Set(),opened=new Set();
-  let stage='isolated-turn',success=false,cleanupFailed=false;
+  let stage='isolated-turn',success=false,cleanupFailed=false,failure;
   const expected=page=>({[page===alice?BOB:ALICE]:[roomId]});
   const accountPath=page=>'/_matrix/client/v3/user/'+encodeURIComponent(owners.get(page).userId)+'/account_data/m.direct';
   async function session(page){
@@ -146,7 +149,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         return {result:['relay','no-relay','timeout'].includes(result?.result)?result.result:'unavailable',codes:Array.isArray(result?.codes)?result.codes.filter(code=>Number.isInteger(code)&&code>=300&&code<=799).slice(0,8):[]};
       }catch{return {result:'unavailable',codes:[]};}
     })):[];
-    throw new Error('Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.');
+    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
   }
   finally{
     for(const page of opened){
@@ -166,5 +169,6 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
     }
     if(cleanupFailed&&success)throw new Error('Native direct audio transferred, but call and DM-fixture cleanup was not confirmed.');
   }
+  if (failure) throw new DirectAudioAcceptanceError(failure, !cleanupFailed);
   console.log('PASS: two ordinary accounts used production direct-call signaling and TURN, both reported relay media rates, both received synthetic audio in the real remote playback stream, and the owned call/DM fixture was cleaned up.');
 }

@@ -19,7 +19,7 @@ import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
 import { callAudioSmoke } from './smoke-call-audio.mjs';
 import { rtcAuthSmoke } from './smoke-rtc-auth.mjs';
 import { conferenceSmoke } from './smoke-conference.mjs';
-import { directAudioSmoke } from './smoke-direct-audio.mjs';
+import { directAudioSmoke, DirectAudioAcceptanceError } from './smoke-direct-audio.mjs';
 import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
@@ -36,6 +36,7 @@ const password = () => 'Ci!' + randomBytes(24).toString('base64url');
 const adminPassword = password(), alicePassword = password(), bobPassword = password();
 const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.example.test 127.0.0.1', '--no-proxy-server', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--ignore-certificate-errors-spki-list=' + fingerprint] });
 const pages = [], errors = [];
+const directFailures = [];
 let conferenceProbe = false;
 async function page() {
   const context = await browser.newContext();
@@ -147,14 +148,26 @@ try {
   await channelAdmissionSmoke({ alice, bob, aliceSession, bobSession, origin, api });
   await roomRemovalSmoke({ alice, aliceSession, origin, api });
   conferenceProbe = true;
-  try { await gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready }); }
-  finally { conferenceProbe = false; }
+  try {
+    for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
+    await gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready });
+  } finally {
+    for (const participant of [alice, bob]) await participant.context().clearPermissions();
+    conferenceProbe = false;
+  }
+  for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   await rtcAuthSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
   conferenceProbe = true;
   try {
     for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
     await conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
-    for (let attempt = 0; attempt < 3; attempt++) await directAudioSmoke({alice,bob,aliceSession,bobSession,roomId,origin,api,ready});
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { await directAudioSmoke({alice,bob,aliceSession,bobSession,roomId,origin,api,ready}); }
+      catch (failure) {
+        if (!(failure instanceof DirectAudioAcceptanceError) || !failure.cleanupConfirmed) throw failure;
+        directFailures.push(failure.message); console.error('FAIL: direct call ' + (attempt + 1) + ': ' + failure.message);
+      }
+    }
   } finally {
     for (const participant of [alice, bob]) await participant.context().clearPermissions();
     conferenceProbe = false;
@@ -281,6 +294,7 @@ try {
   await memberModerationSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api });
   await callAudioSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api });
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
+  if (directFailures.length) throw new Error('Native direct-call validation failed in ' + directFailures.length + ' of 3 calls. See the bounded diagnostics above; independent native checks ran only after confirmed call cleanup.');
 } catch (error) {
   console.error('Live browser errors:', errors);
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));
