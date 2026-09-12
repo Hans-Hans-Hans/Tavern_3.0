@@ -4,6 +4,21 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## September 12 recovery and channel-management checkpoint
 
+Latest checkpoint: `c0670f9` passed three consecutive native direct calls with
+actual bidirectional received audio and cleanup/reload after the handled-call
+replay fix. Its native Games probe stopped at drag/category; a subsequent probe
+records the finite drag phase to distinguish input handling from saved order.
+The selected-conversation history fix passed seventeen focused history/read
+checks and TypeScript checking. It reads at most three earlier pages if the
+initial sync contains only control events, preserves undecryptable rows and
+rejects retired readers. The complete combined native workflow remains open.
+
+`de12e7d` adds acknowledged voice-dock self-deafen without another capture or
+connection. Thirty-four focused model cases, thirteen mounted browser cases
+and the production build passed. The browser proof verifies samples become
+silent and audible again on an actual WebRTC receiver. Its native two-user
+voice/sidebar acceptance remains in progress.
+
 The actual TLS SMTP/native history recovery gate passed at `f958030` and again
 at `f6190e8` and `0dd7afe`: enrollment, automatic new-device email prompt,
 wrong-code rejection, correct-code restoration of an encrypted message, and

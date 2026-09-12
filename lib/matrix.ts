@@ -3,6 +3,7 @@
 import { readInstanceConfig } from './instance';
 import { markRoomsRead, roomReadCounts, watchRoomReadCounts } from './read-state';
 import { isPrivateDiscussion } from './conversation-routing';
+import { recentMessageHistory } from './recent-message-history';
 import { addDirectMessage, directRoomId, readDirectMessageMap } from './dm-account-data';
 import { restoreDirectListing } from './dm-recovery';
 import { readMatrixAttachment } from './attachment-transfer';
@@ -175,7 +176,10 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   if(params.parent&&!params.conversation)throw new Error('Choose a conversation before opening a thread.');
   const rooms=params.conversation?[roomRequired(params.conversation)]:joined();
   if(params.before){if(params.parent)await loadOlderThreadHistory(c,rooms[0],params.parent,eventCache.get(params.parent),()=>client===c);else await c.scrollback(rooms[0],100);}
-  let all=(await Promise.all(rooms.map(r=>getRoomMessages(r,params.parent,action!=='messages'&&action!=='threads')))).flat();
+  const accountOwner = accountArtworkOwner();
+  let all=(await Promise.all(rooms.map(r=>action==='messages'&&params.conversation&&!params.parent&&!params.before
+    ? recentMessageHistory(c,r,()=>client===c&&accountArtworkOwner()===accountOwner,()=>getRoomMessages(r))
+    : getRoomMessages(r,params.parent,action!=='messages'&&action!=='threads')))).flat();
   if(action==='saved'){all=[];const saved=savedEvents();for(let i=0;i<saved.length;i+=8){const batch=await Promise.all(saved.slice(i,i+8).map((m:any)=>resolveMatrixMessage(m.roomId,m.id).catch(()=>null)));all.push(...batch.filter(Boolean));}}
   if(client!==c)throw new Error('Your account changed. Reopen the conversation.');
   if(action==='search'){const q=params.q.toLocaleLowerCase();all=all.filter(m=>m.body.toLocaleLowerCase().includes(q));}

@@ -145,7 +145,18 @@ The native repeated-call probe then identified an old incoming invitation replay
 after reload. `c0670f9` retains bounded, short-lived handled call IDs in this tab,
 scoped to the native account/device/homeserver, and closes a replayed peer without
 sending another hangup. New call IDs remain usable; 28 focused call checks passed.
+At `c0670f9`, all three consecutive native calls passed with bidirectional
+received audio and cleanup/reload. The same run passed fresh-device encrypted
+bot delivery, private audience admission/revocation, native deletion and
+conference connection/leave, then stopped at the Games drag/category stage.
 The complete native workflow with that fix remains required.
+
+The selected conversation now reads at most three earlier SDK history pages
+when its initial sync contains only control events. It keeps undecryptable rows,
+coalesces concurrent reads and checks the exact current account, device, room
+and timeline before returning results. This avoids an empty conversation after
+call activity pushes messages outside the first sync window. Manual pagination
+remains available; no background scan of all conversations is introduced.
 
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be

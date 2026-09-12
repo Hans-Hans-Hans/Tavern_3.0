@@ -5,7 +5,7 @@ import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeRequest, matrixSmokeCreateFixture, matrixSmokeInvite, matrixSmokeJoin } from './matrix-smoke-request.mjs';
 import { conferenceSmoke } from './smoke-conference.mjs';
 const ORIGIN = 'https://chat.example.test', ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
-const MARKER = 'io.tavern.ci_games_workflow';
+  const MARKER = 'io.tavern.ci_games_workflow';
 export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready }) {
   if (process.env.TAVERN_CI_SMOKE !== 'true' || process.env.TAVERN_CI_TLS !== '/tmp/tavern-ci-tls' || origin !== ORIGIN
       || aliceSession?.userId !== ALICE || bobSession?.userId !== BOB || aliceSession.admin !== false || bobSession.admin !== false
@@ -47,20 +47,26 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
   const sidebar = page => page.locator('.channel-navigation');
   const row = (page, id) => sidebar(page).locator('[data-channel-id]').filter({ has: page.locator('.channel-navigation-row') }).filter({ has: page.getByRole('button', { name: rooms.get(id), exact: true }) }).locator('.channel-navigation-row');
   const category = (page, id) => sidebar(page).locator('[data-category-id]').filter({ has: page.getByRole('button', { name: id === games ? 'Games' : 'Other games', exact: true }) });
-  let games, other;
+  let games, other, dragStage = 'idle';
   async function layout() { return (await inspectParent())('io.tavern.server.layout').content; }
   async function drag(id, destination, before = false) {
+    dragStage = 'inspect';
     await session(alice); await inspectChannel(id);
     const source = row(alice, id), target = destination === games || destination === other ? category(alice, destination) : row(alice, destination);
+    dragStage = 'locate';
     await source.scrollIntoViewIfNeeded(); await target.scrollIntoViewIfNeeded();
     const transfer = await alice.evaluateHandle(() => new DataTransfer());
+    dragStage = 'start';
     await source.dispatchEvent('dragstart', { dataTransfer: transfer });
     const box = await target.boundingBox(); assert.ok(box);
     const clientY = box.y + (before ? 2 : box.height / 2);
+    dragStage = 'hover';
     await target.dispatchEvent('dragover', { dataTransfer: transfer, clientY });
     await expect(target).toHaveAttribute('data-drop', before ? 'before' : 'inside');
+    dragStage = 'drop';
     await target.dispatchEvent('drop', { dataTransfer: transfer, clientY });
     await source.dispatchEvent('dragend', { dataTransfer: transfer }); await transfer.dispose();
+    dragStage = 'saved-order';
   }
   async function ordering(page, categoryId, ids) {
     assert.match(categoryId, /^[A-Za-z0-9_-]{1,80}$/);
@@ -151,6 +157,6 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
       }), new Promise(resolve => { timer = setTimeout(() => resolve({ state: 'unavailable' }), 2500); })]); }
       catch { return { state: 'unavailable' }; } finally { clearTimeout(timer); }
     }));
-    throw new Error('Native Games workflow failed at bounded stage: ' + stage + '. UI observations: ' + JSON.stringify(ui));
+    throw new Error('Native Games workflow failed at bounded stage: ' + stage + '; drag: ' + dragStage + '. UI observations: ' + JSON.stringify(ui));
   }
 }
