@@ -69,6 +69,22 @@ test('stopping call measurements ignores a pending report and schedules no more 
   const stop = quality.watchCallQuality(call, value => values.push(value), 5); stop(); complete(rows(1000, 1, 1, 0));
   await new Promise(resolve => setTimeout(resolve, 15)); assert.deepEqual(values, []);
 });
+
+test('ICE errors retain only bounded numeric codes and retire with their peer', async () => {
+  const old = Object.assign(new EventTarget(), { connectionState: 'new', iceConnectionState: 'new', iceGatheringState: 'complete' });
+  const values = []; const call = { peerConn: old, getCurrentCallStats: async () => [] };
+  const stop = quality.watchCallQuality(call, value => values.push(value), 5);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const failure = code => Object.assign(new Event('icecandidateerror'), { errorCode: code, url: 'turn:private.invalid', address: '192.0.2.1', errorText: 'sensitive detail' });
+  old.dispatchEvent(failure(701)); old.dispatchEvent(failure(701)); old.dispatchEvent(failure('private')); old.dispatchEvent(failure(999));
+  assert.deepEqual(values.at(-1).iceErrors, [701]);
+  assert.equal(quality.callConnectionPresentation(values.at(-1)).label, 'Relay unavailable');
+  assert.doesNotMatch(JSON.stringify(values), /private|sensitive|192\.0\.2/);
+  call.peerConn = Object.assign(new EventTarget(), { connectionState: 'new', iceConnectionState: 'new', iceGatheringState: 'new' });
+  await new Promise(resolve => setTimeout(resolve, 12));
+  old.dispatchEvent(failure(438)); assert.deepEqual(values.at(-1).iceErrors, []);
+  stop(); const count = values.length; call.peerConn.dispatchEvent(failure(701)); assert.equal(values.length, count);
+});
 test('speech activity shares the existing SDK feed analyser and respects mute and cleanup', () => {
   const events = { VolumeChanged: 'volume', Speaking: 'speaking', MuteStateChanged: 'mute', NewStream: 'stream', Disposed: 'disposed' };
   const api = loadTs('../lib/call-presentation.ts', { 'matrix-js-sdk/lib/webrtc/callFeed': { CallFeedEvent: events } });

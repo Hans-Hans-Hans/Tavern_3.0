@@ -17,11 +17,29 @@ export function directAudioDiagnostic(values){
   const choose=(key,allowed)=>allowed.includes(values?.[key])?values[key]:'unavailable';
   const count=key=>typeof values?.[key]==='string'&&/^(0|[1-9][0-9]{0,3})$/.test(values[key])?Number(values[key]):null;
   const rate=key=>typeof values?.[key]==='string'&&/^(0|[1-9][0-9]{0,5})(\.[0-9])? kbps$/.test(values[key])?Number.parseFloat(values[key]):null;
+  const iceErrors=typeof values?.['ICE error codes']==='string'&&/^[3-7][0-9]{2}(, [3-7][0-9]{2}){0,7}$/.test(values['ICE error codes'])?values['ICE error codes'].split(', ').map(Number):[];
   return {connection:choose('Connection',['new','connecting','connected','disconnected','failed','closed']),
     ice:choose('ICE transport',['new','checking','connected','completed','disconnected','failed','closed']),
     gathering:choose('ICE gathering',['new','gathering','complete']),route:choose('Local route',['TURN relay','host','srflx','prflx']),
     local:count('Local ICE candidates'),relay:count('Local relay candidates'),remote:count('Remote ICE candidates'),
-    down:rate('Download media rate'),up:rate('Upload media rate')};
+    down:rate('Download media rate'),up:rate('Upload media rate'),iceErrors};
+}
+
+// A separate allocation attempt after a failed real call distinguishes missing
+// relay availability from the SDK's call state. No media devices are opened.
+async function allocationControl({ uris, username, password }) {
+  if(location.origin!=='https://chat.example.test'||!isSecureContext||JSON.stringify(uris)!==JSON.stringify(['turn:172.30.239.3:3478?transport=udp','turn:172.30.239.3:3478?transport=tcp']))return {result:'unavailable',codes:[]};
+  let peer, timer; const codes=[];
+  try {
+    peer=new RTCPeerConnection({iceTransportPolicy:'relay',iceServers:[{urls:uris,username,credential:password}]});
+    const gathered=new Promise(resolve=>{
+      peer.addEventListener('icecandidateerror',event=>{if(Number.isInteger(event.errorCode)&&event.errorCode>=300&&event.errorCode<=799&&codes.length<8&&!codes.includes(event.errorCode))codes.push(event.errorCode);});
+      peer.addEventListener('icecandidate',event=>{if(event.candidate?.type==='relay')resolve('relay');else if(!event.candidate)resolve('no-relay');});
+      timer=setTimeout(()=>resolve('timeout'),12000);
+    });
+    peer.createDataChannel('owned-ci-relay-check'); await peer.setLocalDescription(await peer.createOffer());
+    return {result:await gathered,codes};
+  }catch{return {result:'unavailable',codes};}finally{clearTimeout(timer);peer?.close();}
 }
 
 export function proveDirectEndpoint(network,container){
@@ -121,7 +139,14 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         return directAudioDiagnostic(values);
       }catch{return directAudioDiagnostic(null);}finally{clearTimeout(timer);}
     }));
-    throw new Error('Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Credentials, addresses and audio samples were withheld.');
+    const controls=stage==='bidirectional-relay-rates'?await Promise.all([...owners.keys()].map(async page=>{
+      try{
+        const fresh=await native(page,'/_matrix/client/v3/voip/turnServer');requireProof(fresh.status===200);
+        const result=await page.evaluate(allocationControl,fresh.data);
+        return {result:['relay','no-relay','timeout'].includes(result?.result)?result.result:'unavailable',codes:Array.isArray(result?.codes)?result.codes.filter(code=>Number.isInteger(code)&&code>=300&&code<=799).slice(0,8):[]};
+      }catch{return {result:'unavailable',codes:[]};}
+    })):[];
+    throw new Error('Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.');
   }
   finally{
     for(const page of opened){

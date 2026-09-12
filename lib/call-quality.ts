@@ -2,7 +2,7 @@ import type { MatrixCall } from 'matrix-js-sdk';
 
 type Counter = { timestamp: number; bytes?: number; received?: number; lost?: number };
 export type QualityBaseline = Map<string, Counter>;
-export type CallQuality = { connection: string; ice: string; gathering: string; localCandidates: number | null; localRelayCandidates: number | null; remoteCandidates: number | null; localRoute: string | null; roundTripMs: number | null; jitterMs: number | null; downloadKbps: number | null; uploadKbps: number | null; receiveLossPercent: number | null; sampledAt: number; available: boolean; error: string };
+export type CallQuality = { connection: string; ice: string; gathering: string; iceErrors?: number[]; localCandidates: number | null; localRelayCandidates: number | null; remoteCandidates: number | null; localRoute: string | null; roundTripMs: number | null; jitterMs: number | null; downloadKbps: number | null; uploadKbps: number | null; receiveLossPercent: number | null; sampledAt: number; available: boolean; error: string };
 const numeric = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const nonnegative = (value: unknown): value is number => numeric(value) && value >= 0;
 const rounded = (value: number) => Math.round(value * 10) / 10;
@@ -46,6 +46,7 @@ export function projectCallQuality(raw: unknown, previous: QualityBaseline = new
 }
 
 export function callConnectionPresentation(quality: CallQuality | null) {
+  if (quality?.gathering === 'complete' && quality.localRelayCandidates === 0 && ['new', 'connecting'].includes(quality.connection)) return { label: 'Relay unavailable', guidance: 'The browser finished gathering without a TURN relay candidate. End this call and try again. Your administrator can use Test TURN allocation and the ICE error codes in Connection details to check relay availability.' };
   if (quality?.connection === 'failed' || quality?.ice === 'failed') return { label: 'Connection failed', guidance: 'The media connection failed. End this call and try again. Ask your administrator to run Test TURN allocation and check the TURN relay ports. A successful allocation alone does not confirm that media can reach the other participant.' };
   if (quality?.connection === 'disconnected' || quality?.ice === 'disconnected') return { label: 'Media disconnected', guidance: 'The media connection was interrupted. If it does not recover, end this call and try again. Connection details show TURN candidate counts without exposing addresses.' };
   if (quality?.connection === 'closed' || quality?.ice === 'closed') return { label: 'Media connection closed', guidance: '' };
@@ -56,16 +57,24 @@ export function callConnectionPresentation(quality: CallQuality | null) {
 export function watchCallQuality(call: Pick<MatrixCall, 'getCurrentCallStats' | 'peerConn'>, update: (value: CallQuality) => void, interval = 2000) {
   let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, previous: QualityBaseline = new Map();
   let watchedPeer: RTCPeerConnection | undefined, last: CallQuality | undefined;
+  let iceErrors: number[] = [];
   const stateEvents = ['connectionstatechange', 'iceconnectionstatechange', 'icegatheringstatechange'];
   const stateChanged = () => {
     if (stopped || watchedPeer !== call.peerConn) return;
-    update({ ...(last || projectCallQuality(undefined).quality), connection: watchedPeer?.connectionState || 'unavailable', ice: watchedPeer?.iceConnectionState || 'unavailable', gathering: watchedPeer?.iceGatheringState || 'unavailable' });
+    update({ ...(last || projectCallQuality(undefined).quality), iceErrors: [...iceErrors], connection: watchedPeer?.connectionState || 'unavailable', ice: watchedPeer?.iceConnectionState || 'unavailable', gathering: watchedPeer?.iceGatheringState || 'unavailable' });
+  };
+  const iceError = (event: Event) => {
+    if (stopped || event.target !== watchedPeer || watchedPeer !== call.peerConn) return;
+    const code = (event as RTCPeerConnectionIceErrorEvent).errorCode;
+    if (Number.isInteger(code) && code >= 300 && code <= 799 && iceErrors.length < 8 && !iceErrors.includes(code)) { iceErrors.push(code); stateChanged(); }
   };
   const bindPeer = () => {
     if (watchedPeer === call.peerConn) return;
     for (const event of stateEvents) watchedPeer?.removeEventListener?.(event, stateChanged);
-    watchedPeer = call.peerConn; last = undefined; previous.clear();
+    watchedPeer?.removeEventListener?.('icecandidateerror', iceError);
+    watchedPeer = call.peerConn; last = undefined; previous.clear(); iceErrors = [];
     for (const event of stateEvents) watchedPeer?.addEventListener?.(event, stateChanged);
+    watchedPeer?.addEventListener?.('icecandidateerror', iceError);
   };
   async function sample() {
     bindPeer(); const peer = call.peerConn;
@@ -74,7 +83,7 @@ export function watchCallQuality(call: Pick<MatrixCall, 'getCurrentCallStats' | 
       if (stopped) return;
       if (peer === call.peerConn) {
         const value = projectCallQuality(raw, previous, peer?.connectionState, peer?.iceConnectionState, peer?.iceGatheringState);
-        previous = value.counters; last = value.quality; update(value.quality);
+        previous = value.counters; last = { ...value.quality, iceErrors: [...iceErrors] }; update(last);
       } else { bindPeer(); stateChanged(); }
     } catch {
       if (stopped) return;
@@ -83,5 +92,5 @@ export function watchCallQuality(call: Pick<MatrixCall, 'getCurrentCallStats' | 
     if (!stopped) timer = setTimeout(() => void sample(), interval);
   }
   void sample();
-  return () => { stopped = true; clearTimeout(timer); previous.clear(); for (const event of stateEvents) watchedPeer?.removeEventListener?.(event, stateChanged); };
+  return () => { stopped = true; clearTimeout(timer); previous.clear(); for (const event of stateEvents) watchedPeer?.removeEventListener?.(event, stateChanged); watchedPeer?.removeEventListener?.('icecandidateerror', iceError); };
 }
