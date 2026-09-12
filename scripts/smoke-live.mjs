@@ -147,14 +147,6 @@ try {
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   await channelAdmissionSmoke({ alice, bob, aliceSession, bobSession, origin, api });
   await roomRemovalSmoke({ alice, aliceSession, origin, api });
-  conferenceProbe = true;
-  try {
-    for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
-    await gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready });
-  } finally {
-    for (const participant of [alice, bob]) await participant.context().clearPermissions();
-    conferenceProbe = false;
-  }
   for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   await rtcAuthSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
   conferenceProbe = true;
@@ -172,6 +164,15 @@ try {
     for (const participant of [alice, bob]) await participant.context().clearPermissions();
     conferenceProbe = false;
   }
+  conferenceProbe = true;
+  try {
+    for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
+    await gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready });
+  } finally {
+    for (const participant of [alice, bob]) await participant.context().clearPermissions();
+    conferenceProbe = false;
+  }
+  for (const participant of [alice, bob]) { await participant.goto(origin + '/#room=' + encodeURIComponent(roomId)); await ready(participant); }
   const text = 'Encrypted CI proof ' + randomBytes(12).toString('hex');
   console.log('Ready to send an encrypted message from the production composer.');
   await alice.getByRole('textbox', { name: 'Message CI encrypted conversation', exact: true }).fill(text);
