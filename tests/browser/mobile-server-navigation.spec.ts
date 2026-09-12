@@ -30,3 +30,11 @@ test('mobile server rows retain readable native unread badges at 320px',async({p
   expect(await page.getByRole('dialog').evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);
   await page.evaluate(()=>{const w=window as any;w.readState.focus=true;w.redraw();});await expect(row.getByRole('img')).toHaveCount(0);
 });
+
+test('mobile switcher opens the dedicated Direct messages section',async({page})=>{
+ await page.setViewportSize({width:390,height:650});await fixture(page);
+ await page.getByRole('button',{name:'Servers and folders',exact:true}).click();
+ await page.getByRole('button',{name:'Direct messages',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ expect(await page.evaluate(()=>(window as any).selected)).toEqual(['dms']);
+});

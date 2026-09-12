@@ -41,3 +41,7 @@ The full two-user Games-category acceptance sequence, including a role-restricte
 voice join and cross-client ordering after refresh, remains a deployed acceptance
 gate. Component, native write-boundary and policy tests are recorded separately
 from that gate in [validation](VALIDATION.md).
+
+## Direct messages
+
+Direct messages have a dedicated speech-bubble button in the server rail and a Direct messages choice in the mobile server switcher. The section contains individual and group DMs, their favorites, drafts and unread counts. Server and All channels views contain channels only. Opening a DM from a profile, search, message request or room link selects Direct messages; selecting a room updates the URL so refresh can reopen it. An empty DM section offers New message and Notes to self. This changes navigation only; native rooms, membership and encrypted history are preserved.

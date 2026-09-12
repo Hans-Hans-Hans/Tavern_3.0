@@ -14,7 +14,7 @@ test('failed attachment send transfers to encrypted Outbox and survives composer
   await expect(composer(page).getByLabel('Remove private.txt')).toBeVisible();await composer(page).getByRole('button',{name:'Send message',exact:true}).click();
   await expect(composer(page)).toContainText('Saved unsent in Outbox');await expect(composer(page).getByRole('textbox')).toHaveValue('');
   await expect(panel(page)).toContainText('Uploaded; message not acknowledged');await expect(panel(page)).toContainText('Original caption');
-  await page.locator('.dm-section .dm-link').filter({hasText:'Guest'}).click();await expect(page.getByRole('textbox',{name:'Message Guest',exact:true})).toHaveValue('');
+  await page.getByRole('button',{name:'Direct messages',exact:true}).click();await page.locator('.dm-section .dm-link').filter({hasText:'Guest'}).click();await expect(page.getByRole('textbox',{name:'Message Guest',exact:true})).toHaveValue('');
   await page.evaluate(async()=>{(window as any).failDelivery=false;await (window as any).reopenOutbox();});
   await expect(panel(page)).toContainText('private.txt');await panel(page).getByRole('button',{name:'Retry delivery',exact:true}).click();
   await expect(panel(page)).toContainText('No pending messages');
@@ -29,7 +29,7 @@ test('a failed raw upload parks encrypted file bytes without sending or consumin
 });
 test('stale delivery responses do not clear a replacement composer draft',async({page})=>{
   await fixture(page);await page.evaluate(()=>{(window as any).deferDelivery=true;(window as any).failDelivery=false;});await attach(page);await composer(page).getByRole('textbox').fill('Old caption');await composer(page).getByRole('button',{name:'Send message',exact:true}).click();
-  await page.waitForFunction(()=>!!(window as any).releaseDelivery);await page.locator('.dm-section .dm-link').filter({hasText:'Guest'}).click();await page.getByRole('textbox',{name:'Message Guest',exact:true}).fill('New room draft');
+  await page.waitForFunction(()=>!!(window as any).releaseDelivery);await page.getByRole('button',{name:'Direct messages',exact:true}).click();await page.locator('.dm-section .dm-link').filter({hasText:'Guest'}).click();await page.getByRole('textbox',{name:'Message Guest',exact:true}).fill('New room draft');
   await page.evaluate(()=>(window as any).releaseDelivery());await expect(panel(page)).toContainText('No pending messages');await expect(page.getByRole('textbox',{name:'Message Guest',exact:true})).toHaveValue('New room draft');
 });
 test('replacing an account closes the old outbox edit confirmation and hides retired owner data',async({page})=>{

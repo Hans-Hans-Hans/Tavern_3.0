@@ -19,8 +19,9 @@ export function MobileServerNavigation({ servers, active, onSelectServer, server
   }
   return <><button type='button' className='mobile-server-navigation-trigger secondary-button' aria-label='Servers and folders' aria-haspopup='dialog' onClick={() => { const next = serverNavigationOwner(); if (next.current()) setScope(next); }}><Building2 size={18} aria-hidden='true'/><span>Servers and folders</span></button>
     <Dialog open={!!scope?.current()} onOpenChange={open => { if (!open) setScope(null); }}><DialogContent className='tavern-dialog mobile-server-navigation-dialog'><DialogHeader><DialogTitle>Servers and folders</DialogTitle><DialogDescription>Choose a server. Use the Move buttons to organize your servers without dragging.</DialogDescription></DialogHeader>
-      <button type='button' className='secondary-button mobile-all-conversations' aria-current={active === 'all' ? 'page' : undefined} onClick={() => select('all')}>All conversations</button>
+      <button type='button' className='secondary-button mobile-all-conversations' aria-current={active === 'all' ? 'page' : undefined} onClick={() => select('all')}>All channels</button>
+      <button type='button' className='secondary-button mobile-all-conversations' aria-current={active === 'dms' ? 'page' : undefined} onClick={() => select('dms')}>Direct messages</button>
       {scope?.current() && <ServerNavigation readState={readState} servers={servers} active={active} onSelectServer={select} renderServer={renderServer}/>}
-      {!servers.length && <p>You have not joined a server yet. Your direct messages are in All conversations.</p>}
+      {!servers.length && <p>You have not joined a server yet. Choose Direct messages to open your private conversations.</p>}
     </DialogContent></Dialog></>;
 }

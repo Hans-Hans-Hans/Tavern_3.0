@@ -11,8 +11,8 @@ async function fixture(page: Page, forum = false) {
 }
 const source = (page: Page) => page.getByRole('textbox', { name: 'Message Source', exact: true });
 const dm = (page: Page) => page.getByRole('textbox', { name: 'Message Guest', exact: true });
-const selectDm = (page: Page) => page.locator('.dm-section .dm-link').filter({ hasText: 'Guest' }).click();
-const selectSource = (page: Page) => page.locator('.channel-nav-row button').filter({ hasText: 'Source' }).click();
+const selectDm = async (page: Page) => { await page.getByRole('button',{name:'Direct messages',exact:true}).click(); await page.locator('.dm-section .dm-link').filter({ hasText: 'Guest' }).click(); };
+const selectSource = async (page: Page) => { await page.getByRole('button',{name:'All channels',exact:true}).click(); await page.locator('.channel-nav-row button').filter({ hasText: 'Source' }).click(); };
 const sheet = (page: Page) => page.locator('.thread-sheet');
 
 test('channel, DM and duplicate favorite indicators update immediately and drafts survive navigation', async ({ page }) => {
@@ -99,4 +99,17 @@ test('forum cards keep an unsent reply visible after closing its actual thread c
   await expect(reply).toHaveValue('Forum reply draft');
   await reply.fill(''); await page.keyboard.press('Escape');
   await expect(page.locator('.forum-post').getByLabel('Draft reply to Draft forum topic', { exact: true })).toHaveCount(0);
+});
+
+test('DMs have a dedicated rail section and do not share channel favorites', async ({page}) => {
+  await fixture(page);
+  await expect(page.locator('.dm-section')).toHaveCount(0);
+  await selectDm(page);
+  await expect(page.getByRole('button',{name:'Direct messages',exact:true})).toHaveAttribute('aria-current','page');
+  await expect(page.locator('.workspace-select strong')).toHaveText('Direct messages');
+  await expect(page.locator('.channel-nav-row')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Create a Channel',exact:true})).toHaveCount(0);
+  await expect(page).toHaveURL(/#room=/);
+  await selectSource(page);
+  await expect(page.locator('.dm-section')).toHaveCount(0);
 });

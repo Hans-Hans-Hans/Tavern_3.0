@@ -30,7 +30,7 @@ const MobileServerNavigation=()=>null,toast={error:error=>{throw error;}},naviga
 const SidebarHeader=({children,...props})=><header {...props}>{children}</header>;
 export function WorkspaceMenu(){
  const[selectedServer,setSelected]=useState('all'),[modal,setModal]=useState('');
- const prefs={muted:[],focus:false},data={workspace:{name:'Tavern'},conversations:[],servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
+ const directSection=selectedServer==='dms';const prefs={muted:[],focus:false},data={workspace:{name:'Tavern'},conversations:[],servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
  const readAction={run:()=>{}},setCreationCategory=()=>{},setCategoryRequest=()=>{},setReportTarget=()=>{},setConfirmAction=()=>{},loadBootstrap=async()=>{},openServerSettings=id=>{chooseServer(id);setModal('serverSettings');};
  ${serverActions}
  return <><style>{'[data-slot="dropdown-menu-content"][data-state="closed"]{animation-duration:1000ms!important}'}</style><button aria-label={f.server.name} onClick={()=>chooseServer(f.server.id)}>{f.server.name}</button>${header}{modal&&<div role='dialog'>{modal}</div>}</>;
@@ -60,7 +60,7 @@ test('the live helper waits for the closing layer and opens the actual v12 creat
     return f.state.maySendStateEvent('io.tavern.server.layout', f.actor);
   })).toBe(true);
   await page.locator('.workspace-select').click();
-  await page.getByRole('menuitem', { name: 'All conversations', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'All channels', exact: true }).click();
   await expect(page.locator('.workspace-menu')).toHaveAttribute('data-state', 'closed');
   await openSystemMessageSettings(page, 'CI system notices test server');
   await expect(page.getByRole('dialog')).toHaveText('serverSettings');
