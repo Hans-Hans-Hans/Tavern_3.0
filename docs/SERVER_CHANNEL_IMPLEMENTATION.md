@@ -163,7 +163,13 @@ conference connection/leave, then stopped at the Games drag/category stage.
 At `de12e7d`, all 452 browser cases and three more consecutive native direct
 calls passed. Native acceptance again stopped at the Games drag/category stage;
 the delayed-layout-sync regression above subsequently failed before its fix and
-passed afterward. The complete native workflow with these fixes remains required.
+passed afterward. At `da853b0`, all 454 browser cases and three more native direct
+calls passed. Games reached the saved-order check, where the probe's synthetic
+pointer could become stale during auto-scroll. A mounted reproduction saved the
+row after its target despite intending before. The probe now repositions and
+drops in one browser task; that regression and all fifteen navigation cases pass.
+Production drop behavior and the native persisted-order assertions are unchanged.
+The complete native workflow with these fixes remains required.
 
 The selected conversation now reads at most three earlier SDK history pages
 when its initial sync contains only control events. It keeps undecryptable rows,

@@ -4,6 +4,7 @@ import { expect } from '@playwright/test';
 import { isCiRoomId, assertCiRoomCreation } from './ci-room-id.mjs';
 import { matrixSmokeRequest, matrixSmokeCreateFixture, matrixSmokeInvite, matrixSmokeJoin } from './matrix-smoke-request.mjs';
 import { conferenceSmoke } from './smoke-conference.mjs';
+import { navigationDrop } from './smoke-navigation-drop.mjs';
 const ORIGIN = 'https://chat.example.test', ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
   const MARKER = 'io.tavern.ci_games_workflow';
 export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready }) {
@@ -65,7 +66,7 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     await target.dispatchEvent('dragover', { dataTransfer: transfer, clientY });
     await expect(target).toHaveAttribute('data-drop', before ? 'before' : 'inside');
     dragStage = 'drop';
-    await target.dispatchEvent('drop', { dataTransfer: transfer, clientY });
+    await navigationDrop(target, transfer, { before });
     await source.dispatchEvent('dragend', { dataTransfer: transfer }); await transfer.dispose();
     dragStage = 'saved-order';
   }
@@ -111,9 +112,10 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     const [tarkov, minecraft, voice] = ids;
     await bob.reload(); await ready(bob); await bob.getByRole('button', { name, exact: true }).click();
     stage = 'drag-category';
-    for (const id of ids) { await drag(id, games); await expect.poll(async () => (await layout()).channels.find(value => value.id === id)?.category).toBe(games); }
+    for (const [index, id] of ids.entries()) { stage = 'drag-category-' + index; await drag(id, games); await expect.poll(async () => (await layout()).channels.find(value => value.id === id)?.category).toBe(games); }
+    stage = 'reorder-voice';
     await drag(voice, minecraft, true);
-    for (const page of owners.keys()) await ordering(page, games, [tarkov, voice, minecraft]);
+    for (const [page, owner] of owners) { stage = owner === aliceSession ? 'alice-saved-order' : 'bob-saved-order'; await ordering(page, games, [tarkov, voice, minecraft]); }
     stage = 'private-voice-editor';
     await sidebar(alice).getByRole('button', { name: 'Gaming Voice', exact: true }).click({ button: 'right' });
     stage = 'open-channel-settings';
@@ -148,14 +150,15 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
   } catch {
     const ui = await Promise.all([...owners.keys()].map(async page => {
       let timer;
-      try { return await Promise.race([page.evaluate(() => {
+      try { return await Promise.race([page.evaluate(({ ownedRooms, ownedCategories }) => {
         const state = (element) => !element ? 'missing' : element.closest('[aria-hidden="true"]') ? 'aria-hidden' : element.closest('[inert]') ? 'inert' : !element.getClientRects().length ? 'hidden' : element.disabled ? 'disabled' : 'visible';
         const tabs = document.querySelector('[aria-label="Channel settings sections"]');
         return { channel: state(document.querySelector('.channel-navigation button[aria-label="Gaming Voice"]')),
           settings: state(tabs), permissions: state([...tabs?.querySelectorAll('[role="tab"]') || []].find(tab => tab.textContent === 'Permissions')),
           sheet: state(document.querySelector('.detail-sheet')), dialogs: Math.min(10, document.querySelectorAll('[role="dialog"]').length),
-          audience: state(document.querySelector('[aria-label="Private channel access"]')) };
-      }), new Promise(resolve => { timer = setTimeout(() => resolve({ state: 'unavailable' }), 2500); })]); }
+          audience: state(document.querySelector('[aria-label="Private channel access"]')),
+          order: [...document.querySelectorAll('.channel-navigation .channel-category')].slice(0, 10).map(group => ({ category: ownedCategories.indexOf(group.querySelector('[data-category-id]')?.getAttribute('data-category-id')), channels: [...group.querySelectorAll('[data-channel-id]')].slice(0, 10).map(row => ownedRooms.indexOf(row.getAttribute('data-channel-id'))) })) };
+      }, { ownedRooms: [...rooms.keys()], ownedCategories: ['', games, other] }), new Promise(resolve => { timer = setTimeout(() => resolve({ state: 'unavailable' }), 2500); })]); }
       catch { return { state: 'unavailable' }; } finally { clearTimeout(timer); }
     }));
     throw new Error('Native Games workflow failed at bounded stage: ' + stage + '; drag: ' + dragStage + '. UI observations: ' + JSON.stringify(ui));

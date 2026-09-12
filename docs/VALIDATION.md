@@ -28,6 +28,15 @@ revision. Keeping further edits pending until native sync closes that gap; all
 fourteen navigation browser cases pass with the fix. The Games probe now waits
 for a genuinely draggable source before dispatching its synthetic drag events.
 
+At `da853b0`, all 454 browser cases, private-audience enforcement, native
+deletion, encrypted bot delivery, conference leave and three consecutive native
+direct audio/cleanup probes passed. Games stopped while checking saved order.
+Its synthetic pointer retained an earlier coordinate while auto-scroll moved
+the target row. A mounted regression reproduced the unintended after-position;
+the shared probe helper now recalculates its target and drops in one browser
+task. That regression and all fifteen navigation cases pass. This corrects the
+test input; production drop behavior and persisted-order assertions remain intact.
+
 The actual TLS SMTP/native history recovery gate passed at `f958030` and again
 at `f6190e8` and `0dd7afe`: enrollment, automatic new-device email prompt,
 wrong-code rejection, correct-code restoration of an encrypted message, and

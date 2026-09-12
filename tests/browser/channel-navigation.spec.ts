@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { navigationDrop } from '../../scripts/smoke-navigation-drop.mjs';
 
 async function setup(page: Page) {
   page.on('pageerror', error => console.error(error.message));
@@ -10,6 +11,25 @@ async function setup(page: Page) {
 }
 const channel = (page: Page, id: string) => page.locator(`[data-channel-id="!${id}:local"] .channel-navigation-row`);
 const category = (page: Page, id: string) => page.locator(`[data-category-id="${id}"]`);
+
+test('native acceptance drops before the intended row even after sidebar auto-scroll moves that row', async ({ page }) => {
+  await setup(page);
+  const target = channel(page, 'rules'), source = channel(page, 'voice');
+  await page.evaluate(() => {
+    const sidebar = document.querySelector<HTMLElement>('.channel-sidebar')!, row = document.querySelector<HTMLElement>('[data-channel-id="!rules:local"] .channel-navigation-row')!;
+    sidebar.style.height = (row.getBoundingClientRect().bottom - sidebar.getBoundingClientRect().top + 2) + 'px';
+    sidebar.scrollTop = 0;
+  });
+  const transfer = await page.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent('dragstart', { dataTransfer: transfer });
+  const initial = (await target.boundingBox())!, clientY = initial.y + 2;
+  await target.dispatchEvent('dragover', { dataTransfer: transfer, clientY });
+  await expect(target).toHaveAttribute('data-drop', 'before');
+  await expect.poll(async () => initial.y - (await target.boundingBox())!.y).toBeGreaterThan(initial.height);
+  await navigationDrop(target, transfer, { before: true });
+  await source.dispatchEvent('dragend', { dataTransfer: transfer }); await transfer.dispose();
+  await expect.poll(() => page.evaluate(() => (window as any).layout.channels.filter((row: any) => row.category === 'chat').map((row: any) => row.id))).toEqual(['!general:local', '!voice:local', '!rules:local']);
+});
 
 test('125 channels keep exact order through edits and reload without committing the sidebar on unrelated sync updates', async ({ page }) => {
   await page.addInitScript(() => { (window as any).largeSidebarFixture = true; });
