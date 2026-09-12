@@ -104,6 +104,13 @@ coverage also exercises the channel notification action and three owner settings
 open/save/reopen cycles with real SDK room models and controlled native HTTP. There is no separate
 lint script in package.json; the production build includes TypeScript checking.
 
+The mounted sidebar also passes a 125-channel, 26-category case: an exact-position
+move persists after reload, and thirty unrelated sync updates produce zero React
+commits after the initial observation. Its fixture controls the SDK boundary;
+this establishes local rendering and ordering behavior, not network latency or
+hundreds of live voice participants. All thirteen channel-navigation browser
+regressions pass, including mobile Move controls and stale-permission rejection.
+
 The actual isolated Synapse/PostgreSQL/LiveKit gates have passed private audience
 admission, invited-join rejection, durable membership removal/regrant and native
 SFU authorization. Native ordinary-owner channel/server deletion also passed,

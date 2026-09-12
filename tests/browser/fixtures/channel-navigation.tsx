@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Profiler, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ChannelNavigation } from '../../../app/channel-navigation';
 import '../../../app/globals.css';
@@ -10,6 +10,14 @@ export function mountFixture() {
   const w = window as any;
   const start = { version: 1, categories: [{ id: 'chat', name: 'Chat', icon: '' }, { id: 'games', name: 'Games', icon: '' }], channels: [{ id: '!root:local', category: '' }, { id: '!general:local', category: 'chat' }, { id: '!rules:local', category: 'chat' }, { id: '!voice:local', category: 'games' }, { id: '!forum:local', category: 'games' }] };
   const names: Record<string, string> = { '!root:local': 'Lobby', '!general:local': 'General', '!rules:local': 'Rules', '!voice:local': 'Lounge', '!forum:local': 'Topics' };
+  if (w.largeSidebarFixture === true) {
+    for (let index = 0; index < 24; index++) start.categories.push({ id: 'scale-' + index, name: 'Category ' + index, icon: '' });
+    for (let index = 0; index < 120; index++) {
+      const id = '!scale-' + index + ':local'; names[id] = 'Channel ' + index;
+      start.channels.push({ id, category: 'scale-' + Math.floor(index / 5) });
+    }
+  }
+  w.navigationCommits = 0;
   w.layout = JSON.parse(localStorage.getItem('fixture-layout') || 'null') || start;
   w.revision = '$layout:0'; w.actor = '@owner:local'; w.account = 'A:1'; w.device = 'DEVICE'; w.allowed = true; w.saves = []; w.selected = []; w.callbacks = []; w.listeners = new Set(); w.prefs = {}; w.left = new Set(); w.rooms = new Map();
   w.emit = () => { for (const listener of [...w.listeners]) (listener as () => void)(); };
@@ -49,5 +57,5 @@ export function mountFixture() {
     const channels = Object.keys(names).map(id => ({ id, name: names[id], unread: id === '!general:local' ? 3 : id === '!rules:local' ? 100 : 0, mentions: id === '!general:local' ? 2 : 0 }));
     return <div className='channel-sidebar' style={{ width: 340, height: 450, overflowY: 'auto', padding: 10 }}><ChannelNavigation serverId={w.serverId || '!server:local'} channels={channels} active='!general:local' createCategoryRequest={w.categoryRequest || 0} muted={['!rules:local']} focus={!!w.focusMode} onSelect={id => w.selected.push(id)} onCreateChannel={value => w.callbacks.push(['create', value])} onEditChannel={id => w.callbacks.push(['edit', id])} onInviteChannel={id => w.callbacks.push(['invite', id])} renderParticipants={id => <div data-testid='voice-participants'>Live roster for {id}</div>}/></div>;
   }
-  createRoot(document.getElementById('root')!).render(<App/>);
+  createRoot(document.getElementById('root')!).render(<Profiler id='navigation' onRender={() => { w.navigationCommits++; }}><App/></Profiler>);
 }

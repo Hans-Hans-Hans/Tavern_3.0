@@ -10,6 +10,34 @@ async function setup(page: Page) {
 }
 const channel = (page: Page, id: string) => page.locator(`[data-channel-id="!${id}:local"] .channel-navigation-row`);
 const category = (page: Page, id: string) => page.locator(`[data-category-id="${id}"]`);
+
+test('125 channels keep exact order through edits and reload without committing the sidebar on unrelated sync updates', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).largeSidebarFixture = true; });
+  await setup(page);
+  await expect(page.locator('[data-channel-id]')).toHaveCount(125);
+  await expect(page.locator('[data-category-id]')).toHaveCount(27);
+  expect(await page.evaluate(() => (window as any).navigationCommits)).toBeGreaterThan(0);
+  await page.evaluate(async () => {
+    const w = window as any;
+    w.emit(); await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    w.navigationCommits = 0;
+    for (let index = 0; index < 30; index++) { w.emit(); await new Promise(resolve => setTimeout(resolve, 0)); }
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  expect(await page.evaluate(() => (window as any).navigationCommits)).toBe(0);
+  await moveDialog(page, 'Channel 119');
+  await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('chat');
+  await page.getByRole('combobox', { name: 'Position', exact: true }).selectOption('!rules:local');
+  await page.getByRole('button', { name: 'Save position' }).press('Enter');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  for (const reload of [false, true]) {
+    if (reload) await page.reload();
+    const group = page.locator('.channel-category').filter({ has: category(page, 'chat') });
+    await expect.poll(() => group.locator('[data-channel-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-channel-id')))).toEqual(['!general:local', '!scale-119:local', '!rules:local']);
+    await expect(page.locator('[data-channel-id]')).toHaveCount(125);
+  }
+});
+
 async function moveDialog(page: Page, name: string) { await page.getByRole('button', { name: 'Channel actions for ' + name }).click(); await page.getByRole('menuitem', { name: 'Move channel', exact: true }).click(); }
 async function drag(page: Page, from: ReturnType<typeof channel>, to: ReturnType<typeof channel>, edge: 'before' | 'after' = 'after') {
   const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
