@@ -83,6 +83,19 @@ class CiCallConfigTests(unittest.TestCase):
             self.prepare()
         self.assertEqual(target.read_bytes(), before)
 
+    def test_direct_call_derivation_uses_owned_bridge_without_rewriting_production_turn_or_synapse(self):
+        self.prepare()
+        originals = {name: (self.root / name).read_bytes() for name in ('calls/turnserver.conf', 'synapse/homeserver.yaml')}
+        native = yaml.safe_load((self.root / 'synapse/homeserver.ci.yaml').read_bytes())
+        source = yaml.safe_load(originals['synapse/homeserver.yaml'])
+        self.assertEqual(native['turn_uris'], ['turn:172.30.239.3:3478?transport=udp', 'turn:172.30.239.3:3478?transport=tcp'])
+        self.assertTrue(native['turn_shared_secret'] == source['turn_shared_secret'])
+        turn = (self.root / 'calls/turnserver.ci.conf').read_text().splitlines()
+        self.assertEqual([line for line in turn if line.startswith('external-ip=')], ['external-ip=172.30.239.3'])
+        self.assertTrue('static-auth-secret=' + source['turn_shared_secret'] in turn)
+        self.prepare()
+        self.assertTrue(all((self.root / name).read_bytes() == value for name, value in originals.items()))
+
     @unittest.skipIf(__import__('os').name == 'nt', 'Windows symlink privilege differs; Linux CI runs this guard')
     def test_rejects_symlink_override_before_provisioning(self):
         calls = self.root / 'calls'; calls.mkdir()

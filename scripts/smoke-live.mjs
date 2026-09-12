@@ -16,6 +16,7 @@ import { roleMentionsSmoke } from './smoke-role-mentions.mjs';
 import { callAudioSmoke } from './smoke-call-audio.mjs';
 import { rtcAuthSmoke } from './smoke-rtc-auth.mjs';
 import { conferenceSmoke } from './smoke-conference.mjs';
+import { directAudioSmoke } from './smoke-direct-audio.mjs';
 import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
@@ -145,6 +146,7 @@ try {
   try {
     for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
     await conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
+    await directAudioSmoke({alice,bob,aliceSession,bobSession,roomId,origin,api,ready});
   } finally {
     for (const participant of [alice, bob]) await participant.context().clearPermissions();
     conferenceProbe = false;

@@ -1,0 +1,29 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {proveDirectEndpoint,directAudioSmoke} from '../scripts/smoke-direct-audio.mjs';
+
+function fixture(){
+  const id='a'.repeat(64),networkId='b'.repeat(64);
+  return {network:{Name:'tavern-ci_media',Id:networkId,Driver:'bridge',Scope:'local',Internal:true,EnableIPv6:false,
+    Labels:{'com.docker.compose.project':'tavern-ci','com.docker.compose.network':'media'},IPAM:{Config:[{Subnet:'172.30.239.0/24'}]},
+    Containers:{[id]:{Name:'tavern-ci-coturn-1',IPv4Address:'172.30.239.3/24'}}},
+    container:{id,name:'/tavern-ci-coturn-1',image:'coturn/coturn:4.17.2-r0',running:true,ports:null,
+      labels:{'com.docker.compose.project':'tavern-ci','com.docker.compose.service':'coturn'},
+      command:['exec /usr/bin/turnserver -c /config/turnserver.ci.conf --relay-ip=172.30.239.3 --allowed-peer-ip=172.30.239.3'],
+      networks:{'tavern-ci_media':{NetworkID:networkId,IPAddress:'172.30.239.3',IPPrefixLen:24,GlobalIPv6Address:''}}}};
+}
+
+test('direct audio requires its exact unpublished isolated TURN endpoint',()=>{
+  const f=fixture();assert.doesNotThrow(()=>proveDirectEndpoint(f.network,f.container));
+  for(const mutate of [f=>f.network.Internal=false,f=>f.container.ports={'3478/udp':[{}]},f=>f.container.command=['--dev'],
+    f=>f.container.networks['tavern-ci_media'].IPAddress='1.1.1.1',f=>f.container.labels['com.docker.compose.project']='production',
+    f=>f.container.networks.other={},f=>f.network.Id='invalid']){
+    const changed=fixture();mutate(changed);assert.throws(()=>proveDirectEndpoint(changed.network,changed.container),/scope could not be verified/);
+  }
+});
+
+test('direct audio refuses unscoped invocation before touching browsers or Docker',async()=>{
+  let touched=false;
+  await assert.rejects(directAudioSmoke({origin:'https://outside.invalid'}, {docker:async()=>{touched=true;}}),/scope could not be verified/);
+  assert.equal(touched,false);
+});

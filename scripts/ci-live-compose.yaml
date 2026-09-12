@@ -24,6 +24,14 @@ services:
         ipv4_address: 172.30.239.2
   coturn:
     ports: !reset []
+    # Exact owned bridge endpoint, with the production same-relay ACL/binding.
+    command: ["exec /usr/bin/turnserver -c /config/turnserver.ci.conf --relay-ip=172.30.239.3 --allowed-peer-ip=172.30.239.3"]
+    networks:
+      media:
+        ipv4_address: 172.30.239.3
+  synapse:
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.ci.yaml
   rtc-auth:
     environment:
       # Trust this run's certificate; retain normal hostname/TLS verification.

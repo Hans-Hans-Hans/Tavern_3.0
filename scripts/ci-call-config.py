@@ -30,7 +30,9 @@ def require_ci(root, environment):
             or environment.get('TAVERN_STATE_ROOT', '/state') != '/state'
             or set(environment.get('COMPOSE_PROFILES', '').split(',')) != {'operations', 'calls', 'integrations'}):
         raise RuntimeError('Call config overrides require the exact isolated GitHub Actions stack.')
-    for relative in ('calls', 'calls/livekit.yaml', 'calls/livekit.ci.yaml', 'calls/livekit.ci.yaml.pending', 'synapse', 'synapse/homeserver.yaml'):
+    for relative in ('calls', 'calls/livekit.yaml', 'calls/livekit.ci.yaml', 'calls/livekit.ci.yaml.pending',
+                     'calls/turnserver.conf', 'calls/turnserver.ci.conf', 'calls/turnserver.ci.conf.pending',
+                     'synapse', 'synapse/homeserver.yaml', 'synapse/homeserver.ci.yaml', 'synapse/homeserver.ci.yaml.pending'):
         if (root / relative).is_symlink():
             raise RuntimeError('The isolated call configuration must not follow a symbolic link.')
 
@@ -76,6 +78,31 @@ def prepare(root, environment, provisioner):
     pending.replace(target)
     if source.read_bytes() != original:
         raise RuntimeError('The original generated configuration changed during CI derivation.')
+    # Native direct calls use real short-lived credentials from this Synapse.
+    # Separate runtime files keep the original provisioned configuration intact.
+    synapse_source, turn_source = root / 'synapse/homeserver.yaml', root / 'calls/turnserver.conf'
+    synapse_bytes, turn_bytes = synapse_source.read_bytes(), turn_source.read_bytes()
+    turn_lines = turn_bytes.decode('utf-8').splitlines()
+    if (turn_lines.count('external-ip=' + EXPECTED['PUBLIC_IP']) != 1
+            or sum(line.startswith('external-ip=') for line in turn_lines) != 1
+            or 'static-auth-secret=' + homeserver.get('turn_shared_secret', '') not in turn_lines
+            or homeserver.get('turn_uris') != ['turn:turn.example.test:3478?transport=udp', 'turn:turn.example.test:3478?transport=tcp']):
+        raise RuntimeError('The generated native TURN configuration does not match the CI fixture.')
+    native = copy.deepcopy(homeserver)
+    native['turn_uris'] = ['turn:172.30.239.3:3478?transport=udp', 'turn:172.30.239.3:3478?transport=tcp']
+    for original_path, target, payload in (
+        (synapse_source, root / 'synapse/homeserver.ci.yaml', json.dumps(native, indent=2) + '\n'),
+        (turn_source, root / 'calls/turnserver.ci.conf', '\n'.join('external-ip=172.30.239.3' if line.startswith('external-ip=') else line for line in turn_lines) + '\n'),
+    ):
+        pending = target.with_suffix(target.suffix + '.pending')
+        pending.write_text(payload, encoding='utf-8')
+        original_stat = original_path.stat()
+        os.chmod(pending, original_stat.st_mode & 0o777)
+        if hasattr(os, 'chown'):
+            os.chown(pending, original_stat.st_uid, original_stat.st_gid)
+        pending.replace(target)
+    if synapse_source.read_bytes() != synapse_bytes or turn_source.read_bytes() != turn_bytes:
+        raise RuntimeError('The original native TURN configuration changed during CI derivation.')
 
 
 def main():
