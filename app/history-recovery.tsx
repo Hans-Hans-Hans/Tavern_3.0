@@ -2,6 +2,7 @@ import { EmailHistoryRecovery } from './email-history-recovery';
 import { useEffect, useState } from 'react';
 import type { MatrixClient } from 'matrix-js-sdk';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
+import { isManagedAccount } from '@/lib/api';
 import { historyRecoverySnapshot, securityStatus, subscribeSecurity } from '@/lib/security';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SecurityCenter } from './security-center';
@@ -45,6 +46,9 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
   // history-backup key. Do not ask users to recover an already readable backup,
   // or flash a warning while the automatic local recovery is still running.
   const needsAttention = !emailConfigured && !!status && history.checked && !history.busy && !status.canRestoreBackup && dismissed !== reminderVersion;
+  const setupHelp = isManagedAccount()
+    ? status?.serverBackupVersion ? 'Recover any available history keys, then enable email recovery for future sign-ins.' : 'Enable email recovery once so new devices can unlock saved history with a code.'
+    : status?.serverBackupVersion ? 'Use your recovery key or verify this device if older messages are locked.' : 'Set up a recovery key once to protect history when you change devices.';
   const remindLater = () => {
     if (getMatrixClient() !== client || !reminderVersion) return;
     setDismissed(reminderVersion);
@@ -54,7 +58,7 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
     <EmailHistoryRecovery automatic onConfigured={setEmailConfigured} backupVersion={status?.serverBackupVersion} known={status?.canRestoreBackup===true} ready={!!status&&history.checked&&!history.busy}/>
     {needsAttention && <aside className='history-recovery-banner' aria-label='Encrypted history recovery'>
       <div><strong>{history.local?.keys ? 'Keep history available on your other devices' : status?.serverBackupVersion ? 'Older messages may need recovery' : 'Keep a backup of your messages'}</strong>
-        <p>{error || history.error || (history.local?.keys ? `Recovered ${history.local.keys} saved message keys in this browser.` : status?.serverBackupVersion ? 'Use your recovery key or verify this device if older messages are locked.' : 'Set up a recovery key once to protect history when you change devices.')} You can continue messaging. Recovery is always available in Settings → Privacy.</p>
+        <p>{error || history.error || (history.local?.keys ? `Recovered ${history.local.keys} saved message keys in this browser.` : setupHelp)} You can continue messaging. Recovery is always available in Settings → Privacy.</p>
       </div><div className='history-recovery-actions'><button className='secondary-button' onClick={() => setOpen(true)}>History recovery</button><button className='text-button' onClick={remindLater}>Dismiss reminder</button></div>
     </aside>}
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className='tavern-dialog settings-dialog'><DialogHeader><DialogTitle>Recover and protect your messages</DialogTitle><DialogDescription>Message history is encrypted. Known browsers use saved keys. New devices can unlock a password-protected history package with an email code after recovery is enabled.</DialogDescription></DialogHeader>

@@ -211,7 +211,7 @@ instead replayed older incremental layouts. Synapse 1.160's sync response cache
 keys omit the SDK's initial-sync cachebuster and retain completed responses for
 two minutes by default. The initializer now disables only that completed-response
 cache. The migration's fresh, existing-state and idempotence tests pass; the full
-native reload acceptance must still confirm this correction. See the pinned
+native reload acceptance confirmed this correction at `76cc571`. See the pinned
 [request key](https://github.com/element-hq/synapse/blob/v1.160.0/synapse/rest/client/sync.py)
 and [response cache](https://github.com/element-hq/synapse/blob/v1.160.0/synapse/handlers/sync.py).
 
@@ -220,6 +220,15 @@ device instead of forcing another key download on every status notification.
 Fresh setup actions still check server state before changing recovery settings.
 Twenty-one focused security/email model cases and fifteen recovery browser
 cases pass; the production build passes.
+
+The native `76cc571` run passed the complete Games acceptance, three consecutive
+direct audio/cleanup probes, the conference controls, encrypted messaging/files,
+avatar refresh, email-code recovery and known-browser key reuse. DM acceptance,
+refresh persistence and encrypted replies also passed. The overall run later
+failed while creating a separate decline fixture under the native rate limit;
+its bounded cooldown handling has been corrected. Target-host calling remains
+under investigation separately. Use [V3 testing](V3_TESTING.md) for the deployment
+and two-device test sequence.
 
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be

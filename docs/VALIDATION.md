@@ -4,6 +4,32 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## September 12 recovery and channel-management checkpoint
 
+At `76cc571`, [native CI run 34694752390](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34694752390)
+passed the complete Games creation/category/reorder/private-voice workflow,
+including self-deafen, two participants, moving during the call, clean leave and
+both browser reloads. Disabling completed Synapse sync-response caching corrected
+the stale reload. Three consecutive direct calls passed real bidirectional
+synthetic audio, relay measurements and cleanup. Conference checks passed too.
+
+The same run passed same-device message decryption, encrypted edits/threads,
+byte-for-byte encrypted attachment delivery and avatar loading after reload.
+Native email recovery verified mail through TLS SMTP, rejected a wrong code,
+decrypted a message on a fresh browser and retained the key on subsequent login.
+DM acceptance, recipient `m.direct` persistence after reload and both users'
+encrypted replies passed. A later decline fixture stopped on a confirmed native
+room-creation rate limit; the overall run failed. The isolated fixture helper
+now permits that longer reported cooldown within a ninety-second bound, while
+ordinary request retries retain their thirty-second bound. All fifteen helper
+tests pass, including a regression that failed before this correction.
+
+On the target deployment, the user still reports both call types joining and
+disconnecting; the conference reports `SFU_ERROR` / `InternalError`. Public
+frontend verification matched the `76cc571` entry asset. On September 12 at
+approximately 13:05 UTC, both Google and Cloudflare DNS returned NXDOMAIN for
+the previously configured `turn.hans-homelab.com`. The actual running media
+IP/TURN-host read is pending. These findings do not establish a working deployed
+call, and the missing record is relevant only if that hostname is still configured.
+
 At `4122bbe`, all 455 browser cases and three more native direct audio/cleanup
 probes passed. Native Games diagnostics isolated the first category move, and
 the log reported a stale-layout rejection. The same error appeared in the prior

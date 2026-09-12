@@ -50,7 +50,8 @@ receiver test measures sound before deafen, silence during it, and sound afterwa
 without replacing the connection. The native Games voice acceptance also requires
 the shipped widget's receiver tracks and acknowledged dock controls to change.
 
-That native self-deafen/undeafen sequence passed at `46b6a04` with two users,
-followed by moving a channel during the same call and clean native leave. The
-overall workflow subsequently failed a sidebar layout check after reload; this
-voice result is not an overall acceptance pass or a deployed-host audio test.
+That native self-deafen/undeafen sequence passed at `76cc571` with two users,
+followed by moving a channel during the same call, clean native leave and both
+browser reloads retaining the saved layout. The complete Games workflow passed.
+A later unrelated room-creation fixture hit its rate limit, so the overall CI
+run failed. This voice result does not establish deployed-host audio delivery.

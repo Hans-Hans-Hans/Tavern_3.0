@@ -13,12 +13,13 @@ hit a gateway URL check. The gateway now accepts the stack's exact internal
 address, verifies the signed room/device scope, and returns the public signaling
 address. Public administrative RPCs remain blocked.
 
-For an existing local Git checkout on `V3`, rebuild the changed images and restart
-Synapse so it loads the initializer's OpenID listener configuration:
+From the actual deployed local Git checkout on `V3`, rebuild the changed images
+and recreate call services. Synapse must load the initializer's updated
+configuration, and coturn must receive the updated relay startup command:
 
 ```sh
 git pull --ff-only origin V3
-sudo docker compose --profile calls up -d --build --force-recreate init synapse rtc-auth tavern-api tavern-web
+sudo docker compose --profile calls up -d --build --force-recreate init synapse coturn livekit rtc-auth tavern-api tavern-web
 ```
 
 Keep the existing `.env`, Compose project, volumes and call credentials. The
@@ -26,6 +27,10 @@ initializer validates existing call configuration before adding a missing OpenID
 listener resource, and retains a before image. A Dockhand deployment should use
 the updated `compose.github.yaml`, `TAVERN_GIT_REF=V3`, and rebuild/recreate these
 same services. Reopen the call after deployment.
+
+Use [V3 testing](V3_TESTING.md) to check actual audio transfer, recovery and
+refresh behavior after updating. Successful authentication alone does not prove
+that a direct call's TURN media path works.
 
 Call failures now identify their stage: `CALL_OPENID_UNAVAILABLE` means the
 gateway could not complete its internal Synapse check;

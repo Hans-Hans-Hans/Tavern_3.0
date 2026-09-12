@@ -19,6 +19,16 @@ test('creation with invitation or arbitrary state side effects is rejected befor
     await assert.rejects(matrixSmokeCreateFixture(async () => assert.fail('Must not create'), { ...fixture(), ...extra }), /without invitation side effects/);
   }
 });
+test('isolated room creation honors the longer native room-creation cooldown but remains bounded', async () => {
+  const delays = [], success = { status: 200, data: { room_id: '!new:local' } };
+  let calls = 0;
+  assert.equal(await matrixSmokeCreateFixture(async () => ++calls === 1 ? limited(62500) : success,
+    fixture(), async delay => delays.push(delay)), success);
+  assert.equal(calls, 2); assert.deepEqual(delays, [62600]);
+  calls = 0; const tooLong = limited(90001);
+  assert.equal(await matrixSmokeCreateFixture(async () => { calls++; return tooLong; }, fixture(), async () => assert.fail('Unbounded wait')), tooLong);
+  assert.equal(calls, 1);
+});
 test('ambiguous room creation failures are not replayed', async () => {
   let calls = 0;
   await assert.rejects(matrixSmokeCreateFixture(async () => { calls++; throw new Error('Unknown outcome'); }, fixture()), /Unknown outcome/);

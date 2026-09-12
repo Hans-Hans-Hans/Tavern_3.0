@@ -34,8 +34,8 @@ remain available in Settings.
 ## On a new browser or device
 
 For an account with email history recovery enabled, sign in normally. After
-checking local keys, Tavern opens **Unlock your message history**. Request the
-email code and enter it to restore the available encrypted history. A browser
+checking local keys, Tavern opens **Unlock your message history** and sends an
+email code. Enter it to restore the available encrypted history. A browser
 that already holds the matching keys skips this prompt. Email setup uses the
 existing verified account email and administrator-configured SMTP service.
 
