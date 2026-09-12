@@ -40,13 +40,13 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
       {status?.configured&&<p role='status'>{status.passwordChanged?'Your password changed. Update the saved package from a device with your history keys.':'Your password-protected history key is saved.'}</p>}
       {!status?.emailReady&&<p>A verified account email and working server email delivery are required.</p>}
       {known&&<form className='dialog-form' onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');try{await enableEmailHistory(password);if(current()){setPassword('');const refreshed=await emailHistoryStatus();if(!current())return;setStatus(refreshed);setMessage('Email history recovery is enabled.');}}catch(e){if(current())setError((e as Error).message);}finally{if(current())setBusy(false);}}}>
-        <label>Account password<input type='password' autoComplete='current-password' value={password} onChange={e=>setPassword(e.target.value)} required={!hasHistoryLogin()}/></label>
+        <label>Password for email recovery<input type='password' autoComplete='current-password' value={password} onChange={e=>setPassword(e.target.value)} required={!hasHistoryLogin()}/></label>
         <button className='secondary-button' disabled={busy||!status?.emailReady}>{status?.configured?'Update email recovery':'Enable email recovery'}</button>
       </form>}
       {!known&&status?.configured&&<button className='secondary-button' disabled={busy||!status.emailReady} onClick={()=>void send()}>Unlock with email code</button>}
       {!known&&status&&!status.configured&&<form className='dialog-form' onSubmit={async e=>{e.preventDefault();if(!protect)return;setBusy(true);setError('');try{await protectCurrentHistory(password);const fresh=await emailHistoryStatus();if(current()){setStatus(fresh);setPassword('');setProtect(false);setMessage('Current and future message keys will be backed up for email recovery.');}}catch(e){if(current())setError((e as Error).message);}finally{if(current())setBusy(false);}}}>
         <p>Protect the message keys available on this browser and future messages. Older locked messages still need their original key. Existing backup versions and your encryption identity are preserved.</p>
-        <label>Account password<input type='password' autoComplete='current-password' required value={password} onChange={e=>setPassword(e.target.value)}/></label>
+        <label>Password for email recovery<input type='password' autoComplete='current-password' required value={password} onChange={e=>setPassword(e.target.value)}/></label>
         <label className='check-label'><input type='checkbox' checked={protect} onChange={e=>setProtect(e.target.checked)}/> I understand this protects available keys and cannot recover missing older keys.</label>
         <button className='secondary-button' disabled={busy||!protect||!status.emailReady}>Protect messages on this device</button>
       </form>}

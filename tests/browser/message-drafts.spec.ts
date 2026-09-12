@@ -113,3 +113,13 @@ test('DMs have a dedicated rail section and do not share channel favorites', asy
   await selectSource(page);
   await expect(page.locator('.dm-section')).toHaveCount(0);
 });
+
+test('empty DM section offers a private conversation instead of channel creation or an unusable composer',async({page})=>{
+ await fixture(page);await page.goto('/message-drafts-test?no-dms');
+ await page.getByRole('button',{name:'Direct messages',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Your direct messages',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Start a direct message',exact:true})).toBeVisible();
+ await expect(page.getByRole('textbox',{name:/^Message /})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Join conference',exact:true})).toHaveCount(0);
+ await page.reload();await expect(page.getByRole('heading',{name:'Your direct messages',exact:true})).toBeVisible();
+});

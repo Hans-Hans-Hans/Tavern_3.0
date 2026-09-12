@@ -26,7 +26,7 @@ export function mountFixture() {
   const original = w.matrixBoundary;
   w.sent = []; w.pendingSends = [];
   w.matrixBoundary = (name: string, args: any[]) => {
-    if (name === 'matrixApi' && args[0] === 'bootstrap') return original(name, args).then((value: any) => ({ ...value, members: [...value.members, {id:'@guest:local',name:'Guest',role:'member'}], memberships: [{conversation_id:id,user_id:actor},{conversation_id:id,user_id:'@guest:local'}], conversations: value.conversations.map((item: any) => item.id === id ? { ...item, kind: 'dm', name: 'Guest' } : item) }));
+    if (name === 'matrixApi' && args[0] === 'bootstrap') return original(name, args).then((value: any) => ({ ...value, members: [...value.members, {id:'@guest:local',name:'Guest',role:'member'}], memberships: [{conversation_id:id,user_id:actor},{conversation_id:id,user_id:'@guest:local'}], conversations: value.conversations.filter((item:any)=>!new URLSearchParams(location.search).has('no-dms')||item.id!==id).map((item: any) => item.id === id ? { ...item, kind: 'dm', name: 'Guest' } : item) }));
     if (name === 'matrixApi' && args[0] === 'send') {
       w.sent.push(structuredClone(args[1]));
       if (w.rejectSend) return Promise.reject(new Error('Fixture send was not acknowledged'));
