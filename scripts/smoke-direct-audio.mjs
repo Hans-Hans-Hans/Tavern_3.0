@@ -13,6 +13,17 @@ const execute=promisify(execFile);
 const dockerRead=async args=>(await execute('docker',args,{timeout:10000,maxBuffer:1024*1024,windowsHide:true})).stdout.trim();
 const requireProof=value=>{if(!value)throw new Error('The direct-audio CI scope could not be verified.');};
 
+export function directAudioDiagnostic(values){
+  const choose=(key,allowed)=>allowed.includes(values?.[key])?values[key]:'unavailable';
+  const count=key=>typeof values?.[key]==='string'&&/^(0|[1-9][0-9]{0,3})$/.test(values[key])?Number(values[key]):null;
+  const rate=key=>typeof values?.[key]==='string'&&/^(0|[1-9][0-9]{0,5})(\.[0-9])? kbps$/.test(values[key])?Number.parseFloat(values[key]):null;
+  return {connection:choose('Connection',['new','connecting','connected','disconnected','failed','closed']),
+    ice:choose('ICE transport',['new','checking','connected','completed','disconnected','failed','closed']),
+    gathering:choose('ICE gathering',['new','gathering','complete']),route:choose('Local route',['TURN relay','host','srflx','prflx']),
+    local:count('Local ICE candidates'),relay:count('Local relay candidates'),remote:count('Remote ICE candidates'),
+    down:rate('Download media rate'),up:rate('Upload media rate')};
+}
+
 export function proveDirectEndpoint(network,container){
   const media=container?.networks?.['tavern-ci_media'];
   const hash=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
@@ -101,7 +112,17 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
     stage='received-audio';requireProof((await Promise.all([...owners.keys()].map(page=>page.evaluate(receiveSyntheticAudio)))).every(Boolean));
     for(const page of owners.keys())await scope(page);
     success=true;
-  }catch{throw new Error('Native direct-audio acceptance failed at '+stage+'. Credentials, addresses and audio samples were withheld.');}
+  }catch{
+    const diagnostics=await Promise.all([...owners.keys()].map(async page=>{
+      let timer;
+      try{
+        const values=await Promise.race([page.evaluate(()=>Object.fromEntries([...document.querySelectorAll('.call-connection dl>div')].map(row=>[row.querySelector('dt')?.textContent,row.querySelector('dd')?.textContent]))),
+          new Promise(resolve=>{timer=setTimeout(()=>resolve(null),2500);})]);
+        return directAudioDiagnostic(values);
+      }catch{return directAudioDiagnostic(null);}finally{clearTimeout(timer);}
+    }));
+    throw new Error('Native direct-audio acceptance failed at '+stage+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Credentials, addresses and audio samples were withheld.');
+  }
   finally{
     for(const page of opened){
       try{
