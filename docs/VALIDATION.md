@@ -766,3 +766,12 @@ now distinguish a closed sheet from inaccessible controls. A separate local
 production menu/sheet/tab reproduction completed four open/edit/close cycles;
 it did not reproduce this full-workspace failure. Deployed audibility is still
 an independent acceptance check.
+
+At `13f1ef5`, native call 1 again transferred audio in both directions. Calls 2
+and 3 stopped before placing a call because the callee had a call panel after
+the preceding reload. The test previously dismissed both local panels before
+waiting for the recipient's native hangup; the pinned SDK sends that encrypted
+event asynchronously. Cleanup now requires the recipient's ended state before
+closing its panel, then verifies no panel reappears after either reload. Native
+validation is still required; this is a stronger cleanup check, not evidence of
+a new transport defect or a completed production deployment.

@@ -90,7 +90,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
     &&aliceSession.deviceId&&bobSession.deviceId&&alice!==bob&&alice.context()!==bob.context()&&typeof api==='function'&&typeof ready==='function');
   const owners=new Map([[alice,aliceSession],[bob,bobSession]]),changed=new Set(),opened=new Set();
   let stage='isolated-turn',success=false,cleanupFailed=false,failure;
-  let side='unavailable',scopeCheck='none',devices='unavailable',panels=null,frames=null;
+  let side='unavailable',scopeCheck='none',devices='unavailable',panels=null,frames=null,panelState='unavailable';
   const expected=page=>({[page===alice?BOB:ALICE]:[roomId]});
   const accountPath=page=>'/_matrix/client/v3/user/'+encodeURIComponent(owners.get(page).userId)+'/account_data/m.direct';
   async function session(page){
@@ -112,11 +112,13 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
       docker(['inspect','tavern-ci-coturn-1','--format','{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"command":{{json .Config.Cmd}},"labels":{{json .Config.Labels}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}},"networks":{{json .NetworkSettings.Networks}}}']),
     ]);proveDirectEndpoint(JSON.parse(network),JSON.parse(container));
     for(const page of owners.keys()){
-      side=page===alice?'caller':'callee';devices='unavailable';panels=null;frames=null;
+      side=page===alice?'caller':'callee';devices='unavailable';panels=null;frames=null;panelState='unavailable';
       stage='ordinary-device-scope';await scope(page);
       stage='synthetic-devices';const inspected=await page.evaluate(inspectSyntheticDevices);
       devices=['synthetic','missing','unlabeled','unexpected','unavailable'].includes(inspected)?inspected:'unavailable';requireProof(devices==='synthetic');
-      stage='existing-media';panels=Math.min(10,await page.locator('.call-panel').count());frames=Math.min(10,await page.locator('iframe[title="Tavern encrypted conference"]').count());requireProof(panels===0&&frames===0);
+      stage='existing-media';panels=Math.min(10,await page.locator('.call-panel').count());frames=Math.min(10,await page.locator('iframe[title="Tavern encrypted conference"]').count());
+      panelState=await page.evaluate(()=>{const panel=document.querySelector('.call-panel');if(!panel)return 'absent';const status=panel.querySelector('header small')?.textContent;return status==='Call ended'?'ended':status==='Incoming call'?'incoming':'active-or-unknown';});
+      requireProof(panels===0&&frames===0);
       stage='turn-credentials';const relay=await native(page,'/_matrix/client/v3/voip/turnServer');
       requireProof(relay.status===200&&JSON.stringify(relay.data.uris)===JSON.stringify(['turn:172.30.239.3:3478?transport=udp','turn:172.30.239.3:3478?transport=tcp']));
       stage='owned-dm-section';const previous=await native(page,accountPath(page));
@@ -158,12 +160,20 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         return {result:['relay','no-relay','timeout'].includes(result?.result)?result.result:'unavailable',codes:Array.isArray(result?.codes)?result.codes.filter(code=>Number.isInteger(code)&&code>=300&&code<=799).slice(0,8):[]};
       }catch{return {result:'unavailable',codes:[]};}
     })):[];
-    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded preflight: '+JSON.stringify({side,scopeCheck,devices,panels,frames})+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
+    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded preflight: '+JSON.stringify({side,scopeCheck,devices,panels,frames,panelState})+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
   }
   finally{
     for(const page of opened){
       try{
-        await session(page);const end=page.locator('.call-panel .call-end');
+        await session(page);
+        // MatrixCall.hangup is synchronous but sends its encrypted event in the
+        // background. Require the callee's native hangup before either reload,
+        // rather than racing that event with two local UI dismissals.
+        if(page===bob)await page.waitForFunction(()=>{
+          const panel=document.querySelector('.call-panel');
+          return !panel||panel.querySelector('header small')?.textContent==='Call ended';
+        },undefined,{timeout:15000});
+        const end=page.locator('.call-panel .call-end');
         if(await end.isVisible())await end.click({timeout:5000});
         await expect(page.locator('.call-panel')).toHaveCount(0,{timeout:10000});
       }catch{cleanupFailed=true;}
@@ -174,6 +184,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         requireProof(current.status===200&&JSON.stringify(current.data)===JSON.stringify(expected(page)));
         requireProof((await native(page,accountPath(page),{},'PUT')).status===200);
         await page.reload();await ready(page);
+        await expect(page.locator('.call-panel')).toHaveCount(0,{timeout:10000});
       }catch{cleanupFailed=true;}
     }
     if(cleanupFailed&&success)throw new Error('Native direct audio transferred, but call and DM-fixture cleanup was not confirmed.');
