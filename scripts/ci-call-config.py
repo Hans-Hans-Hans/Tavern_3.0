@@ -90,6 +90,10 @@ def prepare(root, environment, provisioner):
         raise RuntimeError('The generated native TURN configuration does not match the CI fixture.')
     native = copy.deepcopy(homeserver)
     native['turn_uris'] = ['turn:172.30.239.3:3478?transport=udp', 'turn:172.30.239.3:3478?transport=tcp']
+    # The bounded policy matrix repeatedly invites the same disposable account.
+    # Retain the pinned refill rate and all other limits; this CI-only burst is
+    # not written to the original generated homeserver configuration.
+    native.setdefault('rc_invites', {}).setdefault('per_user', {}).update(per_second=0.003, burst_count=50)
     for original_path, target, payload in (
         (synapse_source, root / 'synapse/homeserver.ci.yaml', json.dumps(native, indent=2) + '\n'),
         (turn_source, root / 'calls/turnserver.ci.conf', '\n'.join('external-ip=172.30.239.3' if line.startswith('external-ip=') else line for line in turn_lines) + '\n'),

@@ -89,6 +89,8 @@ class CiCallConfigTests(unittest.TestCase):
         native = yaml.safe_load((self.root / 'synapse/homeserver.ci.yaml').read_bytes())
         source = yaml.safe_load(originals['synapse/homeserver.yaml'])
         self.assertEqual(native['turn_uris'], ['turn:172.30.239.3:3478?transport=udp', 'turn:172.30.239.3:3478?transport=tcp'])
+        self.assertEqual(native['rc_invites']['per_user'], {'per_second': 0.003, 'burst_count': 50})
+        self.assertNotIn('rc_invites', source)
         self.assertTrue(native['turn_shared_secret'] == source['turn_shared_secret'])
         turn = (self.root / 'calls/turnserver.ci.conf').read_text().splitlines()
         self.assertEqual([line for line in turn if line.startswith('external-ip=')], ['external-ip=172.30.239.3'])
