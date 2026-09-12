@@ -43,8 +43,11 @@ with tempfile.TemporaryDirectory() as directory:
         assert model.audio_flags({}, '@member:local') == {'muted': False, 'deafened': False}
         assert model.effective_audio((), '@member:local') == {'muted': False, 'deafened': False, 'sources': []}
         assert model.ServerEligibilityPolicy.__module__ != 'server_eligibility'
+        assert model.ChannelAdmissionPolicy.__module__ != 'channel_catalog'
+        assert callable(model.ChannelAdmissionPolicy)
         assert model.SystemMessagesPolicy.__module__ != 'system_messages'
         assert any(route.resource.canonical == '/api/internal/system-events' for route in app.router.routes())
+        assert any(route.resource.canonical == '/api/channels/admission/capability' for route in app.router.routes())
     finally:
         app['service'].store.db.close()
 '''

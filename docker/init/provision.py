@@ -201,7 +201,8 @@ def install_policy(root, config, integrations=False, audio_moderation=False):
     modules = config.setdefault('modules', [])
     installed = next((item for item in modules if item.get('module') == 'tavern_policy.TavernPolicy'), None)
     privacy_config = {'privacy_api_url': 'http://tavern-api:8090', 'privacy_key_file': '/data/tavern-privacy.key',
-                      'system_messages_enabled': integrations, 'audio_moderation_enabled': audio_moderation}
+                      'system_messages_enabled': integrations, 'audio_moderation_enabled': audio_moderation,
+                      'channel_admission_enabled': True}
     if installed is None or any(installed.get('config', {}).get(key) != value for key, value in privacy_config.items()):
         # This one additive migration installs server-side authorization. Preserve
         # an exact before image; do not alter existing accounts, rooms, or keys.

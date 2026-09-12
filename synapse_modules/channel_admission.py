@@ -77,6 +77,18 @@ def restricted_rule(scopes):
     ]}
 
 
+def matches_restricted_rule(value, scopes):
+    # Native event content may be deeply frozen (Mapping/tuple), unlike a
+    # proposed JSON dictionary. Validate the exact semantic shape in either.
+    if not isinstance(value, Mapping) or set(value) != {'join_rule', 'allow'} or value.get('join_rule') != 'restricted':
+        return False
+    allowed = value.get('allow')
+    return (isinstance(allowed, (list, tuple)) and len(allowed) == len(scopes)
+            and all(isinstance(item, Mapping) and set(item) == {'type', 'room_id'}
+                    and item.get('type') == 'm.room_membership' and item.get('room_id') in scopes for item in allowed)
+            and len({item['room_id'] for item in allowed}) == len(scopes))
+
+
 class ChannelAdmissionPolicy:
     def __init__(self, api, valid_policy, native_power=None):
         self.api, self.valid_policy, self.native_power = api, valid_policy, native_power
@@ -224,7 +236,7 @@ class ChannelAdmissionPolicy:
                         return False
             if event.type == 'm.room.join_rules':
                 _, scopes = await self.scopes(event.room_id, state)
-                if scopes and event.content.get('join_rule') != 'invite' and event.content != restricted_rule(scopes):
+                if scopes and event.content.get('join_rule') != 'invite' and not matches_restricted_rule(event.content, scopes):
                     return False
             try:
                 from server_account_eligibility import cleanup

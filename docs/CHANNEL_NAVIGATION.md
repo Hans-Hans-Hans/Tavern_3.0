@@ -29,18 +29,60 @@ Validation: four pure ordering tests and mounted browser coverage exercise saved
 
 ## Remaining sidebar requirements
 
-The requested sidebar redesign is not yet complete. Private channel creation
-currently invites selected members; it does not maintain access from selected
-roles as assignments change. Channel and server management still provide archive
-and leave operations, not a channel/server deletion workflow. Those require
-native admission, revocation and partial-failure handling; hiding a row or
-relabelling archive would not satisfy them. The pinned conference widget's
+Channel and server management still provide archive and leave operations, not a
+channel/server deletion workflow. Deletion needs native removal and recoverable
+partial-failure handling. The pinned conference widget's
 self-deafen limitation is recorded in [voice sidebar](VOICE_SIDEBAR.md).
 
 The full two-user Games-category acceptance sequence, including a role-restricted
 voice join and cross-client ordering after refresh, remains a deployed acceptance
 gate. Component, native write-boundary and policy tests are recorded separately
 from that gate in [validation](VALIDATION.md).
+
+## Role-managed private channels
+
+Owners can select allowed roles and individual server members during channel
+creation or under channel settings → Permissions → Private channel access.
+Members use **Browse private channels** to discover eligible channels and join
+one explicitly. Listing channels never joins a room or fetches message history.
+The server owner retains access; selecting nobody makes the channel owner-only.
+Private discussions still require their separate invitation.
+
+The existing `io.tavern.roles` state has optional `channelAdmissionVersion: 1`
+and `channelAdmissions`, keyed by existing native room IDs. Each audience holds
+stable `roleIds` and full Matrix `userIds`. Role assignments stay in the existing
+member map. No existing room is opted in automatically. Native room IDs, keys,
+category assignments and downloaded history are preserved.
+
+The owner first saves the selected audience against the native role-event
+revision, then changes the channel to a native restricted join rule referring
+to its reciprocal canonical server. Synapse checks the actual audience on both
+ordinary joins and invited joins; an invitation cannot bypass it. Multiple
+governing private audiences must all allow the member. Changing role assignments
+denies new events and SFU admission immediately. A durable Synapse worker removes
+ineligible native memberships and bound private-discussion memberships, while
+the existing RTC lease worker ends ineligible SFU sessions. Previously downloaded
+history cannot be erased from another device.
+
+Partial saves retain the same room and expose a retry. Removing audience-based
+access first restores invite-only joins. New native policy writes reject stale
+revisions and retain the version marker. Existing clients can read rooms; clients
+that omit the required revision cannot overwrite an opted-in policy.
+
+The provisioner enables the worker additively and preserves existing deployment
+secrets and signing identity. It adds four durable reconciliation tables in the
+Synapse database, rebuilt/reconciled from native state on startup. Update/recreate
+init, Synapse, API and web together. The UI requires the running Synapse worker's
+readiness, exposed internally at `/_tavern/channel-admission` and checked through
+authenticated `GET /api/channels/admission/capability`. Authenticated
+`GET /api/servers/{server}/channels/available` checks current server membership
+and returns at most 25 eligible channel entries per page without history.
+
+Validation includes native policy and durable SQLite worker tests, real API HTTP
+tests, role/creation writer tests and mounted browser creation/edit/retry/join
+tests at a 320px width. `scripts/smoke-channel-admission.mjs` adds the actual
+Synapse/PostgreSQL/LiveKit admission and membership-removal acceptance gate;
+its deployment result must pass before claiming native end-to-end acceptance.
 
 ## Direct messages
 

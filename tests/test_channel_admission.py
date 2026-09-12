@@ -1,10 +1,10 @@
 import copy
-from types import SimpleNamespace
+from types import SimpleNamespace, MappingProxyType
 import unittest
 
 from synapse_modules.channel_admission import (
     AUDIENCES, MARKER, POLICY, CHANGED, DENIED, ChannelAdmissionPolicy, active_audience,
-    audience_allows, restricted_rule, valid_admissions,
+    audience_allows, restricted_rule, matches_restricted_rule, valid_admissions,
 )
 
 OWNER, ALICE, BOB = ('@' + name + ':test.invalid' for name in ('owner', 'alice', 'bob'))
@@ -69,6 +69,14 @@ class AdmissionSchemaTests(unittest.TestCase):
             {'type': 'm.room_membership', 'room_id': SECOND},
             {'type': 'm.room_membership', 'room_id': SERVER},
         ]})
+
+    def test_restricted_rule_accepts_native_frozen_content_and_rejects_extra_or_duplicate_scopes(self):
+        expected = {SERVER, SECOND}
+        value = MappingProxyType({'join_rule': 'restricted', 'allow': tuple(MappingProxyType(item) for item in restricted_rule(expected)['allow'])})
+        self.assertTrue(matches_restricted_rule(value, expected))
+        self.assertFalse(matches_restricted_rule({'join_rule': 'restricted', 'allow': [dict(value['allow'][0])] * 2}, expected))
+        self.assertFalse(matches_restricted_rule({**value, 'extra': True}, expected))
+        self.assertFalse(matches_restricted_rule(value, {SERVER}))
 
 
 class AdmissionDecisionTests(unittest.IsolatedAsyncioTestCase):

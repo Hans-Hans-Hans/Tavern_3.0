@@ -147,6 +147,21 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         proposed = {**self.policy, 'channelAdmissionVersion': 1, 'channelAdmissions': {}}
         self.assertEqual(await self.module.check_event_allowed(event('io.tavern.roles', sender='@owner:local', room='!server:local', key='', body=proposed), self.server), (False, None))
 
+    async def test_final_native_callback_rechecks_access_after_a_later_policy_await(self):
+        self.policy.update(channelAdmissionVersion=1, channelAdmissions={'!channel:local': {'roleIds': [], 'userIds': ['@member:local']}})
+        self.server.update({
+            ('m.room.create', ''): event('m.room.create', sender='@owner:local', body={'type': 'm.space', 'm.federate': False}),
+            ('m.room.member', '@member:local'): event('m.room.member', body={'membership': 'join'}),
+        })
+        async def room_state(identity, event_filter=None):
+            return self.server if identity == '!server:local' else self.room
+        self.module.api.get_room_state = room_state
+        async def later_callback(proposed):
+            self.policy['channelAdmissions']['!channel:local']['userIds'] = []
+            return True
+        self.module.invitations.check = later_callback
+        self.assertEqual(await self.module.check_event_with_errors(event('m.room.encrypted'), self.room), (False, None))
+
     async def test_direct_encrypted_api_message_obeys_channel_deny(self):
         self.policy['overrides']['!channel:local'] = {'roles': {'everyone': {'send_messages': -1}}, 'users': {}}
         self.assertEqual(await self.module.check_event_allowed(event('m.room.encrypted'), self.room), (False, None))

@@ -5,6 +5,7 @@ import { readServerLayout } from '@/lib/community';
 import { channelKinds, type ChannelKind } from '@/lib/channel-policy';
 import { channelCreationOwner, channelSlowModes, channelTemplates, createTypedChannel, finishChannelCreation, isChannelCreationOwner, type ChannelCreationResult, type ChannelDraft } from '@/lib/channel-creation';
 import './channel-creation.css';
+import { readRolePolicy } from '@/lib/roles';
 
 type Props = { serverId?: string; initialCategoryId?: string; members: { id: string; name: string }[]; policyEnabled: boolean; callsEnabled: boolean; onCreated: (roomId: string, isCurrent: () => boolean) => Promise<unknown> };
 export function ChannelCreationForm(props: Props) {
@@ -23,6 +24,7 @@ function ChannelCreationEditor({ serverId, initialCategoryId = '', members, poli
   const [draft, setDraft] = useState<ChannelDraft>({ name: '', description: '', kind: 'text', slowModeSeconds: 0, serverId, categoryId: initialCategoryId, members: [], icon: channelTemplates.text.icon });
   const [filter, setFilter] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [result, setResult] = useState<ChannelCreationResult | null>(null);
   const client = getMatrixClient(), server = serverId ? client?.getRoom(serverId) : null, layout = serverId ? readServerLayout(serverId) : null;
+  const roles = serverId ? readRolePolicy(serverId) : null;
   const candidates = members.filter(member => member.id !== client?.getUserId() && (!serverId || server?.getMember(member.id)?.membership === 'join'));
   const shown = candidates.filter(member => (member.name + ' ' + member.id).toLocaleLowerCase().includes(filter.toLocaleLowerCase())).slice(0, 100);
   const template = channelTemplates[draft.kind], validOwner = isChannelCreationOwner(owner);
@@ -41,6 +43,7 @@ function ChannelCreationEditor({ serverId, initialCategoryId = '', members, poli
     <h3>{result.name} was created</h3><p className='login-help'>The encrypted channel exists. Its room ID is <code>{result.roomId}</code>.</p>
     {serverId && <p>{result.linked ? `Added to ${server?.name || 'the server'}.` : 'Adding this channel to the server still needs to be completed.'}</p>}
     {draft.categoryId && <p>{result.categoryApplied ? 'Category placement saved.' : 'Category placement is still pending.'}</p>}
+    {draft.privateRoles !== undefined && <p>{result.audienceApplied ? 'Private roles and members saved.' : 'Private access setup is still pending; this channel remains invite only until it finishes.'}</p>}
     {result.invited.length > 0 && <p>{result.invited.length} member invitation{result.invited.length === 1 ? '' : 's'} confirmed. Each member chooses whether to join.</p>}
     {result.pendingMembers.length > 0 && <p>Invitations pending: {result.pendingMembers.map(id => members.find(member => member.id === id)?.name || id).join(', ')}.</p>}
     {result.errors.map((message, index) => <p role='alert' className='connect-error' key={index}>{message}</p>)}
@@ -58,6 +61,9 @@ function ChannelCreationEditor({ serverId, initialCategoryId = '', members, poli
       </label>)}</div></fieldset>
       {!policyEnabled && <p className='login-help'>This homeserver supports basic text creation. Additional channel behavior requires the Tavern policy module.</p>}
       <p className='channel-type-guidance'>{template.guidance}</p>
+      {roles && roles.owner === client?.getUserId() && <fieldset><legend>Channel access</legend><label className='checkbox-row'><input type='checkbox' checked={draft.privateRoles !== undefined} onChange={event => update({ privateRoles: event.target.checked ? [] : undefined })}/>Private channel with selected roles and members</label>
+        {draft.privateRoles !== undefined && <><p className='login-help'>Selected roles and the members chosen below can join. The server owner keeps access. Removing someone from every selected role and member list removes their membership; previously received history stays on their devices.</p><div className='dialog-member-list'>{roles.roles.map(role => <label className='checkbox-row' key={role.id}><input type='checkbox' checked={draft.privateRoles!.includes(role.id)} onChange={event => update({ privateRoles: event.target.checked ? [...draft.privateRoles!, role.id] : draft.privateRoles!.filter(id => id !== role.id) })}/>{role.icon} {role.name}</label>)}</div></>}
+      </fieldset>}
       {['voice', 'video'].includes(draft.kind) && !callsEnabled && <p role='status' className='login-help'>Calls are currently disabled on this instance. You can prepare this channel, but calls require the administrator’s call setup.</p>}
       <div className='channel-creation-name'><label>Channel icon<input value={draft.icon} maxLength={16} onChange={event => update({ icon: event.target.value })}/></label><label>Channel name<input autoFocus required maxLength={60} placeholder={draft.kind === 'voice' ? 'e.g. lounge' : draft.kind === 'video' ? 'e.g. team-meetings' : draft.kind === 'forum' ? 'e.g. help-and-ideas' : 'e.g. weekend-projects'} value={draft.name} onChange={event => update({ name: event.target.value })}/></label></div>
       <label>{draft.kind === 'rules' ? 'Rules channel description' : 'Channel description'} <span className='optional'>optional</span><textarea value={draft.description} maxLength={500} placeholder={template.purpose} onChange={event => update({ description: event.target.value })}/></label>

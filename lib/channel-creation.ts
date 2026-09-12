@@ -17,8 +17,8 @@ export const channelTemplates: Record<ChannelKind, { description: string; purpos
   'read-only': { description: 'Reference material maintained by moderators.', purpose: 'What should people find here?', icon: '📖', guidance: 'Only authorized moderators can publish posts. Existing history remains available to authorized members.' },
 };
 export const channelSlowModes = [0, 5, 10, 30, 60, 300, 900, 3600, 21600] as const;
-export type ChannelDraft = { name: string; description: string; kind: ChannelKind; slowModeSeconds: number; serverId?: string; categoryId: string; members: string[]; icon: string };
-export type ChannelCreationResult = { roomId: string; name: string; linked: boolean; categoryApplied: boolean; invited: string[]; pendingMembers: string[]; errors: string[] };
+export type ChannelDraft = { name: string; description: string; kind: ChannelKind; slowModeSeconds: number; serverId?: string; categoryId: string; members: string[]; icon: string; privateRoles?: string[] };
+export type ChannelCreationResult = { roomId: string; name: string; linked: boolean; categoryApplied: boolean; audienceApplied?: boolean; invited: string[]; pendingMembers: string[]; errors: string[] };
 type Native = { type: string; state_key: string; content: any; sender?: string; event_id?: string };
 type Owner = { client: MatrixClient; user: string; device: string; account: object; homeserver: string };
 type Scope = { id: string; child: string; events: Native[] };
@@ -48,7 +48,8 @@ export function validateChannelDraft(value: ChannelDraft, actor: string): Channe
     || value.serverId && !roomId(value.serverId) || typeof value.categoryId !== 'string' || value.categoryId && !/^[\w-]{1,80}$/.test(value.categoryId)
     || !value.serverId && value.categoryId || !Array.isArray(value.members) || value.members.length > 50
     || value.members.some(id => typeof id !== 'string' || !localUser(id, actor))) throw new Error('Enter a channel name, a description of up to 500 characters and up to 50 local members. Review the selected channel settings.');
-  return { ...value, name: value.name.trim(), members: [...new Set(value.members)].filter(id => id !== actor) };
+  if (value.privateRoles !== undefined && (!value.serverId || !Array.isArray(value.privateRoles) || value.privateRoles.length > 100 || value.privateRoles.some(id => typeof id !== 'string') || new Set(value.privateRoles).size !== value.privateRoles.length)) throw new Error('Private channel roles require a server and distinct role selections.');
+  return { ...value, ...(value.privateRoles !== undefined ? { privateRoles: [...value.privateRoles] } : {}), name: value.name.trim(), members: [...new Set(value.members)].filter(id => id !== actor) };
 }
 async function native(owner: Owner, id: string) {
   requireCurrent(owner);
@@ -135,7 +136,13 @@ function proveCreated(owner: Owner, draft: ChannelDraft, events: Native[]) {
 export async function createTypedChannel(value: ChannelDraft): Promise<ChannelCreationResult> {
   const current = owner(), draft = validateChannelDraft(value, current.user), config = await readInstanceConfig(); requireCurrent(current);
   if (!config.serverRolePolicy && (draft.kind !== 'text' || draft.slowModeSeconds)) throw new Error('Typed channel behavior is unavailable on this homeserver. Create a text channel or enable the Tavern policy module first.');
-  await serverScopes(current, draft);
+  const scopes = await serverScopes(current, draft);
+  if (draft.privateRoles !== undefined) {
+    const parent = scopes.find(scope => scope.id === draft.serverId), policy = parseRolePolicy(parent ? state(parent.events, rolesEvent) : null);
+    if (!policy || policy.owner !== current.user || draft.privateRoles.some(id => !policy.roles.some(role => role.id === id))) throw new Error('Only the server owner can create a channel with selected current roles.');
+    if (!await (await import('./channel-admission')).channelAdmissionAvailable()) throw new Error('Private-channel access is not ready. Update and restart Synapse before creating this channel.');
+    requireCurrent(current);
+  }
   const restricted = ['announcement', 'rules', 'read-only'].includes(draft.kind), via = [current.user.slice(current.user.indexOf(':') + 1)];
   let created;
   try {
@@ -150,7 +157,7 @@ export async function createTypedChannel(value: ChannelDraft): Promise<ChannelCr
       ] });
   } catch { throw new Error('Channel creation was not confirmed. Check All conversations before creating it again; the server may already have created the room.'); }
   if (!roomId(created.room_id)) throw new Error('The server did not return a valid channel ID. Check All conversations before trying again.');
-  const result: ChannelCreationResult = { roomId: created.room_id, name: draft.name, linked: !draft.serverId, categoryApplied: !draft.categoryId, invited: [], pendingMembers: [...draft.members], errors: [] };
+  const result: ChannelCreationResult = { roomId: created.room_id, name: draft.name, linked: !draft.serverId, categoryApplied: !draft.categoryId, ...(draft.privateRoles !== undefined ? { audienceApplied: false } : {}), invited: [], pendingMembers: [...draft.members], errors: [] };
   pending.set(result, { owner: current, draft, running: false });
   return finishChannelCreation(result);
 }
@@ -178,6 +185,10 @@ export async function finishChannelCreation(result: ChannelCreationResult): Prom
         }
         result.categoryApplied = true;
       }
+    }
+    if (draft.privateRoles !== undefined) {
+      await (await import('./channel-admission')).saveChannelAudience(draft.serverId!, result.roomId, { roleIds: draft.privateRoles, userIds: draft.members }, null);
+      requireCurrent(owner); result.audienceApplied = true;
     }
     // Invites are separate known-room operations. An ambiguous invite is read
     // back on retry, so acknowledged memberships are never blindly replayed.

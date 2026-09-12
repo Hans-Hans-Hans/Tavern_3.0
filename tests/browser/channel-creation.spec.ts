@@ -1,12 +1,93 @@
 import { test, expect, type Page } from '@playwright/test';
 async function fixture(page: Page, strict = false) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.client;export const onMatrixUpdate=fn=>{window.listeners.push(fn);return()=>{window.listeners=window.listeners.filter(v=>v!==fn);};};' }));
-  await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const accountArtworkOwner=()=>window.accountOwner;' }));
+  await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const accountArtworkOwner=()=>window.accountOwner;export const requestApi=async path=>{if(path==="/api/channels/admission/capability")return {version:1,available:window.admissionReady!==false};if(path.startsWith("/api/servers/")&&path.includes("/channels/available"))return structuredClone(window.catalog);throw Error("Unexpected fixture API route");};' }));
   await page.route(url => url.pathname === '/lib/instance.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const readInstanceConfig=async()=>({serverRolePolicy:window.policyEnabled!==false,callsEnabled:window.callsEnabled!==false});' }));
   await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const readServerLayout=()=>structuredClone(window.layout);export function normalizeServerLayout(raw,ids){const value=structuredClone(raw||{version:1,categories:[],channels:[]});for(const id of ids||[])if(!value.channels.some(c=>c.id===id))value.channels.push({id,category:''});return value;}` }));
   await page.route('**/channel-creation-test*', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id='root'></div><script type='module'>import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/channel-creation.tsx')).mountFixture();</script></body></html>` }));
   await page.goto('/channel-creation-test' + (strict ? '?strict' : '')); await expect(page.getByRole('textbox', { name: 'Channel name', exact: true })).toBeVisible();
 }
+
+test('private voice creation chooses actual roles and members and saves restricted admission before inviting', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('radio', { name: /^Voice/ }).check();
+  await page.getByRole('textbox', { name: 'Channel name', exact: true }).fill('Private lounge');
+  await page.getByRole('checkbox', { name: 'Private channel with selected roles and members', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Member', exact: true }).check();
+  await page.getByText('Invite members now', { exact: false }).click(); await page.getByRole('checkbox', { name: /Peer/ }).check();
+  await page.getByRole('button', { name: 'Create voice channel', exact: true }).click();
+  await expect(page.getByText('Private roles and members saved.', { exact: true })).toBeVisible();
+  const result = await page.evaluate(() => { const w = window as any; return { writes: w.writes, created: w.created.length, roles: w.states['!server:local'].find((event: any) => event.type === 'io.tavern.roles').content }; });
+  expect(result.created).toBe(1);
+  expect(result.roles.channelAdmissions['!created-1:local']).toEqual({ roleIds: ['everyone'], userIds: ['@peer:local'] });
+  expect(result.writes.findIndex((row: any) => row[0] === 'io.tavern.roles')).toBeLessThan(result.writes.findIndex((row: any) => row[0] === 'invite'));
+  expect(result.writes.find((row: any) => row[0] === 'm.room.join_rules' && row[2].join_rule === 'restricted')).toBeTruthy();
+});
+
+async function managedChannel(page: Page) {
+  await fixture(page);
+  await page.getByRole('textbox', { name: 'Channel name', exact: true }).fill('Managed channel');
+  await page.getByRole('button', { name: 'Create text channel', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Managed channel was created' })).toBeVisible();
+  await page.evaluate(() => (window as any).manage('!created-1:local'));
+  await expect(page.getByRole('button', { name: 'Save channel access', exact: true })).toBeEnabled();
+}
+
+test('private access editor preserves a partial save, retries the same room and reloads confirmed role selection', async ({ page }) => {
+  await managedChannel(page);
+  await page.getByRole('checkbox', { name: 'Use selected roles and members' }).check();
+  await page.getByRole('checkbox', { name: 'Member', exact: true }).check();
+  await page.getByRole('textbox', { name: 'Specific members' }).fill('@peer:local');
+  await page.evaluate(() => { (window as any).failRule = true; });
+  await page.getByRole('button', { name: 'Save channel access', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Join rule save temporarily unavailable');
+  await expect(page.getByRole('textbox', { name: 'Specific members' })).toHaveValue('@peer:local');
+  await page.getByRole('button', { name: 'Save channel access', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Private channel access saved');
+  await page.getByRole('button', { name: 'Reload saved access' }).click();
+  await expect(page.getByRole('checkbox', { name: 'Member', exact: true })).toBeChecked();
+  await expect(page.getByRole('textbox', { name: 'Specific members' })).toHaveValue('@peer:local');
+  expect(await page.evaluate(() => (window as any).created.length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).writes.filter((row: any) => row[0] === 'io.tavern.roles' && row[2].channelAdmissionVersion).length)).toBe(1);
+  await page.getByRole('checkbox', { name: 'Use selected roles and members' }).uncheck();
+  await page.getByRole('button', { name: 'Save channel access', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Invite-only access saved');
+  const end = await page.evaluate(() => (window as any).writes.slice(-2));
+  expect(end.map((row: any) => row[0])).toEqual(['m.room.join_rules', 'io.tavern.roles']);
+  expect(end[0][2].join_rule).toBe('invite'); expect(end[1][2].channelAdmissions).toEqual({});
+});
+
+test('private controls require live enforcement and stay inside a narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 650 }); await managedChannel(page);
+  await page.getByRole('checkbox', { name: 'Use selected roles and members' }).check();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.evaluate(() => { (window as any).admissionReady = false; });
+  await page.getByRole('button', { name: 'Reload saved access' }).click();
+  await expect(page.getByRole('status')).toContainText('Private-channel enforcement is not ready');
+  await expect(page.getByRole('button', { name: 'Save channel access', exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => (window as any).writes.some((row: any) => row[0] === 'io.tavern.roles'))).toBe(false);
+});
+
+test('eligible-channel browser requires an explicit join, retains rejected joins and opens after native membership', async ({ page }) => {
+  await managedChannel(page);
+  await page.getByRole('checkbox', { name: 'Use selected roles and members' }).check();
+  await page.getByRole('checkbox', { name: 'Member', exact: true }).check();
+  await page.getByRole('button', { name: 'Save channel access', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Private channel access saved');
+  await page.evaluate(() => { const w = window as any; w.actor = '@peer:local'; w.accountOwner = {}; w.opened = []; w.writes = []; w.catalog = { channels: [{ id: '!created-1:local', name: 'Managed channel', kind: 'text', joined: false }], next: null }; w.browse(); });
+  await page.getByRole('button', { name: 'Browse private channels', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Managed channel');
+  expect(await page.evaluate(() => (window as any).writes)).toEqual([]);
+  await page.evaluate(() => { (window as any).failJoin = true; });
+  await page.getByRole('button', { name: 'Join channel', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Private access changed');
+  expect(await page.evaluate(() => (window as any).opened)).toEqual([]);
+  await page.evaluate(() => { (window as any).failJoin = false; });
+  await page.getByRole('button', { name: 'Join channel', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).opened)).toEqual(['!created-1:local']);
+  expect(await page.evaluate(() => (window as any).writes)).toEqual([['join', '!created-1:local']]);
+});
 
 test('typed creation exposes real voice settings, category placement and explicit invitation outcomes', async ({ page }) => {
   await fixture(page); await page.getByRole('radio', { name: /^Voice/ }).check();

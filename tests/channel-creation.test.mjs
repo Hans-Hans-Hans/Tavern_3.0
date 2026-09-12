@@ -5,7 +5,7 @@ const serverId = '!server:local', actor = '@owner:local', peer = '@peer:local';
 const ev = (type, content, state_key = '', sender = actor) => ({ type, state_key, sender, content, event_id: '$'+type+state_key });
 function setup() {
   const f = { actor, account: {}, writes: [], creates: [], reads: [], beforeRead: null, beforeWrite: null, beforeCreate: null, config: { serverRolePolicy: true, callsEnabled: true } };
-  const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account };
+  const matrix = { getMatrixClient: () => f.client }, api = { accountArtworkOwner: () => f.account, requestApi: async () => ({ version: 1, available: f.admissionReady !== false }) };
   const roles = loadTs('../lib/roles.ts', { './matrix': matrix, './api': api, './conference-publication': loadTs('../lib/conference-publication.ts', {}) });
   const channels = loadTs('../lib/channel-policy.ts', { './matrix': matrix, './roles': roles, './member-state': loadTs('../lib/member-state.ts', {}) });
   const community = loadTs('../lib/community.ts', { './api': { accountArtworkOwner: () => null }, './matrix': matrix, './roles': roles, './server-nickname': {}, './matrix-media': {}, './response-image': {}, './profile-metadata-policy': {}, './server-branding': {}, './self-profile': {} });
@@ -36,11 +36,36 @@ function setup() {
       f.writes.push({ id, type: 'invite', user }); f.states[id].push(ev('m.room.member', { membership: 'invite' }, user));
     },
   };
+  const models = new Map(), factory = f.client.getRoom;
+  f.client.getRoom = id => {
+    if (!models.has(id)) models.set(id, { ...factory(id), isSpaceRoom: () => f.states[id]?.some(event => event.type === 'm.room.create' && event.content.type === 'm.space'), getMyMembership: () => f.states[id]?.find(event => event.type === 'm.room.member' && event.state_key === f.actor)?.content.membership });
+    return models.get(id);
+  };
+  const admission = loadTs('../lib/channel-admission.ts', { './api': api, './matrix': matrix, './roles': roles });
   f.model = loadTs('../lib/channel-creation.ts', { 'matrix-js-sdk': { Preset: { PrivateChat: 'private_chat' }, Visibility: { Private: 'private' } }, './matrix': matrix, './api': api,
-    './instance': { readInstanceConfig: async () => ({ ...f.config }) }, './channel-policy': channels, './community': community, './roles': roles });
+    './instance': { readInstanceConfig: async () => ({ ...f.config }) }, './channel-policy': channels, './community': community, './roles': roles, './channel-admission': admission });
   f.draft = { name: 'Plans', description: 'Discussion purpose', kind: 'text', slowModeSeconds: 0, serverId, categoryId: '', members: [], icon: '💬' };
   return f;
 }
+
+test('private creation saves role and explicit-member audience before invitations and repairs the same room', async () => {
+  const f = setup(); let fail = true;
+  f.beforeWrite = async ({ type, content }) => { if (type === 'm.room.join_rules' && content.join_rule === 'restricted' && fail) { fail = false; throw new Error('Native join-rule response unavailable'); } };
+  const result = await f.model.createTypedChannel({ ...f.draft, kind: 'voice', privateRoles: ['everyone'], members: [peer] });
+  assert.equal(result.errors.length, 1); assert.equal(result.audienceApplied, false); assert.equal(result.invited.length, 0);
+  await f.model.finishChannelCreation(result);
+  assert.deepEqual(result.errors, []); assert.equal(result.audienceApplied, true); assert.deepEqual(result.invited, [peer]);
+  assert.equal(f.creates.length, 1);
+  assert.equal(f.writes.filter(row => row.type === 'io.tavern.roles').length, 1);
+  assert.deepEqual(f.states[serverId].find(row => row.type === 'io.tavern.roles').content.channelAdmissions[result.roomId], { roleIds: ['everyone'], userIds: [peer] });
+});
+
+test('private channel creation rejects unavailable enforcement and unknown role choices before creating a room', async () => {
+  for (const roles of [['missing'], ['everyone']]) {
+    const f = setup(); f.admissionReady = false;
+    await assert.rejects(f.model.createTypedChannel({ ...f.draft, privateRoles: roles })); assert.equal(f.creates.length, 0);
+  }
+});
 
 test('every supported channel type persists real initial behavior with encrypted joined history and native call powers', async () => {
   for (const kind of ['text', 'voice', 'video', 'forum', 'announcement', 'rules', 'media', 'read-only']) {

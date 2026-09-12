@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 
 const legacy = /^![^\s/\\?#:\x00-\x1f\x7f]{1,200}:chat\.example\.test$/;
 const hashed = /^![A-Za-z0-9_-]{43}$/;
-const markers = new Set(['io.tavern.ci_dm', 'io.tavern.ci_invitation_privacy', 'io.tavern.ci_system', 'io.tavern.ci_afk', 'io.tavern.ci_audio']);
+const markers = new Set(['io.tavern.ci_dm', 'io.tavern.ci_invitation_privacy', 'io.tavern.ci_system', 'io.tavern.ci_afk', 'io.tavern.ci_audio', 'io.tavern.ci_channel_admission']);
 export function isCiRoomId(value) {
   if (typeof value !== 'string') return false;
   if (legacy.test(value)) return true;

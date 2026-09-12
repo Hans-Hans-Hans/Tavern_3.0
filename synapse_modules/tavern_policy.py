@@ -8,8 +8,9 @@ from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
-    from channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES
+    from channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES, DENIED as ADMISSION_DENIED
     from channel_revocation import ChannelRevocationWorker
+    from channel_capability import install as install_admission_capability
     from conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -25,8 +26,9 @@ try:
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
-    from synapse_modules.channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES
+    from synapse_modules.channel_admission import ChannelAdmissionPolicy, valid_admissions, MARKER as ADMISSION_VERSION, AUDIENCES, DENIED as ADMISSION_DENIED
     from synapse_modules.channel_revocation import ChannelRevocationWorker
+    from synapse_modules.channel_capability import install as install_admission_capability
     from synapse_modules.conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from synapse_modules.call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -269,6 +271,8 @@ class TavernPolicy:
         self.api = api
         self.channel_admission = ChannelAdmissionPolicy(api, valid_policy, native_member_power)
         self.channel_revocation = ChannelRevocationWorker(api, self.channel_admission) if config.get('channel_admission_enabled', False) else None
+        if self.channel_revocation:
+            install_admission_capability(api, self.channel_revocation)
         self.channels = ChannelPolicy(api, permissions, rank)
         self.threads = ThreadPolicy(api, self.channels)
         self.invitations = InvitationPolicy(config, api)
@@ -316,7 +320,12 @@ class TavernPolicy:
 
     async def check_event_with_errors(self, event, state_events):
         try:
-            return await self.check_event_allowed(event, state_events)
+            allowed, replacement = await self.check_event_allowed(event, state_events)
+            # Account/profile/invitation checks may await external state. A
+            # concurrent audience change must invalidate the earlier decision.
+            if allowed and not await self.channel_admission.check(event, state_events):
+                return False, None
+            return allowed, replacement
         except (EligibilityDenied, ProfilePolicyDenied) as error:
             from synapse.module_api.errors import SynapseError
             raise SynapseError(403, str(error), 'M_FORBIDDEN') from None
@@ -408,8 +417,8 @@ class TavernPolicy:
             # Versioned publication policy must be monotonic and written against
             # current native state, including after earlier callback awaits.
             fresh_role_state = await self.api.get_room_state(event.room_id)
-            if (PUBLICATION_VERSION in event.content or PUBLICATION_VERSION in content(state_events, POLICY)
-                    or PUBLICATION_VERSION in content(fresh_role_state, POLICY)):
+            if any(marker in value for marker in (PUBLICATION_VERSION, ADMISSION_VERSION)
+                   for value in (event.content, content(state_events, POLICY), content(fresh_role_state, POLICY))):
                 if 'io.tavern.previous_event' not in event.content:
                     return False, None
                 state_events = fresh_role_state
