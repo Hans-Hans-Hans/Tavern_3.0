@@ -79,6 +79,7 @@ function ContextMenuSubTrigger({
 
 function ContextMenuSubContent({
   className,
+  onPointerUpCapture,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
   return (
@@ -89,12 +90,17 @@ function ContextMenuSubContent({
         className
       )}
       {...props}
+      onPointerUpCapture={event => {
+        onPointerUpCapture?.(event)
+        if (event.button === 2) event.preventDefault()
+      }}
     />
   )
 }
 
 function ContextMenuContent({
   className,
+  onPointerUpCapture,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
   return (
@@ -106,6 +112,13 @@ function ContextMenuContent({
           className
         )}
         {...props}
+        onPointerUpCapture={event => {
+          onPointerUpCapture?.(event)
+          // Linux opens on right-button down. Its release can land on the
+          // animated menu; prevent Radix synthesizing an unintended item click.
+          // Deliberate primary clicks, touch taps and keyboard selection remain.
+          if (event.button === 2) event.preventDefault()
+        }}
       />
     </ContextMenuPrimitive.Portal>
   )

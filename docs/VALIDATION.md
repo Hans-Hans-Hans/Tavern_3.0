@@ -805,3 +805,12 @@ Local full Chromium and Headless Shell both passed the focused menu cases. An
 offline three-rotation nio/Rust interoperability reproduction also passed after
 reopening the SQLite crypto store with retained device keys. These checks narrow
 the investigation; they do not replace native acceptance or target-host testing.
+
+The focused Linux job at `98c95ce` captured the menu failure: right-button down
+opens the context menu, then its release lands on a new item without that item
+receiving a pointer-down. Radix synthesizes a click and closes the menu before
+the chosen action is clicked. Consuming the secondary-button release in root and
+submenu content fixes this sequence. The new regression failed before the fix;
+it and all three focused workspace cases pass afterward with Headless Shell and
+TypeScript checking. The main native V3 job now keeps distinct commit checks
+independent so a concrete fix can validate while earlier diagnostics complete.

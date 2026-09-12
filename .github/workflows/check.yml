@@ -8,13 +8,13 @@ on:
   workflow_call:
 permissions:
   contents: read
-concurrency:
-  group: tavern-checks-${{ github.workflow }}-${{ github.ref }}
-  # Let the long native call checks finish on V3; keep only the newest pending run.
-  # PR and temporary-branch runs still cancel when superseded.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/V3' }}
 jobs:
   build-and-container:
+    concurrency:
+      group: tavern-checks-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/V3' && github.sha || 'current' }}
+      # Distinct V3 checkpoints retain their native evidence independently.
+      # PR/temporary-branch work still replaces its superseded checkpoint.
+      cancel-in-progress: ${{ github.ref != 'refs/heads/V3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -201,4 +201,4 @@ jobs:
             fi
           done
           npx playwright install --with-deps chromium
-      - run: npm run test:browser -- tests/browser/dm-requests.spec.ts --grep 'channel context|owner opens|permission ceiling'
+      - run: npm run test:browser -- tests/browser/dm-requests.spec.ts --grep 'channel context|owner opens|permission ceiling|opening right-button'

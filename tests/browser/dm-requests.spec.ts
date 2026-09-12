@@ -138,3 +138,17 @@ test('channel edit context action respects the topic permission ceiling used by 
   await expect(page.getByRole('menuitem', { name: 'Notification settings', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true })).toHaveCount(0);
 });
+
+test('opening right-button release cannot select a context action before a deliberate click', async ({ page }) => {
+  await fixture(page, true);
+  // Linux opens the menu on button-down. Its initiating button-up can land on
+  // the new menu during the opening animation; no item received button-down.
+  await page.getByRole('button', { name: 'Lobby', exact: true }).dispatchEvent('contextmenu', { button: 2, clientX: 170, clientY: 200 });
+  const action = page.getByRole('menuitem', { name: 'Notification settings', exact: true });
+  await expect(action).toBeVisible();
+  await action.dispatchEvent('pointerup', { button: 2, pointerType: 'mouse', bubbles: true, cancelable: true });
+  await expect(action).toBeVisible({ timeout: 1000 });
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await action.click();
+  await expect(page.getByRole('dialog').getByRole('heading', { name: 'Channel notifications', exact: true })).toBeVisible();
+});

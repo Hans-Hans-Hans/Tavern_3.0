@@ -115,8 +115,11 @@ The exact two-user Games workflow is encoded in
 drag/drop across two clients, role-restricted voice, live sidebar participants,
 movement during the call, clean leave and reload persistence. The complete
 workflow passed at `3cc6b62`, after the API-prefix and management-section fixes.
-Intermittent context-menu dismissal in the separate Linux browser suite remains
-under investigation; local full-workspace and production-bundle repetitions pass.
+The Linux menu trace identified an opening right-button release landing on an
+animated item and triggering an unintended Radix click. Context menus now consume
+that release; deliberate primary clicks, touch taps and keyboard selection retain
+their normal paths. The exact event sequence failed before the fix and passes
+with it, along with the full-workspace editing cases. Native revalidation remains.
 
 [Direct audio acceptance](../scripts/smoke-direct-audio.mjs) requires three calls,
 actual relay media rates and synthetic audio samples in both existing remote
