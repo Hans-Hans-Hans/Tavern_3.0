@@ -178,3 +178,27 @@ jobs:
           TURN_DOMAIN: turn.example.test
           PUBLIC_IP: '1.1.1.1'
         run: docker compose -p tavern-ci logs --tail=100
+
+  channel-menu-regression:
+    # Keep this focused Linux reproduction independent of the long native job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install Playwright and Ubuntu browser dependencies
+        run: |
+          # Tests use Playwright's pinned Chromium. The runner's unrelated
+          # Chrome apt feed has returned inconsistent package-index checksums.
+          # Keep normal Ubuntu package signature/hash verification enabled.
+          for source in /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources; do
+            if [ -f "$source" ]; then
+              sudo mv -- "$source" "$source.disabled"
+            fi
+          done
+          npx playwright install --with-deps chromium
+      - run: npm run test:browser -- tests/browser/dm-requests.spec.ts --grep 'channel context|owner opens|permission ceiling'

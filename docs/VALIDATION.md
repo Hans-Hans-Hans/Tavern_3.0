@@ -789,3 +789,19 @@ failed when the context menu detached before selection. These cases pass locally
 including a production bundle and throttled browser scheduling. Finite UI event
 traces now accompany failures. Browser failures remain a required final gate,
 while independent native checks can continue to gather evidence in the same run.
+
+At `f041293`, the two Linux menu cases failed again (445 passed). Native private
+admission, deletion and conference lifecycle passed. All three direct calls then
+failed with no gathered relay candidates, ICE error 701 and timed-out independent
+allocation controls. The separate coturn allocation/byte-exchange fixture passed.
+The native Games probe stopped while opening channel settings, so this run did
+not reach bot decryption. The native probe now checks its exact owned TCP TURN
+listener and compares Synapse-issued credentials with the running coturn secret,
+reporting only finite results. The menu action has its own short timeout so failure
+diagnostics execute before the whole browser test expires; a focused Linux job
+provides that result independently of the long native job.
+
+Local full Chromium and Headless Shell both passed the focused menu cases. An
+offline three-rotation nio/Rust interoperability reproduction also passed after
+reopening the SQLite crypto store with retained device keys. These checks narrow
+the investigation; they do not replace native acceptance or target-host testing.

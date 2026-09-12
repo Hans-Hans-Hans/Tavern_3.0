@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {proveDirectEndpoint,directAudioSmoke,directAudioDiagnostic} from '../scripts/smoke-direct-audio.mjs';
+import {createHmac} from 'node:crypto';
+import {proveDirectEndpoint,directAudioSmoke,directAudioDiagnostic,nativeTurnCredentialMatches} from '../scripts/smoke-direct-audio.mjs';
+
+test('native credential agreement distinguishes wrong and ambiguous secrets without returning them',()=>{
+  const secret='fixture-only-'.repeat(4),username='2000000000:@alice:chat.example.test';
+  const relay={username,password:createHmac('sha1',secret).update(username).digest('base64')};
+  assert.equal(nativeTurnCredentialMatches('static-auth-secret='+secret+'\n',relay),true);
+  assert.equal(nativeTurnCredentialMatches('static-auth-secret='+secret+'different\n',relay),false);
+  assert.equal(nativeTurnCredentialMatches(('static-auth-secret='+secret+'\n').repeat(2),relay),false);
+  assert.equal(nativeTurnCredentialMatches('static-auth-secret='+secret,{...relay,username:'other'}),false);
+  assert.equal(nativeTurnCredentialMatches(null,relay),false);
+});
 
 test('failure diagnostics retain finite transport states and numeric counters without arbitrary text or addresses',()=>{
   assert.deepEqual(directAudioDiagnostic({'Connection':'connected','ICE transport':'completed','ICE gathering':'complete','Local route':'TURN relay',

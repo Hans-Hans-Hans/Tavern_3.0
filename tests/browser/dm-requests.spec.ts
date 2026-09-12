@@ -33,7 +33,7 @@ async function channelContextAction(page: Page, trigger: ReturnType<Page['locato
     for (const type of types) document.addEventListener(type, record, true);
     w.stopChannelMenuTrace = () => { for (const type of types) document.removeEventListener(type, record, true); };
   });
-  try { await trigger.click({ button: 'right' }); await page.getByRole('menuitem', { name: action, exact: true }).click(); }
+  try { await trigger.click({ button: 'right' }); await page.getByRole('menuitem', { name: action, exact: true }).click({ timeout: 5000 }); }
   catch (error) { console.error('Channel menu interaction:', await page.evaluate(() => (window as any).channelMenuTrace).catch(() => 'unavailable')); throw error; }
   finally { await page.evaluate(() => (window as any).stopChannelMenuTrace?.()).catch(() => {}); }
 }

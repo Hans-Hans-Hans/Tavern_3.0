@@ -2,6 +2,8 @@
 // microphone source is Chromium's verified synthetic capture device.
 import { expect } from '@playwright/test';
 import { execFile } from 'node:child_process';
+import { createConnection } from 'node:net';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { inspectSyntheticDevices, proveConferenceRoom } from './smoke-conference.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
@@ -14,6 +16,24 @@ const dockerRead=async args=>(await execute('docker',args,{timeout:10000,maxBuff
 const requireProof=value=>{if(!value)throw new Error('The direct-audio CI scope could not be verified.');};
 export class DirectAudioAcceptanceError extends Error {
   constructor(message, cleanupConfirmed) { super(message); this.name = 'DirectAudioAcceptanceError'; this.cleanupConfirmed = cleanupConfirmed; }
+}
+
+export function nativeTurnCredentialMatches(configuration, relay) {
+  if(typeof configuration!=='string'||configuration.length>65536||typeof relay?.username!=='string'||relay.username.length>512||typeof relay?.password!=='string'||relay.password.length>128)return false;
+  const secrets=configuration.split(/\r?\n/).filter(line=>line.startsWith('static-auth-secret=')).map(line=>line.slice('static-auth-secret='.length));
+  if(secrets.length!==1||secrets[0].length<32)return false;
+  const expected=Buffer.from(createHmac('sha1',secrets[0]).update(relay.username).digest('base64')),actual=Buffer.from(relay.password);
+  return expected.length===actual.length&&timingSafeEqual(expected,actual);
+}
+
+async function nativeTurnListener() {
+  return new Promise(resolve=>{
+    const socket=createConnection({host:'172.30.239.3',port:3478});
+    const finish=value=>{socket.destroy();resolve(value);};
+    socket.setTimeout(3000,()=>finish('timeout'));
+    socket.once('connect',()=>finish('connected'));
+    socket.once('error',error=>finish(error.code==='ECONNREFUSED'?'refused':'unreachable'));
+  });
 }
 
 export function directAudioDiagnostic(values){
@@ -91,6 +111,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
   const owners=new Map([[alice,aliceSession],[bob,bobSession]]),changed=new Set(),opened=new Set();
   let stage='isolated-turn',success=false,cleanupFailed=false,failure;
   let side='unavailable',scopeCheck='none',devices='unavailable',panels=null,frames=null,panelState='unavailable';
+  let listener='unavailable';const credentials=[];
   const expected=page=>({[page===alice?BOB:ALICE]:[roomId]});
   const accountPath=page=>'/_matrix/client/v3/user/'+encodeURIComponent(owners.get(page).userId)+'/account_data/m.direct';
   async function session(page){
@@ -111,6 +132,8 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
       docker(['network','inspect','tavern-ci_media','--format','{{json .}}']),
       docker(['inspect','tavern-ci-coturn-1','--format','{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"command":{{json .Config.Cmd}},"labels":{{json .Config.Labels}},"running":{{json .State.Running}},"ports":{{json .HostConfig.PortBindings}},"networks":{{json .NetworkSettings.Networks}}}']),
     ]);proveDirectEndpoint(JSON.parse(network),JSON.parse(container));
+    listener=await nativeTurnListener();
+    const turnConfiguration=await docker(['exec','tavern-ci-coturn-1','cat','/config/turnserver.ci.conf']);
     for(const page of owners.keys()){
       side=page===alice?'caller':'callee';devices='unavailable';panels=null;frames=null;panelState='unavailable';
       stage='ordinary-device-scope';await scope(page);
@@ -120,6 +143,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
       panelState=await page.evaluate(()=>{const panel=document.querySelector('.call-panel');if(!panel)return 'absent';const status=panel.querySelector('header small')?.textContent;return status==='Call ended'?'ended':status==='Incoming call'?'incoming':'active-or-unknown';});
       requireProof(panels===0&&frames===0);
       stage='turn-credentials';const relay=await native(page,'/_matrix/client/v3/voip/turnServer');
+      credentials.push({side,matches:relay.status===200&&nativeTurnCredentialMatches(turnConfiguration,relay.data)});
       requireProof(relay.status===200&&JSON.stringify(relay.data.uris)===JSON.stringify(['turn:172.30.239.3:3478?transport=udp','turn:172.30.239.3:3478?transport=tcp']));
       stage='owned-dm-section';const previous=await native(page,accountPath(page));
       requireProof(previous.status===404&&previous.data.errcode==='M_NOT_FOUND'||previous.status===200&&previous.data&&typeof previous.data==='object'&&!Array.isArray(previous.data)&&Object.keys(previous.data).length===0);
@@ -160,7 +184,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
         return {result:['relay','no-relay','timeout'].includes(result?.result)?result.result:'unavailable',codes:Array.isArray(result?.codes)?result.codes.filter(code=>Number.isInteger(code)&&code>=300&&code<=799).slice(0,8):[]};
       }catch{return {result:'unavailable',codes:[]};}
     })):[];
-    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded preflight: '+JSON.stringify({side,scopeCheck,devices,panels,frames,panelState})+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
+    failure = 'Native direct-audio acceptance failed at '+stage+'. Bounded preflight: '+JSON.stringify({side,scopeCheck,devices,panels,frames,panelState,listener,credentials})+'. Bounded connection observations: '+JSON.stringify(diagnostics)+'. Independent allocation controls: '+JSON.stringify(controls)+'. Credentials, addresses and audio samples were withheld.';
   }
   finally{
     for(const page of opened){
