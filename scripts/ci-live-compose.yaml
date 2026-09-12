@@ -132,3 +132,5 @@ networks:
     ipam:
       config:
         - subnet: 172.30.239.0/24
+          # Dynamic peers must not claim the SFU endpoint during parallel startup.
+          ip_range: 172.30.239.128/25
