@@ -444,6 +444,10 @@ class Operator:
 
 
 def create_app(directory=None, project=None, engine=None, token=None):
+    # Injected engines are test adapters. A real Docker connection is an
+    # explicit host-root capability, even with project-scoped HTTP handlers.
+    if engine is None and os.environ.get('ALLOW_DOCKER_SOCKET_ACCESS', '').lower() != 'true':
+        raise ValueError('Operations requires ALLOW_DOCKER_SOCKET_ACCESS=true. Docker socket access grants host-root control; see docs/OPERATIONS.md.')
     secret = token or Path(os.environ.get('OPERATIONS_TOKEN_FILE', '/config/token')).read_text().strip()
     if len(secret) < 40:
         raise ValueError('Operations token is missing or invalid. Run the initializer.')

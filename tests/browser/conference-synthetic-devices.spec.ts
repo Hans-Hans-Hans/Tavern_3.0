@@ -10,7 +10,9 @@ test('CI Chromium launch exposes only synthetic devices before capture and acqui
   const launch = source.match(/chromium\.launch\(\{ args: \[([^\]]+)\]/)?.[1] || '';
   const flags = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'];
   for (const flag of flags) expect(launch).toContain("'" + flag + "'");
-  const browser = await chromium.launch({ args: flags });
+  // Match the suite's explicit local browser override. CI leaves this unset
+  // and still exercises Playwright's pinned Chromium/Headless Shell.
+  const browser = await chromium.launch({ args: flags, executablePath: process.env.CHROME_PATH || undefined });
   try {
     const context = await browser.newContext(), page = await context.newPage();
     const origin = 'http://127.0.0.1:5173';

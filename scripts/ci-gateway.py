@@ -9,6 +9,7 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import threading
@@ -150,6 +151,27 @@ def main():
         else:
             raise AssertionError('The isolated gateway fixtures did not become ready.')
         headers = {'Origin': 'https://chat.example.test', 'Cookie': 'fixture=authorized'}
+        # Validate the built files with production routing, including admin
+        # chunks. Their names do not make them administration API endpoints.
+        result = gateway.exec_run(['find', '/usr/share/nginx/html/assets', '-type', 'f'])
+        assert result.exit_code == 0
+        assets = ['/assets/' + line.rsplit('/', 1)[-1] for line in result.output.decode().splitlines()
+                  if re.search(r'-[A-Za-z0-9_-]{8,}\.(js|css|wasm)$', line)]
+        assert assets and any('/admin-' in path for path in assets)
+        def cache_header(path):
+            connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+            try:
+                connection.request('GET', path, headers={'Host': 'chat.example.test'})
+                response = connection.getresponse()
+                return response.status, response.getheader('Cache-Control'), response.getheader('X-Content-Type-Options')
+            finally:
+                connection.close()
+        for path in assets:
+            assert cache_header(path) == (200, 'public, max-age=31536000, immutable', 'nosniff'), path
+        for path in ('/', '/index.html', '/tavern-config.json', '/api/__fixture/counters'):
+            assert cache_header(path) == (200, 'no-store', 'nosniff'), path
+        assert cache_header('/assets/missing-AbCd1234.js') == (404, 'no-store', 'nosniff')
+        assert cache_header('/sw.js') == (200, 'no-cache', 'nosniff')
         # Exercise the real nested Nginx location: only attachment uploads get
         # the larger ceiling, retaining credentials for the quota-enforcing API.
         payload = b'x' * (16 * 1024 * 1024)

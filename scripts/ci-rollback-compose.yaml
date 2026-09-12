@@ -6,11 +6,16 @@ services:
     healthcheck:
       interval: 1s
   tavern-api:
+    environment:
+      TRUSTED_PROXY_CIDRS: 172.30.236.0/24
     restart: "no"
     healthcheck:
       interval: 1s
       start_period: 5s
 networks:
+  private:
+    ipam:
+      config: [{subnet: 172.30.236.0/24}]
   proxy:
     name: tavern_ci_rollback_proxy
     internal: true

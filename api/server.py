@@ -32,8 +32,10 @@ from cryptography.fernet import Fernet
 import yaml
 
 try:
+    from .secret_files import smtp_password_file
     from .security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 except ImportError:
+    from secret_files import smtp_password_file
     from security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 
 LOG = logging.getLogger("tavern.api")
@@ -171,7 +173,13 @@ class Store:
 
 class Service:
     def __init__(self, config: Config):
+        self.smtp_file_password = smtp_password_file()
         self.config, self.store = config, Store(config.data_dir)
+        if not self.store.get('totp_grants_version'):
+            # Retire only pending old enrollment challenges containing a
+            # password. Existing authenticators and recovery codes stay intact.
+            self.store.db.execute("DELETE FROM challenges WHERE kind='totp'")
+            self.store.set('totp_grants_version', 1)
         self.http: aiohttp.ClientSession | None = None
         self.trusted = network_list(config.trusted_proxies)
         self.allowed_bootstrap = network_list(config.bootstrap_networks)
@@ -273,6 +281,8 @@ class Service:
                  "username": os.environ.get("SMTP_USERNAME", ""), "password": os.environ.get("SMTP_PASSWORD", ""),
                  "fromName": os.environ.get("SMTP_FROM_NAME", "Tavern"), "fromAddress": os.environ.get("SMTP_FROM_ADDRESS", "")}
         value.update(self.store.get("smtp", {}))
+        if self.smtp_file_password is not None:
+            value['password'] = self.smtp_file_password
         if not reveal:
             value["passwordConfigured"] = bool(value.pop("password", ""))
         return value
@@ -769,8 +779,17 @@ class Service:
         session = await self.require_sensitive(request, data)
         if self.store.account(session["user_id"]).get("totp"):
             raise APIError(409, "An authenticator is already configured. Disable it before replacing it.")
+        # Reuse the account service; only provision it if this installation has
+        # never needed it. Existing identities and credentials are unchanged.
+        await self.ensure_service_account()
+        # Authorize native password/UIA while the password is in this request.
+        # The completion grant also revokes devices created during QR setup.
+        await self.revoke_upstream_others(session, data['password'], require_uia=True)
         secret, uri = totp_setup(session["user_id"])
-        identity = self.store.challenge("totp", {"secret": secret, "sessionId": session["id"], "password": data["password"]}, session["user_id"])
+        identity = self.store.challenge("totp", {"secret": secret, "sessionId": session["id"],
+            'purpose': 'totp-enrollment', 'version': 1, 'userId': session['user_id'], 'deviceId': session['device_id'],
+            'credentialEpoch': self.store.account(session['user_id']).get('credential_epoch', 0),
+            'reauthenticatedAt': time.time()}, session["user_id"])
         return web.json_response({"challengeId": identity, "secret": secret, "uri": uri})
 
     async def totp_complete(self, request):
@@ -785,12 +804,40 @@ class Service:
         if counter is None:
             raise APIError(400, "Enter the six-digit code from your authenticator.", "INVALID_CODE")
         self.store.consume(challenge["id"])
-        await self.revoke_upstream_others(session, challenge["payload"]["password"])
+        await self.revoke_totp_devices(session, challenge['payload'])
         self.store.db.execute("UPDATE accounts SET totp=?,totp_counter=? WHERE user_id=?", (self.store.seal(challenge["payload"]["secret"]), counter, session["user_id"]))
         codes = self.new_recovery_codes(session["user_id"])
         self.audit(session["user_id"], "totp_enabled", session["user_id"])
         await self.security_notice(session["user_id"], "Authenticator enabled", "An authenticator was enabled for your Tavern account. Store your recovery codes somewhere safe.")
         return web.json_response({"recoveryCodes": codes})
+
+    async def revoke_totp_devices(self, session, grant):
+        """Private completion of a consumed, session-bound enrollment grant."""
+        def check():
+            account = self.store.account(session['user_id'])
+            issued = grant.get('reauthenticatedAt')
+            if (grant.get('purpose') != 'totp-enrollment' or grant.get('version') != 1
+                    or grant.get('sessionId') != session['id'] or grant.get('userId') != session['user_id']
+                    or grant.get('deviceId') != session['device_id']
+                    or grant.get('credentialEpoch') != account.get('credential_epoch', 0)
+                    or type(issued) not in (int, float) or not 0 <= time.time() - issued < 600
+                    or not self.store.db.execute('SELECT 1 FROM sessions WHERE id=? AND user_id=? AND expires>?',
+                        (session['id'], session['user_id'], time.time())).fetchone()):
+                raise APIError(400, 'Start authenticator setup again from this session.', 'CHALLENGE_EXPIRED')
+        check()
+        token = self.store.open(session['token'])
+        devices = (await self.matrix('GET', '/_matrix/client/v3/devices', token=token)).get('devices', [])
+        check()
+        ids = [device['device_id'] for device in devices if device.get('device_id') != session['device_id']]
+        if ids:
+            service_token = await self.service_token()
+            check()
+            await self.matrix('POST', '/_synapse/admin/v2/users/' + quote(session['user_id'], safe='') + '/delete_devices',
+                              {'devices': ids}, token=service_token)
+        check()
+        self.store.db.execute('DELETE FROM sessions WHERE user_id=? AND id<>?', (session['user_id'], session['id']))
+        self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='login'", (session['user_id'],))
+        return len(ids)
 
     async def email_mfa(self, request):
         data = await body_json(request)
@@ -876,11 +923,11 @@ class Service:
         self.audit(session["user_id"], "other_sessions_revoked", session["user_id"])
         return web.json_response({"ok": True, "revoked": count})
 
-    async def revoke_upstream_others(self, session, password):
+    async def revoke_upstream_others(self, session, password, *, require_uia=False):
         token = self.store.open(session["token"])
         devices = (await self.matrix("GET", "/_matrix/client/v3/devices", token=token)).get("devices", [])
         ids = [device["device_id"] for device in devices if device.get("device_id") != session["device_id"]]
-        if ids:
+        if ids or require_uia:
             await self.uia(session, "/_matrix/client/v3/delete_devices", {"devices": ids}, password)
         self.store.db.execute("DELETE FROM sessions WHERE user_id=? AND id<>?", (session["user_id"], session["id"]))
         self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='login'", (session["user_id"],))
@@ -977,6 +1024,8 @@ class Service:
                     if key in proposed:
                         settings[key] = proposed[key]
                 if proposed.get("password"):
+                    if self.smtp_file_password is not None:
+                        raise APIError(400, "SMTP_PASSWORD_FILE manages this password. Update the secret file and restart the account service.")
                     settings["password"] = text_value(proposed["password"], 1024)
                 if type(settings["enabled"]) is not bool or type(settings["secure"]) is not bool or type(settings["port"]) is not int or not 1 <= settings["port"] <= 65535:
                     raise APIError(400, "Enter valid SMTP port and TLS settings.")
@@ -985,6 +1034,12 @@ class Service:
                 for key in ("host", "username", "fromName", "fromAddress"):
                     if not isinstance(settings[key], str) or len(settings[key]) > 254 or "\r" in settings[key] or "\n" in settings[key]:
                         raise APIError(400, "Enter valid SMTP settings.")
+                if self.smtp_file_password is not None:
+                    # Never copy a mounted secret into settings persistence.
+                    settings.pop('password', None)
+                    previous = self.store.get('smtp', {})
+                    if 'password' in previous:
+                        settings['password'] = previous['password']
                 self.store.set("smtp", settings)
             if "instance" in data:
                 value = data["instance"]

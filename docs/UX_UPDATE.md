@@ -72,23 +72,9 @@ environment, volumes, NPM network and working call settings. A separate old
 `~/tavern` checkout cannot update a Dockhand-managed Git checkout.
 See [deployment source selection](DEPLOY_GITHUB.md#choose-the-source-and-compose-file).
 
-For an existing local checkout already on V3 and controlling that stack:
-
-```sh
-git pull --ff-only origin V3
-sudo docker compose build init tavern-api tavern-web
-sudo docker compose run --rm --no-deps init
-sudo docker compose restart synapse
-sudo docker compose up -d --no-deps tavern-api tavern-web
-sudo docker compose ps
-```
-
-Keep the same `-f` selection or `COMPOSE_FILE` if your deployment uses one.
-In Dockhand, sync **V3** in the existing Git stack, rebuild these services, run
-the updated initializer and restart Synapse before testing the updated web/API.
-The initializer installs the sticker validation changes and the upload ceiling
-from the preceding checkpoint. Existing credentials and rooms are retained.
-Reload the browser after deployment. Keep browser site data and encryption stores.
+For current V3, follow the [hardening redeploy procedure](V3_HARDENING.md#existing-v3-redeploy).
+It includes the required proxy trust settings, permission repair, Synapse restart
+and recreation of consumers. Keep browser site data and encryption stores.
 
 For file sizes, see [Admin → Storage and upload limits](UPLOAD_LIMITS.md).
 Raising the application setting cannot raise an external proxy's limit.

@@ -74,7 +74,10 @@ def prepare(root, environment, provisioner):
     target = root / 'calls/livekit.ci.yaml'
     pending = target.with_suffix('.yaml.pending')
     pending.write_text(json.dumps(isolated, indent=2) + '\n', encoding='utf-8')
-    os.chmod(pending, 0o644)  # Same private-volume readability as livekit.yaml.
+    original_stat = source.stat()
+    os.chmod(pending, original_stat.st_mode & 0o777)
+    if hasattr(os, 'chown'):
+        os.chown(pending, original_stat.st_uid, original_stat.st_gid)
     pending.replace(target)
     if source.read_bytes() != original:
         raise RuntimeError('The original generated configuration changed during CI derivation.')

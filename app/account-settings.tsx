@@ -55,6 +55,7 @@ export function AccountSettings() {
       }}>
         {!action.endsWith('-code') && !action.startsWith('revoke:') && sensitive}
         {action === 'email' && <Field label="Email address"><input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)}/></Field>}
+        {action === 'totp' && <p>Starting setup signs out your other devices. They will need your new verification method after setup is complete.</p>}
         {action === 'totp-code' && <><p>Add an account in your authenticator using this setup key. Store it privately.</p>{qr&&<img src={qr} width={240} height={240} alt='Scan with your authenticator app'/>}<code>{secret}</code><a href={uri}>Open authenticator app</a></>}
         {action.endsWith('-code') && <Field label="Verification code"><input autoComplete="one-time-code" value={code} onChange={e => setCode(e.target.value)} required/></Field>}
         {action === 'delete' && <><Field label={'Type ' + getMatrixClient()?.getUserId() + ' to confirm'}><input value={deleteConfirmation} onChange={e => setDeleteConfirmation(e.target.value)} required/></Field><label className="check-label"><input type="checkbox" checked={erase} onChange={e => setErase(e.target.checked)}/>Request removal of profile information</label></>}

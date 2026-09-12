@@ -67,7 +67,7 @@ services:
     environment:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       TAVERN_MANAGED_AUTH: 'true'
       TAVERN_ROLE_POLICY: 'true'
     read_only: true
@@ -106,6 +106,8 @@ services:
     user: 10001:10001
     group_add:
     - '991'
+    - '10002'
+    - '10003'
     environment:
       TAVERN_PUBLIC_URL: ${TAVERN_PUBLIC_URL:-https://${TAVERN_DOMAIN}}
       SYNAPSE_URL: http://synapse:8008
@@ -115,7 +117,7 @@ services:
       SFU_AUDIO_MODERATION_ENABLED: ${SFU_AUDIO_MODERATION_ENABLED:-false}
       RTC_AUTH_IMAGE: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
       TAVERN_BOOTSTRAP_MARKER: /synapse/tavern-bootstrap-allowed
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       BOOTSTRAP_ALLOWED_CIDRS: ${BOOTSTRAP_ALLOWED_CIDRS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128}
       SMTP_ENABLED: ${SMTP_ENABLED:-false}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
@@ -123,6 +125,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_PASSWORD_FILE: ${SMTP_PASSWORD_FILE:-}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Tavern}
       SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-}
       LOG_LEVEL: ${LOG_LEVEL:-WARNING}
@@ -137,6 +140,7 @@ services:
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}api:/data
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}synapse:/synapse:ro
     - operations_secret:/run/tavern-operations:ro
+    - ${TAVERN_SMTP_SECRET_DIR:-smtp_secret}:/run/tavern-smtp:ro
     - ${TAVERN_INTEGRATIONS_CONFIG:-integrations_config}:/integrations-config
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}calls:/call-config:ro
     read_only: true
@@ -236,6 +240,7 @@ services:
     environment:
       TAVERN_PROJECT: ${COMPOSE_PROJECT_NAME:-tavern}
       OPERATIONS_TOKEN_FILE: /config/token
+      ALLOW_DOCKER_SOCKET_ACCESS: ${ALLOW_DOCKER_SOCKET_ACCESS:-false}
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
     - ${TAVERN_DATA_DIR:+${TAVERN_DATA_DIR:-}/}operations:/data
@@ -320,6 +325,8 @@ services:
     logging: *id001
     profiles:
     - calls
+    group_add:
+    - '10002'
     image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.0}
     user: 10001:10001
     command:
@@ -359,6 +366,8 @@ services:
       driver: none
     profiles:
     - calls
+    group_add:
+    - '10002'
     image: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
     environment:
       LIVEKIT_URL: ${RTC_AUTH_LIVEKIT_URL:-http://livekit:7880}
@@ -417,6 +426,7 @@ networks:
   egress: {}
   media: {}
 volumes:
+  smtp_secret: null
   postgres_data: null
   synapse: null
   secrets: null

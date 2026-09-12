@@ -6,6 +6,11 @@ email and account administration. The initializer creates fresh configuration
 and credentials in persistent Docker volumes. Calls and the verified webhook
 bot are optional profiles in the same file.
 
+Current topics: [Calls](CALLS.md), [Integrations](INTEGRATIONS.md),
+[Operations](OPERATIONS.md), [NPM/Cloudflare hardening](PROXY_HARDENING.md),
+[Troubleshooting](TROUBLESHOOTING.md). For this update use the
+[existing V3 redeploy procedure](V3_HARDENING.md#existing-v3-redeploy).
+
 ## Requirements
 
 - Linux Docker host with Docker Engine and Docker Compose V2; Docker Desktop
@@ -32,7 +37,7 @@ docker compose ps
 ```
 
 Set **TAVERN_DOMAIN** to your actual lowercase hostname, for example
-`tavern.hans-homelab.com`. Set SMTP variables when available. Leave
+`tavern.hans-homelab.com`. Set the actual trusted proxy CIDRs using [proxy inspection](PROXY_HARDENING.md) before sign-in. Set SMTP variables when available. Leave
 `TAVERN_DATA_DIR` empty for named volumes. `docker compose up -d` builds missing
 application images; use `--build` after updating source.
 
@@ -121,7 +126,7 @@ NPM handles public HTTPS; Tavern listens for **HTTP** inside Docker. Selecting
 HTTPS for the upstream causes `SSL_do_handshake ... wrong version number` and a
 502 error. A `*.home.example.com` certificate does not cover `chat.example.com`.
 
-Set `TRUSTED_PROXY_CIDRS` to the actual trusted NPM/gateway Docker subnets. Do not
+Set `TRUSTED_PROXY_CIDRS` to the actual trusted NPM/gateway Docker subnets using [these inspection commands](PROXY_HARDENING.md). Its default is empty; forwarded requests fail closed until you configure it. Do not
 trust arbitrary public networks. The gateway sanitizes forwarded client
 addresses before bootstrap and account rate limits use them. Bootstrap should
 be completed directly on the LAN, using local DNS if public access traverses
@@ -154,10 +159,33 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USERNAME=your-tavern-account@gmail.com
-SMTP_PASSWORD=your-app-password
+TAVERN_SMTP_SECRET_DIR=/opt/tavern-smtp
+SMTP_PASSWORD_FILE=/run/tavern-smtp/password
+SMTP_PASSWORD=
 SMTP_FROM_NAME=Tavern
 SMTP_FROM_ADDRESS=your-tavern-account@gmail.com
 ```
+
+Create `/opt/tavern-smtp` on the Docker host with owner `root:10001`, mode
+`0750`, and put the App Password in `password` with owner `root:10001`, mode
+`0640`. Use a private editor or secret manager, not a command containing the
+password. The directory is mounted read-only. Choose your own private absolute
+directory if different; the in-container path above stays the same. Ensure any
+rootless/user-namespace mapping gives the API's UID/GID 10001 read access.
+
+An explicitly configured file wins over saved settings and legacy
+`SMTP_PASSWORD`, even when the file is empty. One trailing LF or CRLF is removed;
+other whitespace is preserved. An unreadable/invalid file stops API startup with
+a clear error. After rotating the file, restart the API. When changing mount or
+environment settings, recreate it. Admin Email still reports only
+`passwordConfigured`; while the file is configured its password must be changed
+in that file, not the UI. Other Email settings remain editable.
+
+Without a file, existing encrypted Admin Email settings retain their override of
+the legacy environment defaults. `SMTP_PASSWORD` remains compatible but is
+deprecated because container inspection exposes it. After successfully migrating
+to a file, remove the password value from Dockhand's environment and recreate the
+API. Back up the external secret privately alongside deployment settings.
 
 `SMTP_SECURE=false` uses STARTTLS; TLS is still required. Port465 normally uses
 `SMTP_SECURE=true`. Settings can also be managed from Tavern's administrator
@@ -187,7 +215,7 @@ docker compose restart synapse
 
 TURN and LiveKit credentials are generated in the persistent calls volume and
 loaded directly by RTC authorization. No copying of LiveKit secrets into stack
-environment fields is needed. Existing `prepare-calls.py` credentials are
+environment fields is needed. Existing legacy call credentials are
 preserved and converted to the file interface when both config files exist.
 
 The calls profile builds Tavern's pinned SFU from `docker/sfu`. For independent
@@ -248,8 +276,8 @@ foreground handoff and the remaining real-device acceptance.
 ## Webhook bot
 
 The optional integrations profile needs an actual bot account, room invitation,
-persistent encryption identity and verified participant devices. Follow the bot
-provisioning section of [Calls and integrations](CALLS_AND_INTEGRATIONS.md), then
+persistent encryption identity and verified participant devices. Follow the
+[current integrations guide](INTEGRATIONS.md), then
 set `COMPOSE_PROFILES=calls,integrations` (or `integrations` without calls) and
 `INTEGRATIONS_ENABLED=true`. Recreate the API after changing these settings.
 Admin integration settings write the shared bot configuration and HMAC key files;
@@ -379,11 +407,14 @@ Review database/configuration changes before updating infrastructure images.
 Rolling back a source ref does not undo database migrations; use the matching
 backup when a schema change requires it. Preserve volumes and `.env`.
 
-For backups and updates from the Admin UI, enable the optional worker:
+**The optional worker has host-root authority through Docker.** Read the
+[operations security boundary](OPERATIONS.md) before explicitly enabling it
+for backups and updates from the Admin UI:
 
 ```dotenv
 COMPOSE_PROFILES=operations
 OPERATIONS_ENABLED=true
+ALLOW_DOCKER_SOCKET_ACCESS=true
 ```
 
 Include `calls` or `integrations` in the comma-separated profile list if needed.

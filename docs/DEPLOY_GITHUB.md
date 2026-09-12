@@ -23,8 +23,8 @@ require enabling every optional service. The image-only `compose.dockhand*.yaml`
 files require all selected images to be available already.
 
 When troubleshooting a failed deployment, rebuild from that same stack and
-source selection. A successful cached local build tagged `tavern:0.3.0` does not
-confirm that a separate GitHub/Dockhand `0.4.0` build was updated. The image tag
+source selection. A successful cached build from another checkout does not
+confirm that the GitHub/Dockhand build was updated. The image tag
 alone is not proof of source revision. In Dockhand, retain the existing project
 and volumes, select `V3`, refresh its Git source and rebuild/redeploy the existing
 stack. To identify Compose projects without printing environment variables, run
@@ -83,7 +83,7 @@ For ongoing testing, select `V3` as both the Dockhand
 branch and `TAVERN_GIT_REF`. For a fixed checkpoint, use its full commit SHA for
 both. Keep the Compose definition and remote build source at the same revision.
 The initializer generates and preserves configuration and credentials; fresh
-deployments do not need `prepare-npm.py` or `prepare-calls.py`.
+deployments use its `init` service without any separate preparation helper.
 
 Sync the Git stack and deploy with builds enabled. Follow the existing-install
 procedure before the first 0.4 configuration migration, including stopping old
@@ -161,3 +161,11 @@ Back up first and retain the previous source revision and compatible backup.
 not undo database or configuration changes. Never remove volumes to update.
 Use the [validation record](VALIDATION.md) for observed acceptance and remaining
 checks; a healthy container alone does not prove external media connectivity.
+
+## Required hardening settings for existing V3
+
+Configure actual gateway/NPM `TRUSTED_PROXY_CIDRS` before deploying. If operations
+is enabled, explicitly set `ALLOW_DOCKER_SOCKET_ACCESS=true` after reviewing its
+host-root risk. Prefer `SMTP_PASSWORD_FILE` with `TAVERN_SMTP_SECRET_DIR` over
+legacy SMTP environment secrets. See the [full settings and safe redeploy](V3_HARDENING.md),
+including running init and recreating call consumers for their new secret groups.

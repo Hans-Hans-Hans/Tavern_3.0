@@ -40,6 +40,7 @@ services:
       - ${TAVERN_CI_TLS:?CI TLS fixture directory is required}:/ci/tls:ro
   tavern-api:
     environment:
+      TRUSTED_PROXY_CIDRS: 172.30.238.0/24,172.30.237.0/24
       INTEGRATIONS_ENABLED: 'true'
       SMTP_ENABLED: 'true'
       SMTP_HOST: ci-mail
@@ -134,6 +135,12 @@ services:
       tavern-web:
         condition: service_healthy
 networks:
+  private:
+    ipam:
+      config: [{subnet: 172.30.238.0/24}]
+  proxy:
+    ipam:
+      config: [{subnet: 172.30.237.0/24}]
   # No CI call service may discover or forward media outside this project.
   media:
     internal: true

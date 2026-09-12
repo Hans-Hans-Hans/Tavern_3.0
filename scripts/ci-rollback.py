@@ -232,6 +232,7 @@ def main():
             pinned[candidate] = candidate_image.id
         environment = {**os.environ, 'TAVERN_DOMAIN': 'rollback.example.test', 'TAVERN_PUBLIC_URL': 'https://rollback.example.test',
             'COMPOSE_PROJECT_NAME': PROJECT, 'COMPOSE_PROFILES': 'operations', 'OPERATIONS_ENABLED': 'true',
+            'ALLOW_DOCKER_SOCKET_ACCESS': 'true',
             'TAVERN_WEB_IMAGE': old['tavern-web'], 'TAVERN_API_IMAGE': old['tavern-api'],
             'TAVERN_INIT_IMAGE': source['init'].attrs['Image'], 'TAVERN_OPERATIONS_IMAGE': source['operations'].attrs['Image'],
             'SYNAPSE_IMAGE': source['synapse'].attrs['Image'], 'POSTGRES_IMAGE': source['postgres'].attrs['Image'],

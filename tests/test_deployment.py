@@ -56,23 +56,16 @@ class DeploymentConfiguration(unittest.TestCase):
                 self.assertNotEqual(self.configure(domain=domain).returncode, 0)
                 self.assertFalse(self.data.exists())
 
-    @unittest.skipIf(os.name == 'nt', 'Legacy host provisioner requires Linux paths and POSIX file permissions; tested in Linux CI.')
-    def test_calls_configuration_preserves_identity_and_private_defaults(self):
-        self.assertEqual(self.configure().returncode,0)
-        before=json.loads((self.data/'synapse/homeserver.yaml').read_text())
-        script=PREPARE.parent/'prepare-calls.py'
-        command=[sys.executable,str(script),'--data-dir',str(self.data),'--turn-domain','turn.example.test','--public-ip','8.8.8.8']
+    def test_retired_call_helper_cannot_create_or_modify_configuration(self):
+        self.data.mkdir()
+        sentinel=self.data/'existing-secret'
+        sentinel.write_text('fixture-preserve-this-content')
+        command=[sys.executable,str(PREPARE.parent/'prepare-calls.py'),'--data-dir',str(self.data),'--turn-domain','turn.example.test','--public-ip','8.8.8.8']
         result=subprocess.run(command,capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stderr)
-        config=json.loads((self.data/'synapse/homeserver.yaml').read_text())
-        self.assertEqual(config['server_name'],before['server_name'])
-        self.assertEqual(config['database'],before['database'])
-        self.assertFalse(config['enable_registration'])
-        self.assertEqual(config['federation_domain_whitelist'],[])
-        self.assertEqual(config['listeners'][0]['resources'][0]['names'],['client','openid'])
-        self.assertIn('static-auth-secret='+config['turn_shared_secret'],(self.data/'calls/turnserver.conf').read_text())
-        self.assertEqual((self.data/'calls/jwt.env').stat().st_mode&0o777,0o600)
-        self.assertNotEqual(subprocess.run(command,capture_output=True).returncode,0)
+        self.assertEqual(result.returncode,64)
+        self.assertIn('root compose.yaml',result.stderr)
+        self.assertEqual(list(self.data.iterdir()),[sentinel])
+        self.assertEqual(sentinel.read_text(),'fixture-preserve-this-content')
 
 if __name__ == '__main__':
     unittest.main()

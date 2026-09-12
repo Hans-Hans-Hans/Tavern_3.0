@@ -5,6 +5,7 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.28-alpine AS static
+COPY docker/cache-control.conf /etc/nginx/tavern-cache-control.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 USER 101

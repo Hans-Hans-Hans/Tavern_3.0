@@ -193,6 +193,12 @@ class ComposeStructure(unittest.TestCase):
         self.assertEqual(socket_services, ['operations'])
         self.assertEqual(services['operations']['profiles'], ['operations'])
         self.assertIn('991', services['tavern-api']['group_add'])
+        self.assertEqual(services['tavern-api']['environment']['TRUSTED_PROXY_CIDRS'], '${TRUSTED_PROXY_CIDRS:-}')
+        self.assertEqual(services['operations']['environment']['ALLOW_DOCKER_SOCKET_ACCESS'], '${ALLOW_DOCKER_SOCKET_ACCESS:-false}')
+        self.assertEqual(services['rtc-auth']['environment']['LIVEKIT_URL'], '${RTC_AUTH_LIVEKIT_URL:-http://livekit:7880}')
+        for name in ('livekit', 'rtc-auth', 'tavern-api'):
+            self.assertIn('10002', services[name]['group_add'])
+        self.assertIn('10003', services['tavern-api']['group_add'])
 
 
 if __name__ == '__main__':

@@ -23,6 +23,13 @@ class FakeEngine:
 
 
 class WorkerPolicy(unittest.TestCase):
+    def test_real_docker_access_requires_explicit_opt_in_before_any_connection(self):
+        for value in ('', 'false', '1', 'yes'):
+            with self.subTest(value=value), patch.dict(os.environ, {'ALLOW_DOCKER_SOCKET_ACCESS': value}), patch.object(worker.docker, 'from_env') as connect:
+                with self.assertRaisesRegex(ValueError, 'ALLOW_DOCKER_SOCKET_ACCESS=true'):
+                    worker.create_app()
+                connect.assert_not_called()
+
     def test_binary_exec_preserves_non_utf8_archive_bytes_and_ignores_stderr(self):
         payload = gzip.compress(bytes(range(256)) * 20)
         with tempfile.TemporaryDirectory() as directory:

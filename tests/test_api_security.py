@@ -5,7 +5,7 @@ import time
 import unittest
 
 from api.security import client_address, email_address, network_list, password_error, totp, verify_totp, uia_password_challenge
-from api.server import APIError, Store
+from api.server import APIError, Config, Service, Store
 
 
 class SecurityPrimitivesTests(unittest.TestCase):
@@ -17,6 +17,9 @@ class SecurityPrimitivesTests(unittest.TestCase):
         self.assertIsNone(verify_totp(secret, "000000", now=59))
 
     def test_forwarded_networks_fail_closed(self):
+        self.assertEqual(client_address('172.23.0.3', None, network_list('')), '172.23.0.3')
+        with self.assertRaises(ValueError):
+            client_address('172.23.0.3', '127.0.0.1', network_list(''))
         trusted = network_list("172.23.0.0/24,10.10.30.80/32")
         self.assertEqual(client_address("172.23.0.3", "10.10.20.9, 10.10.30.80", trusted), "10.10.20.9")
         self.assertEqual(client_address("172.23.0.3", "10.1.2.3, 203.0.113.3, 10.10.30.80", trusted), "203.0.113.3")
@@ -66,6 +69,25 @@ class SecurityPrimitivesTests(unittest.TestCase):
                 store.rate("user", 2)
             self.assertEqual(caught.exception.status, 429)
             store.db.close()
+
+    def test_upgrade_retires_old_totp_setup_once_without_touching_authenticators(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = Config(public_url='https://chat.example.test', data_dir=Path(folder))
+            store = Store(config.data_dir)
+            store.db.execute('INSERT INTO accounts(user_id,created) VALUES(?,?)', ('@alice:test', time.time()))
+            store.db.execute('UPDATE accounts SET totp=? WHERE user_id=?', (store.seal('existing-factor'), '@alice:test'))
+            old = store.challenge('totp', {'password': 'old-encrypted-password'}, '@alice:test')
+            unrelated = store.challenge('email', {'email': 'alice@example.test'}, '@alice:test')
+            store.db.close()
+            service = Service(config)
+            self.assertIsNone(service.store.db.execute('SELECT 1 FROM challenges WHERE id=?', (old,)).fetchone())
+            self.assertEqual(service.store.open(service.store.account('@alice:test')['totp']), 'existing-factor')
+            self.assertTrue(service.store.read_challenge(unrelated, 'email'))
+            fresh = service.store.challenge('totp', {'purpose': 'totp-enrollment', 'version': 1}, '@alice:test')
+            service.store.db.close()
+            reopened = Service(config)
+            self.assertEqual(reopened.store.read_challenge(fresh, 'totp')['payload']['version'], 1)
+            reopened.store.db.close()
 
 
 if __name__ == "__main__":

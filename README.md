@@ -13,6 +13,13 @@ The **0.4 development test checkpoints** and further updates are on `V3`. It is 
 
 ## Docker deployment
 
+[Installation](docs/INSTALLATION.md) is the canonical current deployment guide.
+See [Calls](docs/CALLS.md), [Integrations](docs/INTEGRATIONS.md),
+[Operations](docs/OPERATIONS.md), [NPM/Cloudflare](docs/PROXY_HARDENING.md) and
+[Troubleshooting](docs/TROUBLESHOOTING.md). Existing operators: review the
+[V3 hardening settings and redeploy steps](docs/V3_HARDENING.md) before updating.
+
+
 For a **fresh test installation** of the development version:
 
 ```sh
@@ -24,7 +31,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Set `TAVERN_DOMAIN` and SMTP settings before setup. The initializer generates and preserves credentials in private Docker volumes. PostgreSQL, Synapse, the account API, and the web gateway start from the same Compose file. The successful initializer exits; this is expected.
+Set `TAVERN_DOMAIN`, actual `TRUSTED_PROXY_CIDRS` and SMTP settings before setup. Proxy trust defaults to empty and forwarded requests fail closed until configured. The initializer generates and preserves credentials in private Docker volumes. PostgreSQL, Synapse, the account API, and the web gateway start from the same Compose file. The successful initializer exits; this is expected.
 
 **Existing installations:** follow [the migration procedure](docs/INSTALLATION.md#existing-tavern-installations) before switching. Preserve your hostname, Compose project, database volume, `.env`, and data directory. Do not run `docker compose down -v` during an update.
 
@@ -40,7 +47,7 @@ Cloudflare's public record must point to your WAN address; TCP 443 must reach NP
 
 ## SMTP/Gmail and first account
 
-Use a dedicated Gmail account with two-step verification and an App Password. Set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_SECURE=false` (required STARTTLS), username, App Password, and sender address. After setup, **Admin → Email** can update settings, test the connection, and send test mail. Saved passwords are never redisplayed.
+Use a dedicated Gmail account with two-step verification and an App Password. Set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_SECURE=false` (required STARTTLS), username, an App Password through `SMTP_PASSWORD_FILE`, and sender address. See the [secret-file setup](docs/INSTALLATION.md#administrator-setup-and-smtpgmail). After setup, **Admin → Email** can update settings, test the connection, and send test mail. File-managed passwords are changed in the mounted file; saved passwords are never redisplayed.
 
 On a fresh instance, `admin` / `admin` opens the one-time administrator setup from a trusted private network. Create your real identity, choose a strong password, and verify your email. The temporary login is then permanently invalidated. Existing instances use their existing administrator account. Users manage passwords, email, MFA, and sessions in **Settings → Account & security**.
 
@@ -56,11 +63,11 @@ Set `COMPOSE_PROFILES=calls`, `CALLS_ENABLED=true`, `TURN_DOMAIN`, and `PUBLIC_I
 | TCP 7881 | Docker host, LiveKit media |
 | UDP 7882 | Docker host, LiveKit media |
 
-See [installation](docs/INSTALLATION.md#voice-video-screen-sharing-and-turn) for enabling calls on an existing server, and [calls and integrations](docs/CALLS_AND_INTEGRATIONS.md) for bot account/device setup. Test media between separate networks.
+See [installation](docs/INSTALLATION.md#voice-video-screen-sharing-and-turn) for enabling calls on an existing server, and [integrations](docs/INTEGRATIONS.md) for bot account/device setup. Test media between separate networks.
 
 ## Backups, restore, and updates
 
-Enable the `operations` profile and `OPERATIONS_ENABLED=true` for **Admin → Operations**. It supports backup schedules, retention, downloads, isolated restore copies, version checks, and opt-in compatible Tavern web/API patch updates. Only the scoped operations worker receives Docker access.
+After reviewing the [host-root Docker access warning](docs/OPERATIONS.md), explicitly enable the `operations` profile, `OPERATIONS_ENABLED=true` and `ALLOW_DOCKER_SOCKET_ACCESS=true` for **Admin → Operations**. It supports backup schedules, retention, downloads, isolated restore copies, version checks, and opt-in compatible Tavern web/API patch updates. Only that worker receives Docker access; compromise of it can control the host.
 
 Backups include database, configuration, media, and secrets; keep downloaded archives private. A browser restore creates an isolated copy. Production recovery and upgrades use the documented [operations procedure](docs/INSTALLATION.md#backups-and-restore), including health checks and rollback. Source deployments update with `git pull` and `docker compose up -d --build` after reviewing migrations and taking a backup.
 

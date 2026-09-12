@@ -329,12 +329,21 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         old, _, _ = await self.login()
         started = await self.request("POST", "/api/account/mfa/totp/start", {"password": "Correct password!"}, cookie)
         setup = await started.json()
+        self.assertEqual(started.status, 200, setup)
+        grant = self.service.store.read_challenge(setup['challengeId'], 'totp', '@alice:test')['payload']
+        self.assertNotIn('password', grant)
+        self.assertNotIn('Correct password!', json.dumps(grant))
+        self.assertEqual(grant['purpose'], 'totp-enrollment')
+        during_setup, _, _ = await self.login()
         code = totp(setup["secret"], int(time.time() // 30))
         done = await self.request("POST", "/api/account/mfa/totp/complete", {"challengeId": setup["challengeId"], "code": code}, cookie)
         self.assertEqual(done.status, 200, await done.text())
         recovery = (await done.json())["recoveryCodes"]
         self.assertEqual(len(recovery), 10)
         self.assertEqual((await self.request("GET", "/api/auth/session", cookie=old)).status, 401)
+        self.assertEqual((await self.request('GET', '/api/auth/session', cookie=during_setup)).status, 401)
+        device_ids = [device for user, device in self.tokens.values() if user == '@alice:test']
+        self.assertEqual(device_ids, [grant['deviceId']])
         response = await self.request("POST", "/api/auth/login", {"username": "alice", "password": "Correct password!"})
         challenge = await response.json()
         self.assertTrue(challenge["mfaRequired"])
@@ -345,6 +354,60 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(accepted.status, 200)
         reused = await self.request("POST", "/api/auth/mfa", {"challengeId": challenge["challengeId"], "method": "recovery", "code": recovery[0]})
         self.assertEqual(reused.status, 400)
+
+    async def test_totp_start_requires_native_uia_and_never_grants_extra_stage_bypass(self):
+        cookie, _, _ = await self.login()
+        # Even an empty current device list must authorize the future grant:
+        # another device can be created while the user scans the setup QR.
+        self.uia_extra = True
+        response = await self.request('POST', '/api/account/mfa/totp/start', {'password': 'Correct password!'}, cookie)
+        self.assertEqual(response.status, 400)
+        self.assertEqual((await response.json())['errcode'], 'UNSUPPORTED_UIA')
+        self.assertEqual(self.service.store.db.execute("SELECT count(*) FROM challenges WHERE kind='totp'").fetchone()[0], 0)
+        self.assertFalse(any(path.endswith('/delete_devices') and path.startswith('/_synapse/') for _, path, _, _ in self.upstream_calls))
+
+    async def test_totp_grant_cannot_cross_account_session_device_epoch_or_expiry(self):
+        cookie, _, _ = await self.login()
+        started = await self.request('POST', '/api/account/mfa/totp/start', {'password': 'Correct password!'}, cookie)
+        setup = await started.json()
+        grant = self.service.store.read_challenge(setup['challengeId'], 'totp', '@alice:test')['payload']
+        session = dict(self.service.store.db.execute('SELECT * FROM sessions WHERE id=?', (grant['sessionId'],)).fetchone())
+        for key, value in (('purpose', 'password-reset'), ('version', 0), ('userId', '@owner:test'), ('sessionId', 'other'),
+                           ('deviceId', 'other'), ('credentialEpoch', -1), ('reauthenticatedAt', time.time() - 601)):
+            with self.subTest(key=key):
+                count = len(self.upstream_calls)
+                with self.assertRaises(APIError):
+                    await self.service.revoke_totp_devices(session, {**grant, key: value})
+                self.assertEqual(len(self.upstream_calls), count)
+
+    async def test_file_managed_smtp_is_never_persisted_or_returned(self):
+        cookie, _, _ = await self.login('owner')
+        self.service.smtp_file_password = 'mounted-secret-value'
+        self.service.store.set('smtp', {'password': 'previous-saved-secret'})
+        response = await self.request('PUT', '/api/admin/settings', {'smtp': {'host': 'smtp.example.test'}}, cookie)
+        self.assertEqual(response.status, 200, await response.text())
+        settings = (await response.json())['smtp']
+        self.assertTrue(settings['passwordConfigured'])
+        self.assertNotIn('password', settings)
+        self.assertEqual(self.service.store.get('smtp')['password'], 'previous-saved-secret')
+        rejected = await self.request('PUT', '/api/admin/settings', {'smtp': {'password': 'new-secret'}}, cookie)
+        self.assertEqual(rejected.status, 400)
+        self.assertNotIn('mounted-secret-value', await rejected.text())
+
+    async def test_service_credentials_are_not_available_through_managed_matrix_proxy(self):
+        owner, _, _ = await self.login('owner')
+        ordinary, _, _ = await self.login()
+        private = self.service.store.get('service_account')
+        for cookie in (owner, ordinary):
+            for path in ('/_synapse/admin/v2/users', '/_synapse/admin/v2/users/@alice:test/delete_devices'):
+                before = len(self.upstream_calls)
+                response = await self.request('POST', '/api/matrix' + path, {'devices': ['D1']}, cookie)
+                self.assertIn(response.status, (403, 404))
+                self.assertEqual(len(self.upstream_calls), before)
+            response = await self.request('GET', '/api/auth/session', cookie=cookie)
+            encoded = await response.text()
+            self.assertNotIn(private['token'], encoded)
+            self.assertNotIn(private['password'], encoded)
 
     async def test_recovery_code_regeneration_requires_factor_and_invalidates_old_codes(self):
         cookie, _, _ = await self.login()
@@ -367,15 +430,15 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         started = await self.request("POST", "/api/account/mfa/totp/start", {"password": "Correct password!"}, cookie)
         setup = await started.json()
         revoked, finish = asyncio.Event(), asyncio.Event()
-        original = self.service.revoke_upstream_others
+        original = self.service.revoke_totp_devices
 
-        async def pause_after_revocation(session, password):
-            result = await original(session, password)
+        async def pause_after_revocation(session, grant):
+            result = await original(session, grant)
             revoked.set()
             await finish.wait()
             return result
 
-        self.service.revoke_upstream_others = pause_after_revocation
+        self.service.revoke_totp_devices = pause_after_revocation
         enrollment = asyncio.create_task(self.request("POST", "/api/account/mfa/totp/complete", {"challengeId": setup["challengeId"], "code": totp(setup["secret"], int(time.time() // 30))}, cookie))
         await asyncio.wait_for(revoked.wait(), 2)
         login = asyncio.create_task(self.request("POST", "/api/auth/login", {"username": "alice", "password": "Correct password!"}))

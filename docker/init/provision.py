@@ -67,6 +67,33 @@ def own(path, uid):
         os.chown(path, uid, uid)
 
 
+def shared_read(path, gid, mode):
+    """Only named runtime files are shared; operator sidecars stay private."""
+    if path.is_symlink():
+        raise ConfigurationError(f'{path.name} must not be a symbolic link when setting shared secret permissions.')
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        os.chown(path, 0, gid)
+    os.chmod(path, mode)
+
+
+def protect_runtime_secrets(root):
+    # Fixed supplemental groups are declared on the consumers in Compose.
+    calls = root / 'calls'
+    shared_read(calls, 10002, 0o750)
+    for name in ('livekit_key', 'livekit_secret', 'livekit.yaml'):
+        path = calls / name
+        if path.exists():
+            shared_read(path, 10002, 0o640)
+    turn = calls / 'turnserver.conf'
+    if turn.exists():
+        # Coturn runs as root; the other call consumers do not need this file.
+        shared_read(turn, 0, 0o600)
+    token = root / 'operations-secret/token'
+    shared_read(token.parent, 10003, 0o750)
+    if token.exists():
+        shared_read(token, 10003, 0o640)
+
+
 def provision(root, env):
     domain = hostname(env.get('TAVERN_DOMAIN', ''), 'TAVERN_DOMAIN')
     public_url = env.get('TAVERN_PUBLIC_URL') or f'https://{domain}'
@@ -172,8 +199,7 @@ def provision(root, env):
     os.chmod(root / 'integrations-config', 0o750)
     if operations:
         private_secret(root / 'operations-secret/token')
-        os.chmod(root / 'operations-secret', 0o755)
-        os.chmod(root / 'operations-secret/token', 0o644)
+    protect_runtime_secrets(root)
     print('Tavern configuration validated. Existing identity, database credentials, and media preserved.')
 
 
@@ -343,27 +369,17 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
             path = call_dir / name
             if path.exists() and path.read_text().strip() != expected:
                 raise ConfigurationError('LiveKit credential files differ. Restore the matching files without rotating credentials.')
-        write_new(call_dir / 'livekit_key', key + '\n', 0o644)
-        write_new(call_dir / 'livekit_secret', secret + '\n', 0o644)
+        write_new(call_dir / 'livekit_key', key + '\n', 0o640)
+        write_new(call_dir / 'livekit_secret', secret + '\n', 0o640)
         if (call_dir / 'livekit_key').read_text().strip() != key or (call_dir / 'livekit_secret').read_text().strip() != secret:
             raise ConfigurationError('LiveKit credential files differ. Restore the matching files without rotating credentials.')
-        for path in (call_dir,):
-            os.chmod(path, 0o755)
-        # The legacy CLI used umask 077. The SFU and API now run as UID
-        # 10001, so repair only their runtime files to match fresh installs.
-        # Keep private sidecars and all existing credential bytes untouched.
-        for path in (livekit_path, call_dir / 'livekit_key', call_dir / 'livekit_secret'):
-            os.chmod(path, 0o644)
+        protect_runtime_secrets(root)
         migrate_existing_call_openid(root, config, openid_resources)
         return
     turn_secret = private_secret(call_dir / 'turn_secret')
     key = private_secret(call_dir / 'livekit_key')
     secret = private_secret(call_dir / 'livekit_secret')
-    # All call images must read config, regardless of their upstream UID. Mounts
-    # are private to this stack, not public directories or web-served assets.
-    os.chmod(call_dir, 0o755)
-    for file in ('livekit_key', 'livekit_secret'):
-        os.chmod(call_dir / file, 0o644)
+    # Keep new credentials private until all runtime files are validated.
     turn = ['listening-port=3478', 'listening-ip=0.0.0.0', f'external-ip={public_ip}', f'realm={turn_domain}',
             'fingerprint', 'use-auth-secret', f'static-auth-secret={turn_secret}', 'min-port=49160', 'max-port=49200',
             'no-cli', 'no-multicast-peers', 'no-tcp-relay', 'no-tls', 'no-dtls', 'stale-nonce=600',
@@ -392,8 +408,9 @@ def provision_calls(root, config, domain, turn_domain, public_ip):
     temporary = root / 'synapse/homeserver.yaml.pending'
     temporary.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
     temporary.replace(root / 'synapse/homeserver.yaml')
-    write_new(turn_path, '\n'.join(turn) + '\n', 0o644)
-    write_new(livekit_path, json.dumps(livekit, indent=2) + '\n', 0o644)
+    write_new(turn_path, '\n'.join(turn) + '\n', 0o600)
+    write_new(livekit_path, json.dumps(livekit, indent=2) + '\n', 0o640)
+    protect_runtime_secrets(root)
 
 
 if __name__ == '__main__':
