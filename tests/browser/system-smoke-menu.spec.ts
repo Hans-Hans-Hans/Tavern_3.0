@@ -19,6 +19,7 @@ const community = ts.createSourceFile('community.ts', readFileSync('lib/communit
 const permission = community.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'canEditCommunity')!.getText(community);
 const boundary = ts.transpileModule(`
 import {DropdownMenu,DropdownMenuContent,DropdownMenuItem,DropdownMenuTrigger,DropdownMenuSeparator} from '/components/ui/dropdown-menu.tsx';
+import {ManagementSections} from '/app/management-sections.tsx';
 const f=window.workspaceFixture,React=f.React,{useState}=React,{ChevronDown,Users,Settings,ShieldCheck}=f.icons;
 const getMatrixClient=()=>f.client,communityEvents={layout:'io.tavern.server.layout',channel:'io.tavern.channel'};
 const state=(room,type,key='')=>room?.currentState.getStateEvents(type,key)?.getContent()||{};
@@ -34,7 +35,7 @@ export function WorkspaceMenu(){
  const directSection=selectedServer==='dms';const prefs={muted:[],focus:false},data={workspace:{name:'Tavern'},conversations:[],servers:[f.server]},currentServer=selectedServer===f.server.id?f.server:null,terms={server:'server'},chooseServer=setSelected,canInviteToRoom=()=>false,openSettings=()=>{};
  const readAction={run:()=>{}},setCreationCategory=()=>{},setCategoryRequest=()=>{},setReportTarget=()=>{},setConfirmAction=()=>{},loadBootstrap=async()=>{},openServerSettings=id=>{chooseServer(id);setModal('serverSettings');};
  ${serverActions}
- return <><style>{'[data-slot="dropdown-menu-content"][data-state="closed"]{animation-duration:1000ms!important}'}</style><button aria-label={f.server.name} onClick={()=>chooseServer(f.server.id)}>{f.server.name}</button>${header}{modal&&<div role='dialog'>{modal}</div>}</>;
+ return <><style>{'[data-slot="dropdown-menu-content"][data-state="closed"]{animation-duration:1000ms!important}'}</style><button aria-label={f.server.name} onClick={()=>chooseServer(f.server.id)}>{f.server.name}</button>${header}{modal&&<div role='dialog'><ManagementSections label='Server settings sections' sections={[{id:'overview',title:'Overview',content:<p>Server overview</p>},{id:'organization',title:'Server & channels',content:<p>System notices editor</p>}]}/></div>}</>;
 }
 `, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React } }).outputText;
 
@@ -64,7 +65,8 @@ test('the live helper waits for the closing layer and opens the actual v12 creat
   await page.getByRole('menuitem', { name: 'All channels', exact: true }).click();
   await expect(page.locator('.workspace-menu')).toHaveAttribute('data-state', 'closed');
   await openSystemMessageSettings(page, 'CI system notices test server');
-  await expect(page.getByRole('dialog')).toHaveText('serverSettings');
+  await expect(page.getByRole('tab', { name: 'Server & channels', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel')).toHaveText('System notices editor');
 });
 
 test('the menu helper cannot bypass native permission when the actor is an ordinary joined member', async ({ page }) => {

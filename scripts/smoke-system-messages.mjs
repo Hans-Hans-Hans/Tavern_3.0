@@ -48,6 +48,7 @@ export async function openSystemMessageSettings(page, serverName) {
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   await page.getByRole('menuitem', { name: 'Server settings', exact: true }).click();
+  await page.getByRole('dialog').getByRole('tab', { name: 'Server & channels', exact: true }).click();
 }
 
 async function isolatedHelperNetwork() {
