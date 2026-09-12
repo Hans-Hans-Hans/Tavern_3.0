@@ -225,3 +225,9 @@ export async function recoverEncryption(encoded: string, restoreAll: boolean, pr
     } finally { raw.fill(0); }
   });
 }
+
+/** Serialize native key imports with manual recovery and backup setup. */
+export async function historyKeyOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const own=owner(required());
+  return exclusive(async()=>{own.check();const value=await operation();own.check();return value;});
+}

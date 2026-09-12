@@ -1,3 +1,4 @@
+import { EmailHistoryRecovery } from './email-history-recovery';
 import { useEffect, useRef, useState } from 'react';
 import { VerificationPhase, type GeneratedSecretStorageKey } from 'matrix-js-sdk/lib/crypto-api';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -25,7 +26,7 @@ function SecurityCenterSession() {
   useEffect(() => { let active = true; const refresh = () => securityStatus().then(s => { if (active) setStatus(s); }).catch(e => { if (active) setError(e.message); }); void refresh(); const off = subscribeSecurity(refresh); return () => { active = false; off(); }; }, []);
   useEffect(() => () => { generated?.privateKey.fill(0); }, [generated]);
   async function run(task: () => Promise<void>) { setBusy(true); setError(''); setMessage(''); try { await task(); if (mounted.current) { const value = await securityStatus(); if (mounted.current) setStatus(value); } } catch (e) { if (mounted.current) setError((e as Error).message); } finally { if (mounted.current) { setBusy(false); setPassword(''); setKey(''); } } }
-  return <section className="session-manager"><h3>Encryption identity & recovery</h3>
+  return <section className="session-manager"><EmailHistoryRecovery backupVersion={status?.serverBackupVersion} known={status?.canRestoreBackup===true} ready={!!status&&!history.busy}/><h3>Encryption identity & recovery</h3>
     <p className="login-help">Compare devices with emoji verification, or unlock this session with your recovery key. The homeserver stores encrypted key backups; keep the recovery key somewhere you control.</p>
     {status && <dl className="security-status"><div><dt>This device</dt><dd>{status.verified ? 'Verified' : 'Not verified'}</dd></div><div><dt>Signing identity</dt><dd>{status.identity ? 'Ready' : status.serverIdentity ? 'Locked on this device' : 'Not configured'}</dd></div><div><dt>Secret storage</dt><dd>{status.storage ? 'Configured' : 'Setup incomplete'}</dd></div><div><dt>Automatic key backup</dt><dd>{status.backupVersion ? `Active · version ${status.backupVersion}` : 'Not active on this device'}</dd></div></dl>}
     <div className='local-history-recovery'><h4>Earlier sign-ins in this browser</h4><p>{history.busy ? 'Checking saved message keys…' : history.local?.keys ? `Recovered ${history.local.keys} saved message keys. Available messages will decrypt as their keys are loaded.` : history.checked ? 'No message keys recovered from earlier sign-ins in this browser.' : 'Check for saved message keys from an earlier sign-in.'}</p>

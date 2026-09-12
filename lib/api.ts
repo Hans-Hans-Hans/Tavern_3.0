@@ -43,7 +43,7 @@ export async function fetchAccountArtwork(path: string, signal: AbortSignal): Pr
     headers: { 'X-Tavern-Device': device, Authorization: 'Bearer cookie-session:' + device } });
   return readImageResponse(response, 2 * 1024 * 1024, () => owner === artworkOwner, signal);
 }
-export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; passwordChangeRequired?: boolean; mfaEnrollmentRequired?: boolean };
+export type AccountSession = { userId: string; deviceId: string; baseUrl: string; admin: boolean; displayName?: string; email?: string; emailVerified?: boolean; credentialEpoch?: number; passwordChangeRequired?: boolean; mfaEnrollmentRequired?: boolean };
 let managed = false;
 export function setManagedAccount(value: boolean) { managed = value; if (!value) stopWebPushSession(); }
 export function isManagedAccount() { return managed; }

@@ -38,7 +38,7 @@ export async function localBackupRecovery(c: MatrixClient, isCurrent: () => bool
     let bytes: Uint8Array | undefined;
     try {
       bundle = await machine.getBackupKeys(); check(); key = bundle.decryptionKey;
-      if (!key || bundle.backupVersion !== target.version) return false;
+      if (!key || (bundle.backupVersion !== target.version && bundle.backupVersion !== 'io.tavern.email.pending')) return false;
       publicKey = key.megolmV1PublicKey;
       if (publicKey.algorithm !== target.algorithm || publicKey.publicKeyBase64 !== target.publicKey) return false;
       // Attempt a matching candidate only once. Unavailable native metadata or

@@ -73,3 +73,10 @@ test('account retirement during backup discovery prevents key caching and local 
   expect(error).toMatch(/session changed/);expect(await page.evaluate(()=>(window as any).fixture.hasCachedBackup())).toBe(false);
   expect(await page.evaluate(()=>(window as any).fixture.event.isDecryptionFailure())).toBe(true);
 });
+
+test('an interrupted email backup candidate is recovered only when its public key matches the current native backup',async({page})=>{
+ await fixture(page);
+ await page.evaluate(async()=>{const f=(window as any).fixture;await f.seedBackup('io.tavern.email.pending');const info=f.backupInfo();info.version='7';f.setBackupInfo(info);});
+ const result=await page.evaluate(()=>(window as any).fixture.repair());expect(result.backupKeyRestored).toBe(true);
+ expect(await page.evaluate(()=>(window as any).fixture.cachedBackupMatches())).toBe(true);
+});

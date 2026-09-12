@@ -1,3 +1,5 @@
+import { historyPasswordKey } from '@/lib/history-envelope';
+import { rememberHistoryLogin, forgetHistoryLogin } from '@/lib/history-login';
 import { brandingAsset } from '@/lib/branding';
 import { SecurityEnrollment } from './security-enrollment';
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
@@ -18,6 +20,8 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 export function AuthGateway() {
   const [config, setConfig] = useState<Config | null>(null), [session, setSession] = useState<AccountSession | null>(null);
   const rechecking=useRef(false);
+  const historyLogin=useRef<CryptoKey|null>(null);
+  useEffect(()=>()=>{historyLogin.current=null;forgetHistoryLogin();},[]);
   const [mode, setMode] = useState('loading'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [remember, setRemember] = useState(false);
   const [challenge, setChallenge] = useState(''), [code, setCode] = useState(''), [method, setMethod] = useState('totp'), [methods, setMethods] = useState<string[]>([]);
@@ -31,8 +35,8 @@ export function AuthGateway() {
   useEffect(()=>{if(session&&!session.admin&&status?.maintenance.enabled&&mode==='ready'){stopWebPushSession();void import('@/lib/matrix').then(m=>m.clearLocalMatrixSession());setMode('maintenance');}},[status,session,mode]);
   async function openSession(value: AccountSession) {
     setAccountDevice(value.deviceId);
-    if (value.passwordChangeRequired) { stopWebPushSession(); setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
-    if(value.mfaEnrollmentRequired){stopWebPushSession();setSession(value);setPassword('');setNewPassword('');setConfirmation('');setCode('');setMode('security-enrollment');return;}
+    if (value.passwordChangeRequired) { historyLogin.current=null;forgetHistoryLogin(); stopWebPushSession(); setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('password-change'); return; }
+    if(value.mfaEnrollmentRequired){historyLogin.current=null;forgetHistoryLogin();stopWebPushSession();setSession(value);setPassword('');setNewPassword('');setConfirmation('');setCode('');setMode('security-enrollment');return;}
     const health=await requestApi('/system/status').catch(()=>null);
     if(health?.maintenance?.enabled&&!value.admin){stopWebPushSession();setSession(value);setMode('maintenance');return;}
     // Reconcile the browser's notification owner before potentially slow crypto
@@ -40,6 +44,7 @@ export function AuthGateway() {
     accountSessionReady(value);
     const { attachManagedMatrixSession } = await import('@/lib/matrix');
     if(!location.pathname.startsWith('/admin'))await attachManagedMatrixSession(value);
+    if(historyLogin.current){rememberHistoryLogin(value,historyLogin.current);historyLogin.current=null;}
     setSession(value); setPassword(''); setNewPassword(''); setConfirmation(''); setCode(''); setMode('ready');
   }
   async function initialize() {
@@ -56,7 +61,7 @@ export function AuthGateway() {
       else { setError(e.message); setMode('failure'); }
     }
   }
-  useEffect(() => { void initialize(); const logout = (event: Event) => { setSession(null); setMode('login'); setNotice(typeof (event as CustomEvent).detail === 'string' && (event as CustomEvent).detail ? (event as CustomEvent).detail.slice(0, 600) : 'You have been signed out.'); }; window.addEventListener('tavern:signout', logout); return () => window.removeEventListener('tavern:signout', logout); }, []);
+  useEffect(() => { void initialize(); const logout = (event: Event) => { historyLogin.current=null;forgetHistoryLogin();setSession(null); setMode('login'); setNotice(typeof (event as CustomEvent).detail === 'string' && (event as CustomEvent).detail ? (event as CustomEvent).detail.slice(0, 600) : 'You have been signed out.'); }; window.addEventListener('tavern:signout', logout); return () => window.removeEventListener('tavern:signout', logout); }, []);
   useEffect(()=>{const enforce=()=>{if(rechecking.current)return;rechecking.current=true;setMode('loading');void import('@/lib/matrix').then(matrix=>{matrix.clearLocalMatrixSession();return requestApi<AccountSession>('/auth/session');}).then(openSession).catch(e=>{setError(e.message);setMode(e.status===401?'login':'failure');}).finally(()=>{rechecking.current=false;});};window.addEventListener('tavern:account-requirement',enforce);return()=>window.removeEventListener('tavern:account-requirement',enforce);},[]);
   useEffect(()=>{const icon=brandingAsset(config?.instance?.icon);if(!icon)return;const link=document.querySelector<HTMLLinkElement>('link[rel="icon"]')||document.createElement('link'),previous=link.getAttribute('href'),previousType=link.getAttribute('type');link.rel='icon';link.type='image/png';link.href=icon;if(!link.isConnected)document.head.append(link);return()=>{if(previous)link.setAttribute('href',previous);else link.remove();if(previousType)link.setAttribute('type',previousType);else link.removeAttribute('type');};},[config?.instance?.icon]);
   async function submit(e: FormEvent) {
@@ -67,7 +72,10 @@ export function AuthGateway() {
       } else if(mode==='register-code'){
         const result=await requestApi('/auth/register/complete',{challengeId:challenge,code});await openSession(result);if(result.invitationRoomId)location.hash='room='+encodeURIComponent(result.invitationRoomId);
       } else if (mode === 'login') {
+        historyLogin.current=null;forgetHistoryLogin();
+        const historyKey=await historyPasswordKey(password);
         const result = await requestApi('/auth/login', { username, password, remember });
+        historyLogin.current=historyKey;
         setPassword('');
         if (result.mfaRequired) { setChallenge(result.challengeId); setMethods(result.methods); setMethod(result.methods[0]); setMode('mfa'); }
         else await openSession(result);
@@ -106,7 +114,7 @@ export function AuthGateway() {
       {mode==='recovery-code'&&<><Field label='Authenticator or recovery code (if enabled)'><input autoComplete='one-time-code' value={recoveryMfa} onChange={e=>setRecoveryMfa(e.target.value)}/></Field><Field label='Second-factor type'><select value={method} onChange={e=>setMethod(e.target.value)}><option value='totp'>Authenticator app</option><option value='recovery'>Recovery code</option></select></Field></>}{setup && !config?.smtpConfigured && <p role="alert">Configure SMTP in your deployment environment before completing email verification.</p>}
       <button className="primary-button" disabled={busy || (setup && !config?.smtpConfigured)}>{busy ? 'Please wait…' : setup || register ? 'Send verification code' : verification ? 'Verify and continue' : mode === 'recovery' ? 'Send recovery code' : 'Sign in'}</button>
       {mode==='login'&&config?.smtpConfigured&&(config.registrationMode==='open'||(config.registrationMode==='invite'&&!!invitationToken(location)))&&<button type='button' className='secondary-button' onClick={()=>{setMode('register');setError('');}}>Create an account</button>}{mode === 'login' && config?.smtpConfigured && <button type="button" className="text-button" onClick={() => { setMode('recovery'); setError(''); }}>Forgot password?</button>}
-      {!setup && mode !== 'login' && <button type="button" className="text-button" disabled={busy} onClick={() => { setMode(config?.bootstrapRequired ? 'bootstrap' : 'login'); setCode(''); setError(''); }}>Back</button>}
+      {!setup && mode !== 'login' && <button type="button" className="text-button" disabled={busy} onClick={() => { historyLogin.current=null;forgetHistoryLogin();setMode(config?.bootstrapRequired ? 'bootstrap' : 'login'); setCode(''); setError(''); }}>Back</button>}
     </form>}
     {error && <p className="connect-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <footer><ShieldCheck size={16}/> Self-hosted conversations with end-to-end encryption</footer><div className='auth-legal-links'>{config?.instance?.termsUrl&&/^https?:\/\//.test(config.instance.termsUrl)&&<a href={config.instance.termsUrl} target='_blank' rel='noreferrer'>Terms</a>}{config?.instance?.privacyUrl&&/^https?:\/\//.test(config.instance.privacyUrl)&&<a href={config.instance.privacyUrl} target='_blank' rel='noreferrer'>Privacy</a>}{config?.instance?.contact&&<span>{config.instance.contact}</span>}</div>

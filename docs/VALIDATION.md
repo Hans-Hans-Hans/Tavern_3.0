@@ -681,3 +681,5 @@ The Windows development workspace has no local Docker daemon. Container and real
 - Mobile/PWA installation, keyboard/screen-reader/contrast behavior, representative load and independent security review.
 
 Healthy services and unit tests do not establish external media connectivity or production-scale performance. No independent security audit, capacity certification or complete mature-platform parity is claimed.
+
+Email history recovery checks: production build passed; seven new focused HTTP security cases plus eighteen existing account API cases passed; seven WebCrypto/coordinator cases passed; twenty-one focused browser cases passed, including real Rust cached-key migration and new-device recovery UI. These checks do not claim a live SMTP delivery or deployed native email-restore acceptance.

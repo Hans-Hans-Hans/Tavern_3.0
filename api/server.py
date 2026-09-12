@@ -410,7 +410,7 @@ class Service:
         self.store.db.execute('UPDATE accounts SET known_admin=? WHERE user_id=?', (int(is_admin), session['user_id']))
         return {"userId": session["user_id"], "deviceId": session["device_id"], "baseUrl": self.config.public_url + "/api/matrix",
                 "admin": is_admin, "displayName": account.get("display_name", ""),
-                "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "passwordChangeRequired": bool(account.get('password_change_required')), 'mfaEnrollmentRequired': self.needs_mfa_enrollment(session, is_admin)}
+                "email": account.get("email", ""), "emailVerified": bool(account.get("verified")), "credentialEpoch": account.get("credential_epoch", 0), "passwordChangeRequired": bool(account.get('password_change_required')), 'mfaEnrollmentRequired': self.needs_mfa_enrollment(session, is_admin)}
 
     async def issue_session(self, request, login, remember=False):
         user = login['user_id']
@@ -1217,7 +1217,7 @@ def create_app(config: Config | None = None):
     # Ship the complete route set or fail startup. Missing modules must not make
     # the health check report success while silently disabling permissions/features.
     prefix = __package__ + "." if __package__ else ""
-    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "system_messages", "invitation_privacy", "server_invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "call_audio", "push_notifications", "server_eligibility"):
+    for module in ("operations", "social", "community_api", "room_reports", "system_policy", "admin_resources", "integrations_admin", "system_messages", "invitation_privacy", "server_invitation_privacy", "call_moderation", "link_preview", "admin_users", "instance_admin", "moderation", "temporary_bans", "account_deactivation", "rtc_gateway", "call_audio", "push_notifications", "server_eligibility", "history_recovery"):
         import_module(prefix + module).register_routes(app)
     return app
 
