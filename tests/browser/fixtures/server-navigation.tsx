@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, MatrixEvent, Room, NotificationCountType } from 'matrix-js-sdk';
 import { Toaster } from 'sonner';
+import { Beer, MessageCircle, Plus, Settings, CircleHelp } from 'lucide-react';
 import { ServerNavigation } from '../../../app/server-navigation';
 import { MobileServerNavigation } from '../../../app/mobile-server-navigation';
 import { ActionMenu } from '../../../app/action-menu';
@@ -23,6 +24,8 @@ export function mountFixture(mobile=false) {
   w.sync=(value:any)=>{w.native=structuredClone(value);sessionStorage.setItem('fixture-server-organization',JSON.stringify(value));updateCache();};
   w.changeOwner=()=>{w.accountOwner={};w.holdRead=false;w.listeners.forEach((fn:()=>void)=>fn());};
   const servers=[{id:'!alpha:local',name:'Alpha'},{id:'!bravo:local',name:'Bravo'},{id:'!charlie:local',name:'Charlie'},{id:'!delta:local',name:'Delta'}];
+  const fullRail = new URLSearchParams(location.search).has('fullRail');
+  if (fullRail) for (let index = 0; index < 12; index++) servers.push({id:'!extra-'+index+':local',name:'Extra '+index});
   w.manualUnread=[]; w.readState={roomIds:['!child:local','!muted:local','!left:local','!invited:local','!manual:local'],muted:['!muted:local'],focus:false};
   let eventNumber=0;
   const stateEvent=(id:string,type:string,key:string,content:any)=>new MatrixEvent({room_id:id,type,state_key:key,content,event_id:'$read'+(++eventNumber),sender:w.actor});
@@ -36,5 +39,9 @@ export function mountFixture(mobile=false) {
   w.client.getRoom('!alpha:local').currentState.setStateEvents([...w.readState.roomIds,'!hidden:local'].map((id:string)=>stateEvent('!alpha:local','m.space.child',id,{via:['local']})));
   w.client.getRoom('!bravo:local').currentState.setStateEvents([stateEvent('!bravo:local','m.space.child','!manual:local',{via:['local']})]);
   w.emit=()=>w.listeners.forEach((fn:()=>void)=>fn());
-  const root=createRoot(document.getElementById('root')!);w.redraw=()=>root.render(<React.StrictMode>{mobile ? <div style={{width:'100%',padding:12}}><MobileServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} serverActions={server=>[{label:'Server settings '+server.name,run:()=>w.selected.push('settings:'+server.id)}]}/></div> : <aside className='workspace-rail' style={{height:'100dvh',display:'flex'}}><ServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} renderServer={(server,button,organization)=><ActionMenu actions={[{label:'Server settings '+server.name,run:()=>{}},...organization]}>{button}</ActionMenu>}/></aside>}<Toaster/></React.StrictMode>);w.redraw();
+  const root=createRoot(document.getElementById('root')!);w.redraw=()=>root.render(<React.StrictMode>{mobile ? <div style={{width:'100%',padding:12}}><MobileServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} serverActions={server=>[{label:'Server settings '+server.name,run:()=>w.selected.push('settings:'+server.id)}]}/></div> : <aside className='workspace-rail' style={{height:'100dvh',display:'flex'}}>
+    {fullRail && <><button className='brand-mark' aria-label='Tavern home'><Beer size={27}/></button><div className='rail-divider'/><button className='workspace-icon' aria-label='All channels'>T</button><button className='workspace-icon' aria-label='Direct messages'><MessageCircle size={24}/></button></>}
+    <ServerNavigation servers={servers} readState={w.readState} active='' onSelectServer={id=>w.selected.push(id)} renderServer={(server,button,organization)=><ActionMenu actions={[{label:'Server settings '+server.name,run:()=>{}},...organization]}>{button}</ActionMenu>}/>
+    {fullRail && <><button className='icon-button' aria-label='Create server'><Plus size={20}/></button><button className='icon-button' aria-label='Tavern settings'><Settings size={20}/></button><div className='rail-spacer'/><button className='icon-button' aria-label='About Tavern'><CircleHelp size={20}/></button><button className='rail-profile' aria-label='Your profile'><span style={{display:'block',width:32,height:32}}>You</span></button></>}
+    </aside>}<Toaster/></React.StrictMode>);w.redraw();
 }

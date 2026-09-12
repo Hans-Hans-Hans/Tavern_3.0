@@ -695,3 +695,14 @@ The native stack now also includes a direct-audio acceptance probe. It uses the 
 At `f958030`, [native run 34671049568](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34671049568) passed the full email history flow: TLS SMTP verification for the ordinary account, password-protected enrollment, automatic new-device prompt, wrong-code rejection, correct-code restoration of an actual encrypted message, and automatic decryption after the now-known browser signs in again. The native backup and signing identity remained unchanged. Conference connection and UI/native leave also passed again. The overall run later stopped at an empty DM request inbox; a recipient initial-sync assertion now distinguishes persisted sender state from the stripped invitation the recipient actually receives. Deployed phone/PC direct audio remains unconfirmed.
 
 At `f6190e8`, [native run 34671476979](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34671476979) passed actual bidirectional direct audio: both ordinary browser accounts reported TURN relay media rates and both existing remote playback streams contained synthetic audio. Call and temporary DM mapping cleanup passed. Conference connection/native leave, email-code recovery, known-browser recovery, direct invitation review without history/media reads, DM acceptance, recipient mapping after reload, encrypted replies, and decline after reload also passed. The full run later hit the recipient invitation throttle during the separate policy matrix. The derived CI-only Synapse runtime now retains the pinned 0.003/second invitation refill rate with a finite burst of 50 to cover that repeated disposable-recipient matrix; all other throttles and the original production configuration remain unchanged. This run does not establish audible media on the deployed phone/PC pair.
+
+Repeated native direct audio is still an acceptance concern: `f16cc63` timed out
+waiting for relay media rates, while the unchanged call implementation passed
+again at `0dd7afe` in [run 34674554442](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34674554442).
+That latter run also passed conference leave, email/known-browser recovery, DM
+persistence and the complete invitation-privacy matrix. It stopped at workspace
+readiness before role-mention checks. The probes now capture bounded layout and
+transport state on failure and require three consecutive direct calls. Addresses,
+credentials and audio samples remain excluded. A crowded full-rail browser test
+and the existing readiness/navigation regressions pass; this is separate from
+the pending native rerun and deployed phone/PC acceptance.

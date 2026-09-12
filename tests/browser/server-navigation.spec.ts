@@ -1,13 +1,24 @@
 import { expect,test,type Page } from '@playwright/test';
-async function fixture(page:Page){
+async function fixture(page:Page,fullRail=false){
   await page.route(url=>url.pathname==='/lib/matrix.ts',route=>route.fulfill({contentType:'text/javascript',body:'export const getMatrixClient=()=>window.client;export const onMatrixUpdate=fn=>{window.listeners.push(fn);return()=>{window.listeners=window.listeners.filter(v=>v!==fn);};};'}));
   await page.route(url=>url.pathname==='/lib/api.ts',route=>route.fulfill({contentType:'text/javascript',body:'export const accountArtworkOwner=()=>window.accountOwner;'}));
   await page.route(url=>url.pathname==='/lib/interactions.ts',route=>route.fulfill({contentType:'text/javascript',body:'export const navigationPreferences=()=>({favorites:[],unread:window.manualUnread||[]});export const setNavigationFlag=async()=>{};'}));
   await page.route(url=>url.pathname==='/lib/community.ts',route=>route.fulfill({contentType:'text/javascript',body:'export const readServerBranding=()=>({icon:null});'}));
   await page.route(url=>url.pathname==='/app/community-settings.tsx',route=>route.fulfill({contentType:'text/javascript',body:'export const CommunityImage=()=>null;'}));
-  await page.route('**/server-navigation-test',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/server-navigation.tsx")).mountFixture();</script></body></html>'}));
-  await page.goto('/server-navigation-test');await expect(page.getByRole('button',{name:'Alpha',exact:true})).toBeVisible();
+  await page.route('**/server-navigation-test*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/server-navigation.tsx")).mountFixture();</script></body></html>'}));
+  await page.goto('/server-navigation-test'+(fullRail?'?fullRail':''));await expect(page.getByRole('button',{name:'Alpha',exact:true})).toBeVisible();
 }
+
+test('a crowded full server rail retains usable home, DMs and settings controls',async({page})=>{
+  await page.setViewportSize({width:1280,height:720}); await fixture(page,true);
+  for(const name of ['Tavern home','Direct messages','Tavern settings','Your profile']){
+    const button=page.getByRole('button',{name,exact:true});
+    await expect(button).toBeVisible();
+    const box=await button.boundingBox();expect(box!.height,name).toBeGreaterThanOrEqual(24);
+  }
+  const navigation=page.locator('.server-rail-navigation');
+  expect(await navigation.evaluate(element=>element.scrollHeight>element.clientHeight)).toBe(true);
+});
 const rootOrder=(page:Page)=>page.locator('.server-rail-root [data-server-id]').evaluateAll(elements=>elements.map(element=>element.getAttribute('data-server-id')));
 async function move(page:Page,name:string,location:string,before=''){await page.getByRole('button',{name:'Move '+name,exact:true}).focus();await page.keyboard.press('Enter');await page.getByRole('combobox',{name:'Location'}).selectOption(location);await page.getByRole('combobox',{name:'Position'}).selectOption(before);await page.getByRole('button',{name:'Move',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);}
 async function drag(page:Page,name:string,target:string,edge:'before'|'after'|'inside'){

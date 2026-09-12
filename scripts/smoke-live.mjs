@@ -148,7 +148,7 @@ try {
   try {
     for (const participant of [alice, bob]) await participant.context().grantPermissions(['microphone', 'camera'], { origin });
     await conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api });
-    await directAudioSmoke({alice,bob,aliceSession,bobSession,roomId,origin,api,ready});
+    for (let attempt = 0; attempt < 3; attempt++) await directAudioSmoke({alice,bob,aliceSession,bobSession,roomId,origin,api,ready});
   } finally {
     for (const participant of [alice, bob]) await participant.context().clearPermissions();
     conferenceProbe = false;
