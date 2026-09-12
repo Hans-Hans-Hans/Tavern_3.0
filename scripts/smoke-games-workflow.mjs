@@ -49,6 +49,23 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
   const row = (page, id) => sidebar(page).locator('[data-channel-id]').filter({ has: page.locator('.channel-navigation-row') }).filter({ has: page.getByRole('button', { name: rooms.get(id), exact: true }) }).locator('.channel-navigation-row');
   const category = (page, id) => sidebar(page).locator('[data-category-id]').filter({ has: page.getByRole('button', { name: id === games ? 'Games' : 'Other games', exact: true }) });
   let games, other, dragStage = 'idle';
+  const syncObservations = new Map(), responseReaders = new Map();
+  const boundedOrder = value => Array.isArray(value?.channels) ? value.channels.slice(0, 10).map(row => ({ channel: [...rooms.keys()].indexOf(row.id), category: ['', games, other].indexOf(row.category) })) : null;
+  for (const page of owners.keys()) {
+    const observe = async response => {
+      const url = new URL(response.url());
+      if (url.pathname !== '/api/matrix/_matrix/client/v3/sync' || !server || response.status() !== 200) return;
+      try {
+        const joined = (await response.json()).rooms?.join?.[server];
+        if (!joined) return;
+        const pick = events => events?.filter(event => event.type === 'io.tavern.server.layout' && event.state_key === '').map(event => boundedOrder(event.content)) || [];
+        const values = syncObservations.get(page) || [];
+        values.push({ initial: !url.searchParams.has('since'), state: pick(joined.state?.events), after: pick(joined['org.matrix.msc4222.state_after']?.events), timeline: pick(joined.timeline?.events) });
+        syncObservations.set(page, values.slice(-6));
+      } catch { /* A response cancelled by navigation carries no usable state. */ }
+    };
+    responseReaders.set(page, observe); page.on('response', observe);
+  }
   async function layout() { return (await inspectParent())('io.tavern.server.layout').content; }
   async function drag(id, destination, before = false) {
     dragStage = 'inspect';
@@ -141,7 +158,9 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
       for (const page of owners.keys()) { await ordering(page, games, [voice, minecraft]); await ordering(page, other, [tarkov]); }
     } });
     stage = 'reload-persistence';
-    for (const page of owners.keys()) {
+    for (const [page, owner] of owners) {
+      stage = owner === aliceSession ? 'alice-reload-persistence' : 'bob-reload-persistence';
+      syncObservations.set(page, []);
       await page.reload(); await ready(page); await page.getByRole('button', { name, exact: true }).click();
       await ordering(page, games, [voice, minecraft]); await ordering(page, other, [tarkov]);
       await expect(sidebar(page).getByRole('list', { name: 'Voice participants in Gaming Voice', exact: true })).toHaveCount(0);
@@ -161,6 +180,10 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
       }, { ownedRooms: [...rooms.keys()], ownedCategories: ['', games, other] }), new Promise(resolve => { timer = setTimeout(() => resolve({ state: 'unavailable' }), 2500); })]); }
       catch { return { state: 'unavailable' }; } finally { clearTimeout(timer); }
     }));
-    throw new Error('Native Games workflow failed at bounded stage: ' + stage + '; drag: ' + dragStage + '. UI observations: ' + JSON.stringify(ui));
-  }
+    const stored = await Promise.all([...owners.keys()].map(async page => {
+      try { const result = await native(page, path(server) + '/state/io.tavern.server.layout/'); return { status: result.status, order: boundedOrder(result.data), sync: syncObservations.get(page) }; }
+      catch { return { state: 'unavailable', sync: syncObservations.get(page) }; }
+    }));
+    throw new Error('Native Games workflow failed at bounded stage: ' + stage + '; drag: ' + dragStage + '. UI observations: ' + JSON.stringify(ui) + '. Native observations: ' + JSON.stringify(stored));
+  } finally { for (const [page, reader] of responseReaders) page.off('response', reader); }
 }

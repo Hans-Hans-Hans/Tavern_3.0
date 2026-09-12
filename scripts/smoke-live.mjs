@@ -38,11 +38,24 @@ const browser = await chromium.launch({ args: ['--host-resolver-rules=MAP chat.e
 const pages = [], errors = [];
 const directFailures = [];
 let conferenceProbe = false;
+function browserError(text, exception = false) {
+  // Keep late startup failures visible even while the native conference probe
+  // suppresses its potentially credential-bearing SDK log arguments.
+  const categories = [
+    [/Failed to process events on room/, 'Matrix room event processing failed'],
+    [/read.?only property/i, 'Read-only event property'],
+    [/Cannot (?:read|set) propert|can.t access property/i, 'Unavailable object property'],
+    [/not defined/, 'Undefined reference'],
+    [/Maximum call stack|too much recursion/i, 'Recursive observer'],
+  ].filter(([pattern]) => pattern.test(text)).map(([, label]) => label);
+  errors.push(conferenceProbe ? (exception ? 'Browser exception' : 'Browser console error') + (categories.length ? ': ' + categories.join(', ') : ' (see bounded probe result)') : text.slice(0, 2000));
+  if (errors.length > 200) errors.splice(0, errors.length - 200);
+}
 async function page() {
   const context = await browser.newContext();
   const value = await context.newPage(); value.setDefaultTimeout(60000);
-  value.on('pageerror', error => errors.push(conferenceProbe ? 'Embedded conference browser exception (see bounded probe result).' : error.message));
-  value.on('console', message => { if (message.type() === 'error') errors.push(conferenceProbe ? 'Embedded conference console error (see bounded probe result).' : message.text().slice(0, 2000)); });
+  value.on('pageerror', error => browserError(error.message, true));
+  value.on('console', message => { if (message.type() === 'error') browserError(message.text()); });
   value.on('response', response => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.request().method() + ' ' + new URL(response.url()).pathname); });
   pages.push(value); return value;
 }
@@ -310,7 +323,7 @@ try {
   await deactivationSmoke({ admin, alice, bob, aliceSession, bobSession, bobPassword, origin, api, ready });
   if (directFailures.length) throw new Error('Native direct-call validation failed in ' + directFailures.length + ' of 3 calls. See the bounded diagnostics above; independent native checks ran only after confirmed call cleanup.');
 } catch (error) {
-  console.error('Live browser errors:', errors);
+  console.error('Live browser errors (latest 100):', JSON.stringify(errors.slice(-100)));
   for (const [index, page] of pages.entries()) console.error('Page ' + index + ':', await page.locator('body').innerText().catch(() => 'unavailable'));
   throw error;
 } finally { await browser.close(); }
