@@ -16,7 +16,19 @@ export type RolePermission = keyof typeof rolePermissions;
 export type ServerRole = { id: string; name: string; color: string; icon: string; position: number; permissions: RolePermission[]; mentionable: boolean; separate: boolean };
 export type PermissionOverride = Partial<Record<RolePermission, -1 | 0 | 1>>;
 export type PermissionTargets = { roles: Record<string, PermissionOverride>; users: Record<string, PermissionOverride> };
-export type RolePolicy = { version: 1; callPublicationVersion?: 1; owner: string; roles: ServerRole[]; members: Record<string, string[]>; overrides: Record<string, PermissionTargets>; categoryOverrides: Record<string, PermissionTargets> };
+export type ChannelAudience = { roleIds: string[]; userIds: string[] };
+export type RolePolicy = { version: 1; callPublicationVersion?: 1; channelAdmissionVersion?: 1; channelAdmissions?: Record<string, ChannelAudience>; owner: string; roles: ServerRole[]; members: Record<string, string[]>; overrides: Record<string, PermissionTargets>; categoryOverrides: Record<string, PermissionTargets> };
+export function validChannelAdmissions(value: any, roles: Set<string>): boolean {
+  if (!Object.hasOwn(value, 'channelAdmissionVersion')) return !Object.hasOwn(value, 'channelAdmissions');
+  if (value.channelAdmissionVersion !== 1 || !value.channelAdmissions || typeof value.channelAdmissions !== 'object' || Array.isArray(value.channelAdmissions) || Object.keys(value.channelAdmissions).length > 1000) return false;
+  return Object.entries(value.channelAdmissions).every(([room, item]) => {
+    const audience = item as any;
+    return /^![^\s\x00-\x1f\x7f]{1,1023}$/.test(room) && !!audience && typeof audience === 'object' && !Array.isArray(audience)
+      && Object.keys(audience).sort().join(',') === 'roleIds,userIds'
+      && Array.isArray(audience.roleIds) && audience.roleIds.length <= 100 && audience.roleIds.every((role: unknown) => typeof role === 'string' && roles.has(role)) && new Set(audience.roleIds).size === audience.roleIds.length
+      && Array.isArray(audience.userIds) && audience.userIds.length <= 1000 && audience.userIds.every((user: unknown) => typeof user === 'string' && /^@[^\s:\x00-\x1f\x7f]{1,255}:[^\s\x00-\x1f\x7f]{1,255}$/.test(user)) && new Set(audience.userIds).size === audience.userIds.length;
+  });
+}
 const policyServers = new WeakMap<RolePolicy, string>();
 function validTargets(kinds: any, ids: Set<string>) { if (!kinds || typeof kinds !== 'object' || Array.isArray(kinds)) return false; for (const kind of ['roles', 'users']) { const targets = kinds[kind] || {}; if (typeof targets !== 'object' || Array.isArray(targets) || Object.keys(targets).length > 1000) return false; for (const [target, permissions] of Object.entries(targets)) { if ((kind === 'roles' ? !ids.has(target) : !target.startsWith('@')) || !permissions || typeof permissions !== 'object' || Array.isArray(permissions) || Object.entries(permissions).some(([p, v]) => !Object.hasOwn(rolePermissions, p) || ['manage_roles', 'manage_server', 'manage_nicknames'].includes(p) || ![-1, 0, 1].includes(v))) return false; } } return true; }
 export function parseRolePolicy(value: any): RolePolicy | null {
@@ -32,8 +44,8 @@ export function parseRolePolicy(value: any): RolePolicy | null {
   const categoryOverrides = value.categoryOverrides || {}; if (typeof categoryOverrides !== 'object' || Array.isArray(categoryOverrides) || Object.keys(categoryOverrides).length > 100 || Object.entries(categoryOverrides).some(([id, targets]) => !/^[\w-]{1,80}$/.test(id) || !validTargets(targets, ids))) return null;
   const copyTargets = (targets: Record<string, PermissionOverride> = {}) => Object.fromEntries(Object.entries(targets).map(([id, permissions]) => [id, { ...permissions }]));
   const normalizedTargets = (values: Record<string, any>) => Object.fromEntries(Object.entries(values).map(([id, targets]) => [id, { roles: copyTargets(targets.roles || {}), users: copyTargets(targets.users || {}) }]));
-  if (!validPublicationVersion(value)) return null;
-  return { version: 1, ...(value.callPublicationVersion === 1 ? { callPublicationVersion: 1 as const } : {}), owner: value.owner, roles: value.roles.map((r: ServerRole) => ({ ...r, permissions: [...r.permissions], color: r.color || '', icon: r.icon || '', mentionable: r.mentionable === true, separate: r.separate === true })), members: Object.fromEntries(Object.entries(value.members as Record<string, string[]>).map(([user, ids]) => [user, [...ids]])), overrides: normalizedTargets(overrides), categoryOverrides: normalizedTargets(categoryOverrides) };
+  if (!validPublicationVersion(value) || !validChannelAdmissions(value, ids)) return null;
+  return { version: 1, ...(value.callPublicationVersion === 1 ? { callPublicationVersion: 1 as const } : {}), ...(value.channelAdmissionVersion === 1 ? { channelAdmissionVersion: 1 as const, channelAdmissions: Object.fromEntries(Object.entries(value.channelAdmissions as Record<string, ChannelAudience>).map(([room, audience]) => [room, { roleIds: [...audience.roleIds], userIds: [...audience.userIds] }])) } : {}), owner: value.owner, roles: value.roles.map((r: ServerRole) => ({ ...r, permissions: [...r.permissions], color: r.color || '', icon: r.icon || '', mentionable: r.mentionable === true, separate: r.separate === true })), members: Object.fromEntries(Object.entries(value.members as Record<string, string[]>).map(([user, ids]) => [user, [...ids]])), overrides: normalizedTargets(overrides), categoryOverrides: normalizedTargets(categoryOverrides) };
 }
 export function defaultRolePolicy(owner: string): RolePolicy { return { version: 1, owner, roles: [{ id: 'everyone', name: 'Member', color: '', icon: '', position: 0, permissions: ['send_messages', 'add_reactions', 'join_calls', 'invite'], mentionable: false, separate: false }], members: {}, overrides: {}, categoryOverrides: {} }; }
 export function readRolePolicy(serverId: string) { const policy = parseRolePolicy(getMatrixClient()?.getRoom(serverId)?.currentState.getStateEvents(rolesEvent, '')?.getContent()); if (policy) policyServers.set(policy, serverId); return policy; }

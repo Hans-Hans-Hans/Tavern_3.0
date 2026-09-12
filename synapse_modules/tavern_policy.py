@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import re
 from urllib.parse import urlsplit
 try:
+    from channel_admission import valid_admissions
     from conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -23,6 +24,7 @@ try:
     from invitation_policy import InvitationPolicy
     from temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 except ImportError:
+    from synapse_modules.channel_admission import valid_admissions
     from synapse_modules.conference_publication import MARKER as PUBLICATION_VERSION, PUBLICATION, valid_version as valid_publication_version, may_transition as may_transition_publication, effective_publication
     from synapse_modules.call_audio_policy import AudioModerationPolicy, AUDIO, audio_state_key, audio_target, audio_flags, effective_audio, scope_fingerprint as audio_scope_fingerprint
     from synapse_modules.community_settings import check_settings, NOTIFICATIONS, ONBOARDING, BRANDING
@@ -144,7 +146,7 @@ def valid_policy(policy):
             for target, permissions in targets.items():
                 if not isinstance(target, str) or (target not in ids if kind == "roles" else not target.startswith("@")) or not isinstance(permissions, Mapping) or not set(permissions) <= CHANNEL_PERMISSIONS or any(value not in (-1, 0, 1) or isinstance(value, bool) for value in permissions.values()):
                     return False
-    return valid_publication_version(policy)
+    return valid_publication_version(policy) and valid_admissions(policy, ids)
 
 
 def user_roles(policy, user):
