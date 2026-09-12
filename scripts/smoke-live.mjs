@@ -139,6 +139,9 @@ try {
   assert.equal(aliceSession.admin, false); assert.equal(bobSession.admin, false);
   assert.equal((await api(alice, '/api/admin/users')).status, 403);
   console.log('PASS: two ordinary accounts sign in and administrator endpoints reject their sessions.');
+  // Validate fresh-device encrypted delivery before the independent media
+  // workload. A call failure must not hide the bot's native key-delivery result.
+  await systemMessagesSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, ready, createPage: page, login });
   // Create the encrypted test fixture through the same authenticated native
   // Matrix gateway; actual sending/decryption below uses the production UI/SDK.
   const created = await api(alice, '/_matrix/client/v3/createRoom', { name: 'CI encrypted conversation', preset: 'private_chat', invite: [bobSession.userId], creation_content: { 'm.federate': false }, power_level_content_override: { events: { 'org.matrix.msc3401.call.member': 0 } }, initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }] }, true);
@@ -299,7 +302,6 @@ try {
   const afkFixture = await afkSmoke({ admin, alice, adminSession, aliceSession, api });
   await eligibilitySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, encryptedProbe: { roomId, eventId }, origin, api, ready, encryptedResponse, encryptedEvent });
   await profilePolicySmoke({ admin, alice, adminSession, aliceSession, fixture: afkFixture, origin, api });
-  await systemMessagesSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, ready, createPage: page, login });
   await dmRequestsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent });
   await invitationPrivacySmoke({ admin, bob, adminSession, bobSession, origin, api, createPage: page, login });
   await roleMentionsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent });

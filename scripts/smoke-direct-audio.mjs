@@ -112,6 +112,7 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
   let stage='isolated-turn',success=false,cleanupFailed=false,failure;
   let side='unavailable',scopeCheck='none',devices='unavailable',panels=null,frames=null,panelState='unavailable';
   let listener='unavailable';const credentials=[];
+  const cleanupObservations=[];
   const expected=page=>({[page===alice?BOB:ALICE]:[roomId]});
   const accountPath=page=>'/_matrix/client/v3/user/'+encodeURIComponent(owners.get(page).userId)+'/account_data/m.direct';
   async function session(page){
@@ -188,29 +189,35 @@ export async function directAudioSmoke({alice,bob,aliceSession,bobSession,roomId
   }
   finally{
     for(const page of opened){
+      let cleanupStage='session';
       try{
         await session(page);
         // MatrixCall.hangup is synchronous but sends its encrypted event in the
         // background. Require the callee's native hangup before either reload,
         // rather than racing that event with two local UI dismissals.
+        cleanupStage='remote-hangup';
         if(page===bob)await page.waitForFunction(()=>{
           const panel=document.querySelector('.call-panel');
           return !panel||panel.querySelector('header small')?.textContent==='Call ended';
         },undefined,{timeout:15000});
+        cleanupStage='dismiss-ended-panel';
         const end=page.locator('.call-panel .call-end');
         if(await end.isVisible())await end.click({timeout:5000});
         await expect(page.locator('.call-panel')).toHaveCount(0,{timeout:10000});
-      }catch{cleanupFailed=true;}
+      }catch{cleanupFailed=true;cleanupObservations.push({side:page===alice?'caller':'callee',stage:cleanupStage});}
     }
     for(const page of changed){
+      let cleanupStage='room-scope';
       try{
-        await scope(page);const current=await native(page,accountPath(page));
+        await scope(page);cleanupStage='restore-dm';const current=await native(page,accountPath(page));
         requireProof(current.status===200&&JSON.stringify(current.data)===JSON.stringify(expected(page)));
         requireProof((await native(page,accountPath(page),{},'PUT')).status===200);
-        await page.reload();await ready(page);
+        cleanupStage='reload';await page.reload();await ready(page);
+        cleanupStage='no-replayed-call';
         await expect(page.locator('.call-panel')).toHaveCount(0,{timeout:10000});
-      }catch{cleanupFailed=true;}
+      }catch{cleanupFailed=true;cleanupObservations.push({side:page===alice?'caller':'callee',stage:cleanupStage});}
     }
+    if(cleanupFailed){console.error('Direct call cleanup:',cleanupObservations);}
     if(cleanupFailed&&success)throw new Error('Native direct audio transferred, but call and DM-fixture cleanup was not confirmed.');
   }
   if (failure) throw new DirectAudioAcceptanceError(failure, !cleanupFailed);
