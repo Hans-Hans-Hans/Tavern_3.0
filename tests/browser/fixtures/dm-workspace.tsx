@@ -19,6 +19,7 @@ export function mountFixture() {
     const state = (room: any, type: string, content: object, state_key = '') => room.currentState.setStateEvents([new MatrixEvent({
       event_id: '$fixture-' + ++revision, room_id: room.roomId, type, state_key, sender: f.actor, content,
     })]);
+    f.setNativeState = state;
     for (const room of [parent, voice, f.client.getRoom('!lobby:local')]) {
       state(room, 'm.room.create', { creator: f.actor, room_version: '10', 'm.federate': false, ...(room === parent ? { type: 'm.space' } : {}) });
       state(room, 'm.room.power_levels', { users: { [f.actor]: 100 }, users_default: 0, state_default: 50 });

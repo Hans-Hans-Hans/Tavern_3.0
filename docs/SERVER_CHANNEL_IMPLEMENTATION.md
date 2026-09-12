@@ -73,7 +73,11 @@ Channel Overview contains name/topic and appearance, Behavior contains type and
 policy, Permissions contains private audiences and role/native permissions, and
 Moderation contains member actions. Notifications contains the existing per-room
 notification editor, and the channel context action opens that section directly.
-Invitations, integrations and reviewed deletion have their own applicable sections. All use the existing management helpers.
+Invitations, integrations and reviewed deletion have their own applicable sections.
+The owner-only Delete channel context action opens that existing review section;
+it does not perform a deletion. Edit visibility uses the same native/custom
+permission helper as the editor. The server menu links to existing invitation
+privacy controls. All use the existing management helpers.
 
 Selecting a voice channel opens its contextual view. Joining is explicit. Native
 MatrixRTC membership supplies the sidebar roster; the current embedded conference

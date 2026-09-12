@@ -125,3 +125,16 @@ test('owner opens a different voice channel and keeps its native settings sectio
     await expect(voice).toBeVisible();
   }
 });
+
+test('channel edit context action respects the topic permission ceiling used by the editor', async ({ page }) => {
+  await fixture(page, true, '?management=1');
+  await page.getByRole('button', { name: 'Games server', exact: true }).click();
+  await page.evaluate(() => {
+    const f = (window as any).dmFixture;
+    f.setNativeState(f.client.getRoom('!voice:local'), 'm.room.power_levels', { users: { [f.actor]: 100 }, state_default: 50, events: { 'm.room.topic': 101 } });
+    f.emit();
+  });
+  await page.getByRole('button', { name: 'Gaming Voice', exact: true }).click({ button: 'right' });
+  await expect(page.getByRole('menuitem', { name: 'Notification settings', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true })).toHaveCount(0);
+});
