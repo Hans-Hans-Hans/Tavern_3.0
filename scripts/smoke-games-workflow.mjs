@@ -63,7 +63,8 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     await source.dispatchEvent('dragend', { dataTransfer: transfer }); await transfer.dispose();
   }
   async function ordering(page, categoryId, ids) {
-    const group = sidebar(page).locator('.channel-category').filter({ has: category(page, categoryId) });
+    assert.match(categoryId, /^[A-Za-z0-9_-]{1,80}$/);
+    const group = sidebar(page).locator('.channel-category').filter({ has: page.locator('[data-category-id="' + categoryId + '"]') });
     await expect.poll(() => group.locator('[data-channel-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-channel-id'))), { timeout: 15000 }).toEqual(ids);
   }
   try {
@@ -107,8 +108,8 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     await drag(voice, minecraft, true);
     for (const page of owners.keys()) await ordering(page, games, [tarkov, voice, minecraft]);
     stage = 'private-voice-editor';
-    await alice.getByRole('button', { name: 'Channel actions for Gaming Voice', exact: true }).click();
-    await alice.getByRole('menuitem', { name: 'Edit channel', exact: true }).click();
+    await sidebar(alice).getByRole('button', { name: 'Gaming Voice', exact: true }).click({ button: 'right' });
+    await alice.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true }).click();
     await alice.getByRole('tab', { name: 'Permissions', exact: true }).click();
     const access = alice.getByRole('region', { name: 'Private channel access', exact: true });
     await access.getByRole('checkbox', { name: 'Use selected roles and members', exact: true }).check();
