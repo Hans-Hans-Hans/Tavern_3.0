@@ -56,5 +56,9 @@ service recreation, incomplete native results, logout during authorization,
 metadata failures and child-first ordering. Mounted browser tests cover name
 confirmation, close/account changes, honest progress, saved status and narrow
 screens. `smoke-room-removal.mjs` uses only three fresh immutable-marked rooms
-and the ordinary CI owner on the exact isolated native stack; its actual native
-result must pass before claiming end-to-end deletion acceptance.
+and the ordinary CI owner on the exact isolated native stack. At `27d163a`,
+[run 34677837699](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34677837699)
+passed channel deletion, preservation of the remaining channel layout, subsequent
+child-first server deletion, actual native purge/block checks, metadata cleanup
+and status access after removal. The overall run later failed an unrelated Games
+ordering test selector; this is a passed deletion stage, not a green workflow.

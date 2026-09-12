@@ -33,10 +33,17 @@ remain available in Settings.
 
 ## On a new browser or device
 
-Open **History recovery**, enter the recovery key saved when encryption recovery
-was configured, and select **Unlock & enable automatic recovery**. Restoring all
-available history keys is selected by default. Tavern keeps the existing signing
-identity and backup; an incorrect key does not reset either.
+For an account with email history recovery enabled, sign in normally. After
+checking local keys, Tavern opens **Unlock your message history**. Request the
+email code and enter it to restore the available encrypted history. A browser
+that already holds the matching keys skips this prompt. Email setup uses the
+existing verified account email and administrator-configured SMTP service.
+
+If email recovery is not configured, open **History recovery**, enter the recovery
+key saved when encryption recovery was configured, and select **Unlock & enable
+automatic recovery**. Restoring all available history keys is selected by default.
+Tavern keeps the existing signing identity and backup; an incorrect key does not
+reset either.
 
 The same dialog also offers signed-in device verification and **Recover from an
 encrypted key file** for an export from Tavern or Element. The key-file passphrase
@@ -70,7 +77,7 @@ backup retained.
 
 ## Email recovery and known browsers
 
-Managed accounts with a verified email can enable password-protected email history recovery in Settings ? Privacy. After an ordinary password login, Tavern automatically enrolls a matching backup key already held on that browser. An existing cookie session can enable it by entering the current password once. Known browsers recover from their existing Rust key stores without an email prompt. On a new device, a configured package opens the email-code dialog after native sync/local recovery finishes. The normal login password supplies the local decryption key; a refreshed tab may need that password again. Users can defer older history and continue messaging.
+Managed accounts with a verified email can enable password-protected email history recovery in Settings / Privacy. After an ordinary password login, Tavern automatically enrolls a matching backup key already held on that browser. An existing cookie session can enable it by entering the current password once. Known browsers recover from their existing Rust key stores without an email prompt. On a new device, a configured package opens the email-code dialog after native sync/local recovery finishes. The normal login password supplies the local decryption key; a refreshed tab may need that password again. Users can defer older history and continue messaging.
 
 If no usable backup key remains, **Protect messages on this device** explicitly creates a new native backup for available and future room keys. It preserves existing backup versions and signing identities. It cannot reconstruct missing older message keys. The candidate is cached in the native Rust store before the POST; a nonsecret journal supports a retry after an uncertain outcome, and another cached backup key is never overwritten. Old-device recovery accepts the reserved pending version only when its public key matches the current native backup.
 
@@ -80,4 +87,4 @@ The six-digit email code expires in ten minutes, permits at most five attempts, 
 
 A normal password change rewraps the package when this browser has the matching history key. A forgotten-password reset cannot decrypt a package protected with the old password. Use the previous password, a known browser, or a saved message-key export; then update email recovery with the new password. Email recovery restores history keys, not signing identity secrets or participant identity verification. A pre-existing Matrix recovery key continues to protect the backup/identity it originally covered; a separately created email backup does not rewrite that secret-storage entry.
 
-Validation: actual WebCrypto encryption/tampering/account-binding tests; real Rust old-device key recovery including interrupted candidates; API cookie/CSRF/OTP/session-revocation/credential-and-backup-change tests; mounted known-device, new-device, wrong-code and defer flows. Native end-to-end email restore on the deployed stack still requires acceptance testing.
+Validation: actual WebCrypto encryption/tampering/account-binding tests; real Rust old-device key recovery including interrupted candidates; API cookie/CSRF/OTP/session-revocation/credential-and-backup-change tests; mounted known-device, new-device, wrong-code and defer flows. The native TLS SMTP/code/restore/known-browser flow passed in isolated CI at `f958030`, `f6190e8` and `0dd7afe`; target-host mail delivery and older-history availability remain separate acceptance checks.

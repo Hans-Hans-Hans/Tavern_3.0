@@ -31,7 +31,8 @@ Validation: four pure ordering tests and mounted browser coverage exercise saved
 
 Channel and server management now include a reviewed, resumable permanent
 [deletion workflow](ROOM_DELETION.md), with recovery from partial native removal
-and metadata cleanup. Its actual Synapse deletion gate remains pending. The
+and metadata cleanup. The ordinary-owner deletion gate passed against actual
+Synapse/PostgreSQL in [run 34677837699](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34677837699). The
 pinned conference widget's self-deafen limitation is recorded in
 [voice sidebar](VOICE_SIDEBAR.md).
 
@@ -83,7 +84,11 @@ Validation includes native policy and durable SQLite worker tests, real API HTTP
 tests, role/creation writer tests and mounted browser creation/edit/retry/join
 tests at a 320px width. `scripts/smoke-channel-admission.mjs` adds the actual
 Synapse/PostgreSQL/LiveKit admission and membership-removal acceptance gate;
-its deployment result must pass before claiming native end-to-end acceptance.
+it passed against actual Synapse/PostgreSQL/LiveKit in
+[run 34674781269](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34674781269)
+and repeated in run 34677837699. The checks include denied invited joins, actual
+role removal, worker reconciliation, regrant and SFU admission. Target-host
+acceptance remains separate.
 
 ## Direct messages
 

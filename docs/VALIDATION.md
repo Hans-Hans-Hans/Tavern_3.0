@@ -2,7 +2,40 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
-## Current sidebar checkpoint
+## September 12 recovery and channel-management checkpoint
+
+The actual TLS SMTP/native history recovery gate passed at `f958030` and again
+at `f6190e8` and `0dd7afe`: enrollment, automatic new-device email prompt,
+wrong-code rejection, correct-code restoration of an encrypted message, and
+known-browser sign-in without another recovery prompt. These checks preserve
+the existing native backup and signing identity. Missing historical keys still
+cannot be regenerated. The native DM request/accept/reply/reload and decline
+flows also passed; DMs now have their own server-rail section.
+
+At `f46ae02`, [run 34674781269](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34674781269)
+passed actual private-channel admission, invited-join rejection, durable native
+membership removal and regrant, and LiveKit authorization. These stages passed
+again at `27d163a` in [run 34677837699](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34677837699),
+which also passed ordinary-owner native channel/server deletion, native purge
+and block verification, metadata cleanup and durable status access.
+
+The latter run reached real UI creation of Games, tarkov, minecraft and Gaming
+Voice, and both clients received the expected drag/drop order. A nested test
+selector failed to find the correctly displayed category. Checkpoint `a554f45`
+corrects that selector and uses the actual channel context-menu editor. Full
+role-restricted voice/sidebar/reload acceptance is still pending its native run.
+
+Repeated direct audio remains under investigation. Several native runs passed
+both relay rates and actual synthetic samples in each existing remote playback
+stream; others stalled before media flow. The gate now requires three calls,
+retains each failure even when cleanup allows independent checks to continue,
+and captures finite signaling/description states, gathered relay counts and
+numeric ICE errors. Empty browser statistics alone do not establish failed TURN
+allocation. An independent allocation control runs after a failed call without
+opening a microphone. No SDP, addresses, credentials or audio samples are logged.
+Deployed phone/PC audibility and a complete final green workflow remain open.
+
+## Earlier sidebar checkpoint (`a5efbee`)
 
 Final local verification passed the production build, all 629 Node cases and
 all 416 browser cases in the complete suite. Eight subsequently added relay
