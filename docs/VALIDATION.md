@@ -29,6 +29,15 @@ production permission rule or rejection assertion was relaxed.
 The updated full-stack smoke also uses the real Friends UI to send a code-only
 request, checks recipient-only acceptance and verifies code replacement/reload.
 Local browser fixtures and API tests do not establish this deployed result.
+CI run [34723765308](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34723765308)
+on `bea751a` subsequently passed that real friend-code flow, all 495 browser
+cases, encrypted direct/conference media, native system notices, encrypted file
+downloads and fresh-device email recovery. Backup/restore and failed-update
+rollback also passed. The native stage then received HTTP 429 before a private
+discussion creation-denial probe reached authorization. Its two negative probes
+now omit invitations and honor bounded native retry delays while still requiring
+HTTP 403/M_FORBIDDEN; successful or ambiguous creation is never retried. Eighteen
+focused retry/denial tests pass. The full updated workflow remains the gate.
 Physical iOS/Android acceptance, an operator backup/restore rehearsal and the
 remaining roadmap phases are still separate release work.
 

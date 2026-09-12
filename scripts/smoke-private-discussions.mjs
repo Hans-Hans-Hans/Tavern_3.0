@@ -4,6 +4,26 @@ import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 
+// Only these negative probes retry: remove invitations from the otherwise
+// identical private configuration. Pinned Synapse applies creation rate limits
+// before the private-source authorization callback or any room persistence.
+// https://github.com/element-hq/synapse/blob/v1.160.0/synapse/handlers/room.py#L1008-L1037
+// Keep successful creation with invite side effects on its non-retryable path.
+export async function privateCreationDenialProbe(create, configuration, description, pause) {
+  const probe = structuredClone(configuration);
+  const fields = new Set(['visibility', 'preset', 'invite', 'creation_content', 'initial_state']);
+  const states = new Set(['io.tavern.private_thread.settings', 'm.room.encryption', 'm.room.history_visibility']);
+  assert.ok(probe && Object.keys(probe).every(key => fields.has(key)) && probe.visibility === 'private'
+    && probe.preset === 'private_chat' && probe.creation_content?.type === 'io.tavern.private_thread'
+    && probe.creation_content['m.federate'] === false && Array.isArray(probe.initial_state)
+    && probe.initial_state.every(event => states.has(event?.type) && event.state_key === ''), 'Use only the isolated private discussion denial fixture.');
+  delete probe.invite;
+  const result = await matrixSmokeRequest(() => create(structuredClone(probe)), pause);
+  assert.equal(result.status, 403, description + ': ' + JSON.stringify(result.data));
+  assert.equal(result.data?.errcode, 'M_FORBIDDEN', description);
+  return result;
+}
+
 export async function privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent }) {
   if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Private discussion smoke requires the isolated CI stack.');
   const privateType = 'io.tavern.private_thread', settingsType = privateType + '.settings';
@@ -54,7 +74,7 @@ export async function privateDiscussionSmoke({ admin, alice, bob, adminSession, 
       { type: 'm.room.history_visibility', state_key: '', content: { history_visibility: 'joined' } },
     ],
   };
-  forbidden(await native(alice, '/createRoom', creation), 'Ordinary source membership must not grant private creation');
+  await privateCreationDenialProbe(body => native(alice, '/createRoom', body), creation, 'Ordinary source membership must not grant private creation');
   async function writePolicy(next) {
     const state = ok(await native(admin, roomPath(serverId) + '/state'), 'Read current source policy revision');
     const current = state.find(event => event.type === rolesType && event.state_key === '');
@@ -135,7 +155,7 @@ export async function privateDiscussionSmoke({ admin, alice, bob, adminSession, 
   const deniedPolicy = { ...policy, overrides: { [sourceId]: { roles: {}, users: { [aliceSession.userId]: { send_messages: -1 } } } } };
   await writePolicy(deniedPolicy);
   forbidden(await sendNative(alice, 'm.room.encrypted', aliceCiphertext), 'Source channel custom deny applies to opaque private sends');
-  forbidden(await native(alice, '/createRoom', creation), 'Source channel custom deny also prevents another private discussion');
+  await privateCreationDenialProbe(body => native(alice, '/createRoom', body), creation, 'Source channel custom deny also prevents another private discussion');
   await writePolicy(policy);
   ok(await native(bob, roomPath(sourceId) + '/leave', {}), 'Bob leaves the source channel');
   forbidden(await sendNative(bob, 'm.room.encrypted', bobCiphertext), 'Source membership loss stops opaque private sends');
