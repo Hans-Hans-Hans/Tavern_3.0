@@ -1,0 +1,22 @@
+import {test,expect} from '@playwright/test';
+test('starter layout previews channels and retries remaining setup without duplicating rooms',async({page})=>{
+  await page.route(url=>url.pathname==='/lib/matrix.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const getMatrixClient=()=>window.fixtureClient;export const matrixApi=async(action,payload)=>{window.serverCreates++;window.serverPayload=payload;return {id:'!server:test'}};`}));
+  await page.route(url=>url.pathname==='/lib/api.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const accountArtworkOwner=()=>window.fixtureOwner;`}));
+  await page.route(url=>url.pathname==='/lib/instance.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const readInstanceConfig=async()=>({serverRolePolicy:true});`}));
+  await page.route(url=>url.pathname==='/lib/channel-policy.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const channelKinds={text:'Text',voice:'Voice',media:'Media'};`}));
+  await page.route(url=>url.pathname==='/lib/channel-creation.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const channelTemplates={text:{icon:'💬'},voice:{icon:'🔊'},media:{icon:'🖼'}};export const createTypedChannel=async draft=>{window.channelCreates.push(draft);return {roomId:'!'+draft.name+':test',name:draft.name,linked:true,categoryApplied:true,invited:[],pendingMembers:[],errors:draft.name==='hangout'?['Link update needs retry.']:[]}};export const finishChannelCreation=async result=>{window.finished.push(result.roomId);return {...result,errors:[]}};`}));
+  await page.route('**/server-template-test',route=>route.fulfill({contentType:'text/html',body:`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script>window.fixtureClient={};window.fixtureOwner={};window.serverCreates=0;window.channelCreates=[];window.finished=[];window.completed=[];</script><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;await import('/tests/browser/fixtures/server-templates.tsx');</script></body></html>`}));
+  await page.setViewportSize({width:390,height:844});await page.goto('/server-template-test');
+  await page.getByLabel('Name',{exact:true}).fill('Friends space');
+  await page.getByLabel('Starting layout').selectOption('friends');
+  await page.getByRole('checkbox',{name:/photos/}).uncheck();
+  await page.getByRole('button',{name:'Create server',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Link update needs retry');
+  await expect(page.getByRole('button',{name:'Finish remaining setup'})).toBeEnabled();
+  await page.getByRole('button',{name:'Finish remaining setup'}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).completed.length)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).serverCreates)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).channelCreates.map((item:any)=>item.name))).toEqual(['general','hangout']);
+  expect(await page.evaluate(()=>(window as any).completed[0])).toEqual(['!server:test','!general:test']);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});

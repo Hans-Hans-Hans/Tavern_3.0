@@ -45,6 +45,48 @@ except ImportError:
     from synapse_modules.temporary_ban import TemporaryBanPolicy, TEMPBAN, active as temporary_ban_active, cleanup as temporary_ban_cleanup
 
 POLICY = "io.tavern.roles"
+STICKERS = 'io.tavern.stickers'
+
+
+def valid_sticker_pack(key, data):
+    def label(value, maximum):
+        return isinstance(value, str) and 0 < len(value.strip()) <= maximum and len(value) <= maximum and not re.search(r'[\x00-\x1f\x7f]', value)
+    def identifier(value):
+        return isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', value)
+    if (not identifier(key) or not isinstance(data, Mapping) or type(data.get('version')) is not int
+            or data['version'] != 1 or set(data) - {'version', 'name', 'stickers', 'deleted', 'io.tavern.previous_event'}):
+        return False
+    if data.get('deleted') is True:
+        return not (set(data) & {'name', 'stickers'})
+    values = data.get('stickers')
+    if ('deleted' in data or not label(data.get('name'), 60) or not isinstance(values, (list, tuple)) or len(values) > 50):
+        return False
+    ids = set()
+    for value in values:
+        if (not isinstance(value, Mapping) or set(value) != {'id', 'name', 'alt', 'url'} or not identifier(value.get('id'))
+                or value['id'] in ids or not label(value.get('name'), 60) or not label(value.get('alt'), 160)
+                or not isinstance(value.get('url'), str) or len(value['url']) > 1024
+                or not re.fullmatch(r'mxc://[^\s/?#\x00-\x1f]+/[A-Za-z0-9_-]+', value['url'])):
+            return False
+        ids.add(value['id'])
+    return True
+
+
+def check_sticker_pack(event, state):
+    if event.type != STICKERS:
+        return True
+    key, data = getattr(event, 'state_key', None), event.content
+    previous = state.get((STICKERS, key))
+    if (not valid_sticker_pack(key, data) or content(state, 'm.room.create').get('type') != 'm.space'
+            or content(state, 'm.room.create').get('m.federate') is not False
+            or content(state, 'm.room.member', event.sender).get('membership') != 'join'
+            or 'io.tavern.previous_event' not in data
+            or data['io.tavern.previous_event'] != (getattr(previous, 'event_id', None) if previous else None)):
+        return False
+    active = sum(1 for (kind, _), saved in state.items() if kind == STICKERS and saved.content.get('deleted') is not True)
+    return bool(data.get('deleted') is True or previous and previous.content.get('deleted') is not True or active < 20)
+
+
 LAYOUT = "io.tavern.server.layout"
 PERMISSIONS = frozenset({"send_messages", "create_private_threads", "add_reactions", "pin_messages", "manage_messages", "manage_reports", "manage_webhooks", "manage_nicknames", "join_calls", "speak", "video", "screen_share", "mute_members", "deafen_members", "invite", "kick", "ban", "timeout", "manage_channels", "manage_roles", "manage_server"})
 CHANNEL_PERMISSIONS = PERMISSIONS - {"manage_roles", "manage_server", "manage_nicknames"}
@@ -374,6 +416,8 @@ class TavernPolicy:
         return found
 
     async def check_event_allowed(self, event, state_events):
+        if not check_sticker_pack(event, state_events):
+            return False, None
         if event.type == POLICY and any(key in value for value in (event.content, content(state_events, POLICY)) for key in (ADMISSION_VERSION, AUDIENCES)):
             if not self.channel_revocation or not self.channel_revocation.ready:
                 return False, None

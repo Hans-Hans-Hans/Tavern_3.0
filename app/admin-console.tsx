@@ -1,7 +1,9 @@
+import { AdminOverview } from './admin-overview';
+import './experience.css';
 import { InstanceBranding, AdminSecurityPolicy } from './instance-admin';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { requestApi, type AccountSession } from '@/lib/api';
+import { accountArtworkOwner, requestApi, type AccountSession } from '@/lib/api';
 import { Field } from './auth-gateway';
 import { OperationsPanel } from './operations-panel';
 import { AdminRooms, StoragePolicy } from './admin-resources';
@@ -19,22 +21,25 @@ export default function AdminConsole({ session }: { session: AccountSession }) {
   const [section, setSection] = useState<typeof sections[number]>('Overview'), [data, setData] = useState<any>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [query, setQuery] = useState(''), [page, setPage] = useState(0), [settings, setSettings] = useState<any>(null), [smtpPassword, setSmtpPassword] = useState('');
   const [to, setTo] = useState('');
+  const requestGeneration=useRef(0);
+  const accountOwner=accountArtworkOwner();
   async function load() {
+    const generation=++requestGeneration.current,owner=accountArtworkOwner(),current=()=>generation===requestGeneration.current&&owner===accountArtworkOwner();
     setBusy(true); setError('');
     try {
       if(['Reports','Policy','Rooms','Storage','Audit','Integrations','Users','Instance','Security','Logs'].includes(section)){setData({});return;}
       const route = section === 'Users' ? '/admin/users?limit=50&from=' + page + '&search=' + encodeURIComponent(query) : section === 'Email' || section === 'Instance' ? '/admin/settings' : '/admin/' + section.toLowerCase();
-      const value = await requestApi(route); setData(value); if (section === 'Email' || section === 'Instance') setSettings(value);
-    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+      const value = await requestApi(route); if(!current())return;setData(value); if (section === 'Email' || section === 'Instance') setSettings(value);
+    } catch (e: any) { if(current())setError(e.message); } finally { if(current())setBusy(false); }
   }
-  useEffect(() => { setData(null); void load(); }, [section, page]);
+  useEffect(() => { setData(null); void load();return()=>{requestGeneration.current++;}; }, [section, page, accountOwner]);
   async function mutation(fn: () => Promise<any>, message: string) { setBusy(true); setError(''); try { const result = await fn(); toast.success(message); await load(); return result; } catch (e: any) { setError(e.message); return null; } finally { setBusy(false); } }
   if (!session.admin) return <main className="auth-shell"><section className="auth-card"><h1>Administrator access required</h1><p>Your account does not have instance administration privileges.</p><a href="/">Return to Tavern</a></section></main>;
   const smtp = settings?.smtp || {}, instance = settings?.instance || {};
   const updateSmtp = (key: string, value: unknown) => setSettings((s: any) => ({ ...s, smtp: { ...s.smtp, [key]: value } }));
   const updateInstance = (key: string, value: unknown) => setSettings((s: any) => ({ ...s, instance: { ...s.instance, [key]: value } }));
   return <main className="admin-layout"><nav className="admin-nav" aria-label="Instance administration"><a href="/" className="secondary-button">← Tavern</a>{sections.map(s => <button key={s} aria-current={section === s} onClick={() => { setSection(s); setPage(0); }}>{s}</button>)}</nav><section className="admin-main"><header className="admin-toolbar"><h1>{section}</h1><button className="secondary-button" disabled={busy} onClick={()=>{setRefreshKey(key=>key+1);void load();}}>Refresh</button>{busy && <span role="status">Loading…</span>}</header>{error && <p className="connect-error" role="alert">{error}</p>}
-    {section === 'Overview' && data && <><div className="admin-metrics">{[['Users', data.users], ['Rooms', data.rooms], ['Active sessions', data.sessions]].map(([label, value]) => <article key={String(label)} className="admin-metric"><span>{label}</span><strong>{typeof value === 'number' ? value.toLocaleString() : 'Unavailable'}</strong></article>)}</div><div className="product-section"><p>Tavern {data.version} · Synapse {data.synapseVersion || 'Unavailable'}</p><p>Email: {data.emailConfigured ? 'Configured' : 'Not configured'}</p></div></>}
+    {section === 'Overview' && data && <AdminOverview data={data} onSection={setSection}/>}
     {section === 'Users' && <AdminUsers key={refreshKey} session={session}/>}
     {section === 'Email' && settings && <form className="dialog-form" onSubmit={e => { e.preventDefault(); void mutation(async () => { await requestApi('/admin/settings', { smtp: { ...smtp, ...(smtpPassword ? { password: smtpPassword } : {}) } }, 'PUT'); setSmtpPassword(''); }, 'Email settings saved'); }}><label className="check-label"><input type="checkbox" checked={!!smtp.enabled} onChange={e => updateSmtp('enabled', e.target.checked)}/>Enable email</label><Field label="SMTP host"><input required value={smtp.host || ''} onChange={e => updateSmtp('host', e.target.value)} placeholder="smtp.gmail.com"/></Field><Field label="Port"><input type="number" min={1} max={65535} required value={smtp.port || 587} onChange={e => updateSmtp('port', Number(e.target.value))}/></Field><Field label="Encryption"><select value={smtp.secure ? 'tls' : 'starttls'} onChange={e => updateSmtp('secure', e.target.value === 'tls')}><option value="starttls">STARTTLS (usually port 587)</option><option value="tls">TLS (usually port 465)</option></select></Field><Field label="Username"><input autoComplete="off" value={smtp.username || ''} onChange={e => updateSmtp('username', e.target.value)}/></Field><Field label={smtp.passwordConfigured ? 'Replace saved password (leave blank to keep)' : 'SMTP password / Gmail App Password'}><input type="password" autoComplete="new-password" value={smtpPassword} onChange={e => setSmtpPassword(e.target.value)}/></Field><Field label="Sender name"><input value={smtp.fromName || ''} onChange={e => updateSmtp('fromName', e.target.value)}/></Field><Field label="Sender address"><input type="email" required value={smtp.fromAddress || ''} onChange={e => updateSmtp('fromAddress', e.target.value)}/></Field><button className="primary-button" disabled={busy}>Save email settings</button><hr className="product-divider"/><p>Tests use the saved settings.</p><Field label="Test email recipient"><input type="email" value={to} onChange={e => setTo(e.target.value)}/></Field><div className="product-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => void mutation(() => requestApi('/admin/email/test', { connectionOnly: true }), 'SMTP connection succeeded')}>Test connection</button><button type="button" className="secondary-button" disabled={busy || !to} onClick={() => void mutation(() => requestApi('/admin/email/test', { to }), 'Test email sent')}>Send test email</button></div></form>}
     {section === 'Instance' && <InstanceBranding key={refreshKey} session={session}/>}

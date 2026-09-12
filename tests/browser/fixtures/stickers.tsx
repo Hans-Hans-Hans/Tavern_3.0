@@ -1,0 +1,12 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {StickerPackManager,StickerPicker} from '../../../app/stickers';
+import '../../../app/globals.css';
+import '../../../app/experience.css';
+const w=window as any;
+const listeners=new Set<()=>void>(),state:any[]=[];
+w.stickers={owner:{},listeners,state,writes:[],sends:[],fail:false};
+const currentState={maySendStateEvent:()=>true,getStateEvents:(type:string)=>state.filter(event=>event.type===type).map(event=>({getStateKey:()=>event.state_key,getContent:()=>event.content}))};
+const room={roomId:'!server:test',isSpaceRoom:()=>true,getMyMembership:()=> 'join',currentState};
+w.stickers.client={getRooms:()=>[room],getRoom:()=>room,getUserId:()=> '@owner:test',getDeviceId:()=> 'device',roomState:async()=>structuredClone(state),sendStateEvent:async(id:string,type:string,content:any,key:string)=>{if(w.stickers.fail)throw Error('Save rejected. Retry after checking your permissions.');const previous=state.findIndex(item=>item.state_key===key);if(previous>=0)state.splice(previous,1);state.push({event_id:'$'+state.length,type,state_key:key,content});w.stickers.writes.push(content);listeners.forEach(listener=>listener());}};
+createRoot(document.getElementById('root')!).render(<><StickerPackManager serverId="!server:test"/><StickerPicker roomId="!chat:test" parent="$thread" onSent={()=>{}}/></>);

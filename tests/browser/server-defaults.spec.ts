@@ -38,6 +38,7 @@ test('settings hide without custom authority and reject permissions removed whil
 test('creation submits welcome and notification choices and welcome rules links join the actual channel', async ({ page }) => {
   await fixture(page, 'create');
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Gaming');
+  await page.getByText('Welcome and notifications',{exact:true}).click();
   await page.getByRole('combobox', { name: 'Default notifications' }).selectOption('all');
   await page.getByRole('textbox', { name: 'Welcome message' }).fill('Welcome to Gaming!');
   await page.getByRole('button', { name: 'Create server', exact: true }).click();
@@ -62,4 +63,14 @@ test('choosing a personal global notification mode opts out of community default
   await page.getByRole('combobox', { name: 'Notify me about', exact: true }).selectOption('nothing');
   await expect(defaults).not.toBeChecked();
   expect(await page.evaluate(() => (window as any).accounts['io.tavern.notification_preferences'].global.mode)).toBe('nothing');
+});
+
+test('notification presets can reset to inherited while retaining an active mute',async({page})=>{
+ await fixture(page,'personal&scoped');
+ await page.getByRole('button',{name:/^Quiet/}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).accounts['io.tavern.notification_preferences']?.servers['!server:local']?.mode)).toBe('nothing');
+ await page.getByLabel('Mute duration').selectOption('-1');
+ await page.getByRole('button',{name:'Reset to inherited setting',exact:true}).click();
+ const setting=await page.evaluate(()=>(window as any).accounts['io.tavern.notification_preferences'].servers['!server:local']);
+ expect(setting).toEqual({mode:'inherit',mutedUntil:-1});
 });

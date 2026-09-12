@@ -18,6 +18,7 @@ export function ServerRoleBadges({ serverId, userId }: { serverId: string; userI
   return <div className="inline-actions" style={{ flexWrap: 'wrap' }}>{userId === policy.owner && <span className="community-role">👑 Owner</span>}{memberServerRoles(policy, userId).map(role => <span className="community-role" style={{ color: role.color || undefined }} key={role.id}>{role.icon} {role.name}</span>)}</div>;
 }
 
+import { AccessExplanation } from './access-explanation';
 type Props = { serverId: string; channelId?: string; enabled: boolean; onChanged?: () => Promise<unknown> };
 export function ServerRoles(props: Props) { return <ServerRoleEditor key={props.serverId + ':' + (props.channelId || '')} {...props}/>; }
 function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
@@ -86,6 +87,7 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
   const rolePosition = ordered.findIndex(item => item.id === role.id);
   return <section className="channel-admin server-roles-editor">
     <h3>{channelId ? 'Channel role permissions' : 'Server roles and permissions'}</h3>
+    <AccessExplanation serverId={serverId} channelId={channelId}/>
     <p className="login-help">{channelId ? `Override permissions for ${channelRoom?.name || 'this channel'} in ${room?.name || 'this server'}. Other governing servers and native room permissions still apply. Role membership never joins someone to a channel.` : 'Give each role a recognizable look, choose its permissions, and assign it to members. Higher roles can manage only roles and members below them. Native Matrix permissions also apply.'}</p>
     <form className="dialog-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy}>

@@ -100,7 +100,7 @@ test('eligible-channel browser requires an explicit join, retains rejected joins
 
 test('typed creation exposes real voice settings, category placement and explicit invitation outcomes', async ({ page }) => {
   await fixture(page); await page.getByRole('radio', { name: /^Voice/ }).check();
-  await expect(page.getByText(/Creating the channel does not turn on a microphone/)).toBeVisible();
+  await expect(page.getByText(/creating the channel does not turn on a microphone/i)).toBeVisible();
   await page.getByRole('textbox', { name: 'Channel name', exact: true }).fill('Project lounge');
   await page.getByRole('textbox', { name: 'Channel description' }).fill('Talk through design decisions');
   await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('projects'); await page.getByRole('combobox', { name: 'Chat slow mode', exact: true }).selectOption('10');

@@ -8,6 +8,7 @@ import { loadTs } from '../load-ts.mjs';
 export function matrixThreadReader(client) {
   const resolver = loadTs('../lib/resolve-event.ts', {});
   const dependencies = {
+    './sticker-model': loadTs('../lib/sticker-model.ts', {}),
     './resolve-event': resolver,
     './thread-history': loadTs('../lib/thread-history.ts', { 'matrix-js-sdk': sdk, './resolve-event': resolver }),
     './room-read-scope': loadTs('../lib/room-read-scope.ts', {}),

@@ -38,6 +38,30 @@ async function channelContextAction(page: Page, trigger: ReturnType<Page['locato
   finally { await page.evaluate(() => (window as any).stopChannelMenuTrace?.()).catch(() => {}); }
 }
 
+test('server switching restores its last selected channel and Home is a selectable landing page', async ({page}) => {
+  await fixture(page,true,'?management=1');
+  await page.getByRole('button',{name:'Games server',exact:true}).click();
+  await page.getByRole('button',{name:'Gaming Voice',exact:true}).click();
+  await expect(page.locator('.channel-heading')).toContainText('Gaming Voice');
+  await page.getByRole('button',{name:'Direct messages',exact:true}).click();
+  await page.getByRole('button',{name:'Games server',exact:true}).click();
+  await expect(page.locator('.channel-heading')).toContainText('Gaming Voice');
+  await page.getByRole('button',{name:'Tavern home',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Welcome home'})).toBeVisible();
+  await page.getByRole('button',{name:'Mentions',exact:true}).first().click();
+  await expect(page).toHaveURL(/#view=mentions$/);
+  await page.goBack();
+  await expect(page.getByRole('heading',{name:'Welcome home'})).toBeVisible();
+  await page.goBack();
+  await expect(page.locator('.channel-heading')).toContainText('Gaming Voice');
+  await page.goForward();
+  await expect(page.getByRole('heading',{name:'Welcome home'})).toBeVisible();
+  await page.getByLabel('Open Home when I return to Tavern').check();
+  await page.reload();
+  await expect(page.getByRole('heading',{name:'Welcome home'})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual((await page.viewportSize())!.width);
+});
+
 test('responsive navigation centers the DM icon on desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await fixture(page, true, '?management=1');

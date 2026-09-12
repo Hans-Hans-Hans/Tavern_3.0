@@ -3,8 +3,9 @@ import { accountArtworkOwner, isManagedAccount } from '@/lib/api';
 import { getMatrixClient } from '@/lib/matrix';
 import { emailHistoryStatus, enableEmailHistory, recoverEmailHistory, startEmailHistory, autoStartEmailHistory, autoEnableEmailHistory, hasHistoryLogin, protectCurrentHistory, type EmailHistoryStatus } from '@/lib/email-history';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+const promptedAccounts = new WeakSet<object>();
 
-export function EmailHistoryRecovery({ known, ready, automatic = false, onConfigured, backupVersion }: { known: boolean; ready: boolean; automatic?: boolean; onConfigured?: (value:boolean)=>void; backupVersion?: string|null }) {
+export function EmailHistoryRecovery({ known, ready, automatic = false, onConfigured, onChecked, backupVersion }: { known: boolean; ready: boolean; automatic?: boolean; onConfigured?: (value:boolean)=>void; onChecked?: (value:boolean)=>void; backupVersion?: string|null }) {
   const [status,setStatus]=useState<EmailHistoryStatus|null>(null),[open,setOpen]=useState(false),[challenge,setChallenge]=useState('');
   const [protect,setProtect]=useState(false);
   const [password,setPassword]=useState(''),[code,setCode]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
@@ -15,18 +16,20 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
     let active=true;
     const valid=()=>active&&getMatrixClient()===client&&accountArtworkOwner()===account;
     void emailHistoryStatus().then(async value=>{
-      if(!valid())return;setStatus(value);onConfigured?.(value.configured);
+      if(!valid())return;setStatus(value);onConfigured?.(value.configured);onChecked?.(true);
       if(!automatic||!value.emailReady)return;
       if(known&&hasHistoryLogin()&&(!value.configured||value.passwordChanged||(backupVersion&&value.backupVersion!==backupVersion))){
-        await autoEnableEmailHistory();if(valid()){const refreshed=await emailHistoryStatus();if(!valid())return;setStatus(refreshed);setMessage('Email history recovery is enabled.');}
-      } else if(!known&&value.configured){
+        await autoEnableEmailHistory();if(valid()){const refreshed=await emailHistoryStatus();if(!valid())return;setStatus(refreshed);onConfigured?.(refreshed.configured);setMessage('Email history recovery is enabled.');}
+      } else if(!known&&value.configured&&!promptedAccounts.has(account)){
+        promptedAccounts.add(account);
         setOpen(true);setBusy(true);
         try {const id=await autoStartEmailHistory();if(valid())setChallenge(id);}
         finally {if(valid())setBusy(false);}
       }
-    }).catch(e=>{if(valid())setError(e.message);});
+    }).catch(e=>{if(valid()){setError(e.message);onChecked?.(true);}});
     return()=>{active=false;};
-  },[ready,known,automatic,client,account,onConfigured,backupVersion]);
+  },[ready,known,automatic,client,account,onConfigured,onChecked,backupVersion]);
+  useEffect(()=>{if(automatic&&known){setOpen(false);setCode('');setPassword('');}},[automatic,known]);
   if(!isManagedAccount())return null;
   async function send() {
     setBusy(true);setError('');

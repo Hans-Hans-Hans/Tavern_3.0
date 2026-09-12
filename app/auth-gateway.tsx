@@ -1,3 +1,4 @@
+import {ExperienceError} from './experience-error';
 import { historyPasswordKey } from '@/lib/history-envelope';
 import { rememberHistoryLogin, forgetHistoryLogin } from '@/lib/history-login';
 import { brandingAsset } from '@/lib/branding';
@@ -22,7 +23,7 @@ export function AuthGateway() {
   const rechecking=useRef(false);
   const historyLogin=useRef<CryptoKey|null>(null);
   useEffect(()=>()=>{historyLogin.current=null;forgetHistoryLogin();},[]);
-  const [mode, setMode] = useState('loading'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState('loading'), [error, setError] = useState<unknown>(null), [busy, setBusy] = useState(false);
   const [username, setUsername] = useState(''), [password, setPassword] = useState(''), [remember, setRemember] = useState(false);
   const [challenge, setChallenge] = useState(''), [code, setCode] = useState(''), [method, setMethod] = useState('totp'), [methods, setMethods] = useState<string[]>([]);
   const [email, setEmail] = useState(''), [newPassword, setNewPassword] = useState(''), [confirmation, setConfirmation] = useState('');
@@ -58,11 +59,11 @@ export function AuthGateway() {
     } catch (e: any) {
       // Older static deployments have no companion service; preserve their login.
       if (e.status === 404) { setManagedAccount(false); setMode('legacy'); }
-      else { setError(e.message); setMode('failure'); }
+      else { setError(e); setMode('failure'); }
     }
   }
   useEffect(() => { void initialize(); const logout = (event: Event) => { historyLogin.current=null;forgetHistoryLogin();setSession(null); setMode('login'); setNotice(typeof (event as CustomEvent).detail === 'string' && (event as CustomEvent).detail ? (event as CustomEvent).detail.slice(0, 600) : 'You have been signed out.'); }; window.addEventListener('tavern:signout', logout); return () => window.removeEventListener('tavern:signout', logout); }, []);
-  useEffect(()=>{const enforce=()=>{if(rechecking.current)return;rechecking.current=true;setMode('loading');void import('@/lib/matrix').then(matrix=>{matrix.clearLocalMatrixSession();return requestApi<AccountSession>('/auth/session');}).then(openSession).catch(e=>{setError(e.message);setMode(e.status===401?'login':'failure');}).finally(()=>{rechecking.current=false;});};window.addEventListener('tavern:account-requirement',enforce);return()=>window.removeEventListener('tavern:account-requirement',enforce);},[]);
+  useEffect(()=>{const enforce=()=>{if(rechecking.current)return;rechecking.current=true;setMode('loading');void import('@/lib/matrix').then(matrix=>{matrix.clearLocalMatrixSession();return requestApi<AccountSession>('/auth/session');}).then(openSession).catch(e=>{setError(e);setMode(e.status===401?'login':'failure');}).finally(()=>{rechecking.current=false;});};window.addEventListener('tavern:account-requirement',enforce);return()=>window.removeEventListener('tavern:account-requirement',enforce);},[]);
   useEffect(()=>{const icon=brandingAsset(config?.instance?.icon);if(!icon)return;const link=document.querySelector<HTMLLinkElement>('link[rel="icon"]')||document.createElement('link'),previous=link.getAttribute('href'),previousType=link.getAttribute('type');link.rel='icon';link.type='image/png';link.href=icon;if(!link.isConnected)document.head.append(link);return()=>{if(previous)link.setAttribute('href',previous);else link.remove();if(previousType)link.setAttribute('type',previousType);else link.removeAttribute('type');};},[config?.instance?.icon]);
   async function submit(e: FormEvent) {
     e.preventDefault(); if (pwaUpdateLocked()) { setError('An app update is being applied. Please wait.'); return; } setPwaReloadAllowed(false); setBusy(true); setError(''); setNotice('');
@@ -92,9 +93,9 @@ export function AuthGateway() {
         await requestApi('/auth/recovery/complete', { challengeId: challenge, code, newPassword, confirmation, mfaCode:recoveryMfa, method });
         setNewPassword(''); setConfirmation(''); setCode(''); setMode('login'); setNotice('Password updated. Sign in with your new password.');
       }
-    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+    } catch (e: any) { setError(e); } finally { setBusy(false); }
   }
-  if(mode==='maintenance')return <main className='auth-shell'><section className='auth-card'><h1>Tavern is under maintenance</h1><p>{status?.maintenance.message||'Your administrator is performing maintenance. Please try again shortly.'}</p><button className='primary-button' disabled={busy} onClick={()=>{setBusy(true);void openSession(session!).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>Check again</button><a className='secondary-button' href='/admin'>Administration</a>{error&&<p role='alert'>{error}</p>}</section></main>;
+  if(mode==='maintenance')return <main className='auth-shell'><section className='auth-card'><h1>Tavern is under maintenance</h1><p>{status?.maintenance.message||'Your administrator is performing maintenance. Please try again shortly.'}</p><button className='primary-button' disabled={busy} onClick={()=>{setBusy(true);void openSession(session!).catch(e=>setError(e)).finally(()=>setBusy(false));}}>Check again</button><a className='secondary-button' href='/admin'>Administration</a><ExperienceError error={error} context='login'/></section></main>;
   if (mode === 'legacy' || mode === 'ready') return <><InstanceNotices status={status}/><Suspense fallback={<div className="auth-shell" role="status">Opening Tavern…</div>}>{location.pathname.startsWith('/admin') && session ? <AdminConsole session={session}/> : <Tavern />}</Suspense></>;
   if (mode === 'security-enrollment') return <SecurityEnrollment onComplete={async()=>openSession(await requestApi<AccountSession>('/auth/session'))}/>;
   if (mode === 'password-change') return <ForcedPasswordChange onComplete={async () => openSession(await requestApi<AccountSession>('/auth/session'))}/>;
@@ -116,7 +117,7 @@ export function AuthGateway() {
       {mode==='login'&&config?.smtpConfigured&&(config.registrationMode==='open'||(config.registrationMode==='invite'&&!!invitationToken(location)))&&<button type='button' className='secondary-button' onClick={()=>{setMode('register');setError('');}}>Create an account</button>}{mode === 'login' && config?.smtpConfigured && <button type="button" className="text-button" onClick={() => { setMode('recovery'); setError(''); }}>Forgot password?</button>}
       {!setup && mode !== 'login' && <button type="button" className="text-button" disabled={busy} onClick={() => { historyLogin.current=null;forgetHistoryLogin();setMode(config?.bootstrapRequired ? 'bootstrap' : 'login'); setCode(''); setError(''); }}>Back</button>}
     </form>}
-    {error && <p className="connect-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
+    <ExperienceError error={error} context='login'/>{notice && <p role="status">{notice}</p>}
     <footer><ShieldCheck size={16}/> Self-hosted conversations with end-to-end encryption</footer><div className='auth-legal-links'>{config?.instance?.termsUrl&&/^https?:\/\//.test(config.instance.termsUrl)&&<a href={config.instance.termsUrl} target='_blank' rel='noreferrer'>Terms</a>}{config?.instance?.privacyUrl&&/^https?:\/\//.test(config.instance.privacyUrl)&&<a href={config.instance.privacyUrl} target='_blank' rel='noreferrer'>Privacy</a>}{config?.instance?.contact&&<span>{config.instance.contact}</span>}</div>
   </section></main>;
 }

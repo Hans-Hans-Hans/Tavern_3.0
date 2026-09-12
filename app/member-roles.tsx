@@ -43,6 +43,7 @@ function MemberRoleForm({ serverId, userId, onChanged, onUnavailable }: Props) {
   }
   return <form className="dialog-form role-member-editor" onSubmit={event => { event.preventDefault(); void save(); }}>
     <p>Every member keeps the default Member role. You can grant only permissions you have, and only roles below your highest role.</p>
+    <p role="status">{JSON.stringify([...selected].sort()) !== JSON.stringify([...previous].sort()) ? 'Unsaved member role changes' : 'Assignments are up to date'}</p>
     <div className="inline-actions" aria-label="Selected member roles" style={{ flexWrap: 'wrap' }}>{roles.filter(role => checked(role.id)).map(role => <span key={role.id} className="community-role" style={{ color: role.color || undefined }}>{role.icon} {role.name}</span>)}</div>
     <label>Find a role<input type="search" value={query} onChange={event => setQuery(event.target.value)}/></label>
     <fieldset disabled={busy} className="role-assignment-list">{roles.filter(role => role.name.toLowerCase().includes(query.toLowerCase().trim())).map(role => {

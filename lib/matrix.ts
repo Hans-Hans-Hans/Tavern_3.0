@@ -1,3 +1,4 @@
+import {parseSticker} from './sticker-model';
 'use client';
 // Matrix is the source of truth. The self-hosted gateway forwards Matrix requests to Synapse.
 import { readInstanceConfig } from './instance';
@@ -146,7 +147,7 @@ function normalize(room:Room,event:MatrixEvent,context?:{reactions:Map<string,Re
  const thread=room.getThread(id);
  const encrypted=event.isEncrypted();
  const file=c.file&&typeof c.file==='object'&&typeof c.file.url==='string'?c.file:null;
- return {id,webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Open History recovery to restore saved message keys.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:relation?.rel_type==='m.thread'?relation.event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
+ return {id,sticker:parseSticker(c['io.tavern.sticker']),webhook:webhookMetadata(c['io.tavern.webhook']),forum:c['io.tavern.forum']&&typeof c['io.tavern.forum']==='object'?{title:safeString(c['io.tavern.forum'].title).slice(0,120),tags:safeStrings(c['io.tavern.forum'].tags).slice(0,10)}:null,lastActivity:thread?.events.at(-1)?.getTs()||event.getTs(),body:event.isDecryptionFailure()?'🔒 Unable to decrypt on this device. Open History recovery to restore saved message keys.':safeString(c.body,'[Unsupported message]'),author_id:sender,author_name:safeString(room.getMember(sender)?.name,sender),conversation_id:room.roomId,conversation_name:safeString(room.name,room.roomId),created_at:event.getTs(),edited_at:event.replacingEventDate()?.getTime()||null,parent_id:relation?.rel_type==='m.thread'?relation.event_id||null:null,pinned:Number(pinned.has(id)),saved:Number(context?context.saved.has(id):savedEvents().some((x:any)=>x.id===id)),replies:thread?.length||0,reactions,attachments:['m.file','m.image','m.video','m.audio'].includes(c.msgtype||'')&&(c.url||file?.url)?[{id,name:safeString(c.filename,safeString(c.body,'Attachment')),size:typeof c.info?.size==='number'?c.info.size:0,url:safeString(c.url,file?.url),file,encrypted,type:safeString(c.info?.mimetype),width:Number(c.info?.w)||undefined,height:Number(c.info?.h)||undefined,thumbnail:c.info?.thumbnail_file?.url||c.info?.thumbnail_url?{url:safeString(c.info?.thumbnail_file?.url,c.info?.thumbnail_url),file:c.info?.thumbnail_file||null,type:safeString(c.info?.thumbnail_info?.mimetype)}:null}]:[],encrypted,sending:!!event.status};
 }
 async function getRoomMessages(room:Room,parent?:string,includeThreads=false){
  const owner=requireClient(),account=accountArtworkOwner();let validateThread=()=>{};const current=()=>client===owner&&(!parent||accountArtworkOwner()===account);return readJoinedRoom(owner,room,current,async()=>{
@@ -199,6 +200,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   if(!current())throw new Error('Your account or conversation changed. Your draft is kept.');
   const mentionBody=expanded?.bodyForUserMentions??p.body;
   let content:any={msgtype:'m.text',body:p.body,'m.mentions':{user_ids:p.suppressMentions?[]:[...new Set([...room.getJoinedMembers().filter(m=>mentionBody.includes('@'+m.name)||mentionBody.includes(m.userId)).map(m=>m.userId),...(expanded?.userIds||[])])]}};
+  if(p.sticker){const sticker=parseSticker(p.sticker);if(!sticker)throw new Error('Choose a valid sticker.');content['io.tavern.sticker']=sticker;}
   const formatted=serverEmojiHtml(p.body,readServerEmoji(p.serverId));if(formatted){content.format='org.matrix.custom.html';content.formatted_body=formatted;}
   if(p.forum){content['io.tavern.forum']={title:safeString(p.forum.title).slice(0,120),tags:safeStrings(p.forum.tags).slice(0,10).map(t=>t.slice(0,32))};}
   if(!p.suppressMentions&&mentionBody.includes('@everyone'))content['m.mentions'].room=true;
@@ -207,6 +209,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
   if(original){
    if(original.preparedContent.msgtype!=='m.text'||original.preparedContent.body!==p.body||original.encrypted!==room.hasEncryptionStateEvent())throw new Error('The original pending message or conversation encryption changed. Check the conversation before replacing it.');
    if(JSON.stringify(original.preparedRoleUsers)!==JSON.stringify(roleUsers))throw new Error('Role mention recipients changed after the original send attempt. The saved transaction will not notify a different audience.');
+   if(JSON.stringify(original.preparedContent['io.tavern.sticker']||null)!==JSON.stringify(content['io.tavern.sticker']||null))throw new Error('The pending sticker changed. Check the conversation before sending another.');
    content=structuredClone(original.preparedContent);
   }
   if(expanded)checkRoleMentionSize(content['m.mentions'],content);
@@ -243,7 +246,7 @@ export async function matrixApi(action:string,p?:any,params:Record<string,string
  if(action==='createServer'){
   const name=safeString(p.name).trim().slice(0,60);if(!name)throw new Error('A server name is required.');
   const r=await c.createRoom({name,topic:safeString(p.description).slice(0,200),visibility:sdk.Visibility.Private,preset:sdk.Preset.PrivateChat,creation_content:{type:'m.space','m.federate':false},initial_state:serverCreationState(me,p,(await readInstanceConfig()).serverRolePolicy===true)});
-  await c.joinRoom(r.room_id);notify();return {id:r.room_id};
+  notify();return {id:r.room_id};
  }
  if(action==='roomSettings'){
   const r=roomRequired(p.conversation),name=safeString(p.name).trim().slice(0,60);if(!name)throw new Error('A name is required.');
@@ -298,7 +301,7 @@ export async function uploadMatrixFile(file:File,roomId:string,options:{signal?:
  const actor=c.getUserId(),device=c.getDeviceId(),owner=accountArtworkOwner(),homeserver=c.getHomeserverUrl(),encryptedRoom=room.hasEncryptionStateEvent();
  const owned=()=>client===c&&c.getUserId()===actor&&c.getDeviceId()===device&&c.getHomeserverUrl()===homeserver&&accountArtworkOwner()===owner&&c.getRoom(roomId)===room&&room.getMyMembership()==='join'&&room.hasEncryptionStateEvent()===encryptedRoom;
  const check=()=>{options.signal?.throwIfAborted();if(!owned())throw new Error('Your account, membership or encryption changed during upload. Attach the file again from the current conversation.');};
- check();const maximum=await readUploadLimit(c);check();if(file.size>maximum)throw new Error(uploadLimitMessage(maximum));
+ check();const maximum=await readUploadLimit(c);check();if(file.size>maximum)throw Object.assign(new Error(uploadLimitMessage(maximum)),{httpStatus:413,errcode:'M_TOO_LARGE'});
  let descriptor:any=null,data:Blob=file;
  if(encryptedRoom){const {encryptAttachment}=await import('matrix-encrypt-attachment');check();const bytes=await file.arrayBuffer();check();const encrypted=await encryptAttachment(bytes);check();descriptor=encrypted.info;data=new Blob([encrypted.data],{type:'application/octet-stream'});}
  check();const abortController=new AbortController(),abort=()=>abortController.abort();options.signal?.addEventListener('abort',abort,{once:true});

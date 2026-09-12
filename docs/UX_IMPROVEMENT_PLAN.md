@@ -11,9 +11,11 @@ for anything requiring a decision. Keep advanced Matrix details in diagnostics.
 
 ## First: remove everyday friction
 
-The file-size control in item 1 is implemented in this checkpoint; see
-[upload settings and deployment](UPLOAD_LIMITS.md). The remaining items are
-proposed work, ordered below, rather than claims of completed features.
+Items 1–12 now have implementation coverage, including the existing mobile
+interface and channel/role controls. See [the V3 usability update](UX_UPDATE.md)
+for the delivered behavior and upgrade steps, and [upload settings](UPLOAD_LIMITS.md)
+for file-size configuration. Physical-phone and target-deployment acceptance
+remain separate checks; implementation is not a claim that those checks ran.
 
 | Priority | Improvement | User outcome | Acceptance |
 | --- | --- | --- | --- |
@@ -36,6 +38,12 @@ proposed work, ordered below, rather than claims of completed features.
 | 12 | Notification presets | “Everything,” “Mentions,” and “Quiet” explain their effect at account, server and channel levels. | Show which setting is inherited and which is overridden, and offer a clear reset-to-inherited action. Preserve existing timed mute and DND behavior. |
 
 ## Optional features worth adding
+
+Home, sticker packs, shared-time-zone planning with event RSVPs, and personal
+server colors are included in this update. Existing upload progress/cancel/retry
+now handles size rejection more clearly. Temporary voice-room automation and
+resumable encrypted chunk uploads remain future projects with the dependencies
+below; no browser-only cleanup timer is being shipped as durable room cleanup.
 
 | Feature | Why it is useful | Scope and dependencies |
 | --- | --- | --- |

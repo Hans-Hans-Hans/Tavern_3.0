@@ -4,6 +4,22 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## September 12 file-size controls and UX plan checkpoint
 
+### Follow-on usability implementation
+
+[The usability update](UX_UPDATE.md) adds the planned core workflows and four
+optional features. The production build and 701 model cases pass. Python's
+full discovery run completed 783 tests successfully, with 15 POSIX-only checks
+skipped on Windows. Browser coverage includes navigation/Back, recovery, server
+templates and partial retries, permission editors, safe errors, sticker send
+retries, notification inheritance and event planning. The full browser run and
+focused reruns are recorded separately; physical-device and deployed-stack
+acceptance remain the checklist in the update guide.
+
+Temporary voice-room automation and resumable encrypted chunk uploads were
+optional future projects in the plan and are not claimed in this checkpoint.
+
+### File-size control checkpoint
+
 Administrators can raise the individual attachment limit from its unchanged
 10 MiB default to 512 MiB in Admin → Storage. Quota ordering, actual-byte
 enforcement, uncertain-upload reservations and account ownership checks remain

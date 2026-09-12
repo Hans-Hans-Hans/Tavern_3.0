@@ -8,7 +8,7 @@ import { effectiveRolePermissions, mayEditCategoryLayout, nativeMemberPower, par
 
 export const channelTemplates: Record<ChannelKind, { description: string; purpose: string; icon: string; guidance: string }> = {
   text: { description: 'Everyday conversations, links and attachments.', purpose: 'What will people talk about?', icon: '💬', guidance: 'Members can post messages, reply in threads and share files, subject to their permissions.' },
-  voice: { description: 'A place to meet and talk, with persistent chat.', purpose: 'What is this voice room for?', icon: '🔊', guidance: 'People choose when to join audio. Creating the channel does not turn on a microphone.' },
+  voice: { description: 'A voice room with participant tiles and optional discussion.', purpose: 'What is this voice room for?', icon: '🔊', guidance: 'The channel opens its participant view. People choose when to join audio; creating the channel does not turn on a microphone.' },
   video: { description: 'Meet face to face, share a screen and keep the chat.', purpose: 'What happens in this meeting room?', icon: '📹', guidance: 'People choose their camera and microphone when joining. Conference permissions still apply.' },
   forum: { description: 'Organize longer conversations into named discussions.', purpose: 'What topics belong in this forum?', icon: '🗂️', guidance: 'Members create discussion posts with titles and tags, then reply in their threads.' },
   announcement: { description: 'Updates posted by authorized moderators.', purpose: 'What announcements belong here?', icon: '📣', guidance: 'Only authorized moderators can publish posts. Members can read and react when their permissions allow.' },

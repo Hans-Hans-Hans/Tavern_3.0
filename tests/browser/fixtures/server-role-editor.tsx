@@ -32,6 +32,7 @@ export function mountFixture() {
     } };
   const waitRead = async () => { if (f.holdRead) await new Promise<void>(resolve => { f.releaseRead = () => { f.holdRead = false; resolve(); }; }); };
   const channels = new Map([channel, '!second:test'].map(id => [id, { roomId: id, name: id === channel ? 'Voice lounge' : 'Second voice', getMyMembership: () => 'join', isSpaceRoom: () => false,
+    getMember: (user: string) => { const value=f.members.find((member:any)=>member.userId===user); return value ? {...value,membership:user===f.actor?f.nativeChannelMembership:value.membership} : null; },
     currentState: { getStateEvents: (type: string, key: string) => type === 'm.space.parent' && key === server ? { getContent: () => f.parentLink ? { canonical: true, via: ['test'] } : {} } : null } }]));
   f.client = { getUserId: () => f.actor, getDeviceId: () => f.device,
     getRoom: (id: string) => id === server ? room : channels.get(id),

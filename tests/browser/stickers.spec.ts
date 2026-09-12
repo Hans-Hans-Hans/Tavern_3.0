@@ -1,0 +1,23 @@
+import {test,expect} from '@playwright/test';
+test('sticker management and picker preserve rejected drafts and retry the same transaction in a thread',async({page})=>{
+ await page.route(url=>url.pathname==='/lib/matrix.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const getMatrixClient=()=>window.stickers.client;export const onMatrixUpdate=fn=>{window.stickers.listeners.add(fn);return()=>window.stickers.listeners.delete(fn)};export const matrixApi=async(action,payload)=>{window.stickers.sends.push(payload);if(window.stickers.fail)throw Error('The server could not finish this request. Try again.');return {ok:true};};`}));
+ await page.route(url=>url.pathname==='/lib/api.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const accountArtworkOwner=()=>window.stickers.owner;`}));
+ await page.route(url=>url.pathname==='/lib/roles.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const readRolePolicy=()=>null;export const effectiveRolePermissions=()=>new Set();`}));
+ await page.route(url=>url.pathname==='/lib/community.ts',route=>route.fulfill({contentType:'text/javascript',body:`export const cropProfileImage=async file=>file;export const uploadProfileImage=async()=> 'mxc://local/artwork';`}));
+ await page.route(url=>url.pathname==='/app/community-settings.tsx',route=>route.fulfill({contentType:'text/javascript',body:`import React from '/node_modules/.vite/deps/react.js';export const CommunityImage=({name})=>React.createElement('span',{role:'img','aria-label':name},'Art');`}));
+ await page.route('**/sticker-test',route=>route.fulfill({contentType:'text/html',body:`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;await import('/tests/browser/fixtures/stickers.tsx');</script></body></html>`}));
+ await page.setViewportSize({width:390,height:844});await page.goto('/sticker-test');
+ await page.getByLabel('New pack name').fill('Cats');await page.getByRole('button',{name:'Create sticker pack'}).click();
+ await page.getByLabel('Sticker name',{exact:true}).fill('Wave');await page.getByLabel('Image description').fill('A cat waving hello');
+ await page.getByLabel('Artwork',{exact:true}).setInputFiles({name:'cat.png',mimeType:'image/png',buffer:Buffer.from('fixture boundary')});
+ await page.evaluate(()=>(window as any).stickers.fail=true);await page.getByRole('button',{name:'Add sticker',exact:true}).click();
+ await expect(page.getByRole('alert')).toContainText('Save rejected');await expect(page.getByLabel('Sticker name',{exact:true})).toHaveValue('Wave');
+ await page.evaluate(()=>(window as any).stickers.fail=false);await page.getByRole('button',{name:'Add sticker',exact:true}).click();
+ await expect(page.getByRole('img',{name:'A cat waving hello'})).toBeVisible();await page.getByRole('button',{name:'Stickers',exact:true}).click();
+ await page.evaluate(()=>(window as any).stickers.fail=true);await page.getByRole('button',{name:'Send Wave'}).click();
+ await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Try again');
+ await page.evaluate(()=>(window as any).stickers.fail=false);await page.getByRole('dialog').getByRole('button',{name:'Retry',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ const sends=await page.evaluate(()=>(window as any).stickers.sends);expect(sends).toHaveLength(2);expect(sends[0]).toEqual(sends[1]);expect(sends[0].parent).toBe('$thread');expect(sends[0].suppressMentions).toBe(true);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});

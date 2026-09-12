@@ -1,0 +1,10 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {CollaborationBoard} from '../../../app/collaboration-board';
+import '../../../app/globals.css';
+const w=window as any,events:any[]=[],listeners=new Set<()=>void>();
+w.eventPlanning={owner:{},listeners,sent:[],reminders:[]};
+const members=[{userId:'@alice:local',name:'Alice',membership:'join'},{userId:'@bob:local',name:'Bob',membership:'join'}];
+const room={roomId:'!planning:local',getMyMembership:()=> 'join',getJoinedMembers:()=>members,getMember:(id:string)=>members.find(member=>member.userId===id),getLiveTimeline:()=>({getEvents:()=>events,getPaginationToken:()=>null})};
+w.eventPlanning.client={getRoom:()=>room,getUserId:()=> '@alice:local',getDeviceId:()=> 'device',getCrypto:()=>({isEncryptionEnabledInRoom:async()=>true}),decryptEventIfNeeded:async()=>{},sendMessage:async(id:string,content:any)=>{const identity='$'+(events.length+1),timestamp=Date.now();w.eventPlanning.sent.push(content);events.push({getId:()=>identity,getSender:()=> '@alice:local',getTs:()=>timestamp,isEncrypted:()=>true,isRedacted:()=>false,isDecryptionFailure:()=>false,getContent:()=>content});listeners.forEach(listener=>listener());return {event_id:identity};}};
+createRoot(document.getElementById('root')!).render(<CollaborationBoard roomId={room.roomId} onRemind={id=>w.eventPlanning.reminders.push(id)}/>);

@@ -4,6 +4,11 @@ Tavern keeps the existing Matrix architecture for encrypted messaging and builds
 
 The [UX improvement plan](UX_IMPROVEMENT_PLAN.md) prioritizes usability refinements and optional community features.
 
+The [V3 usability update](UX_UPDATE.md) adds Home and conversation resume, quieter
+recovery prompts, server templates, access explanations, notification presets,
+an admin overview, sticker packs, event RSVPs/time-zone comparison and personal
+server colors. Its deployment and physical-phone acceptance checklist is included.
+
 | Area | Implemented | Remaining or deliberately limited scope |
 |---|---|---|
 | Encrypted history recovery | Automatic copying of retained same-account browser message keys after login; visible recovery-key setup/unlock, full backup restoration, device verification and encrypted key-file import ([recovery guide](HISTORY_RECOVERY.md)); actual managed relogin and fresh-browser backup recovery passed CI | History requires keys retained in a browser, backup or export. Test the original browser profiles and hostname on the target deployment. |

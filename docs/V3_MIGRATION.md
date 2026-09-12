@@ -6,6 +6,10 @@ are separate from the application version; neither is a published 0.4 release.
 
 ## Existing Matrix-based Tavern
 
+For the latest Home, server setup, stickers and event-planning changes, follow
+the [V3 usability update steps](UX_UPDATE.md#upgrade-the-existing-installation).
+Rebuild init/API/web, run init and restart Synapse in the existing stack.
+
 For unreadable messages after signing in again or on a new device, follow
 [History recovery](HISTORY_RECOVERY.md). Keep existing browser site data so
 retained encryption stores can be checked by the updated client.

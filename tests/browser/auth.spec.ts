@@ -37,7 +37,9 @@ test('required MFA enrollment blocks the application until recovery codes are ac
 test('managed sign-in shows actionable errors and never stores passwords', async ({page})=>{
   await managed(page);await page.route('**/api/auth/login',route=>route.fulfill({status:401,json:{error:'The username or password is incorrect.'}}));
   await page.goto('/');await page.getByLabel('Username or email').fill('alice');await page.getByLabel('Password',{exact:true}).fill('not-a-real-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await expect(page.getByRole('alert')).toHaveText('The username or password is incorrect.');
+  await expect(page.getByRole('alert')).toContainText('The username or password is incorrect.');
+  await page.getByText('Technical details',{exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('HTTP status: 401');
   expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('not-a-real-password');
 });
 test('MFA is a required second step and supports recovery codes',async({page})=>{

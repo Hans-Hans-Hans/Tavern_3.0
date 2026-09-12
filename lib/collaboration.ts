@@ -1,7 +1,7 @@
 import { Direction, type MatrixEvent } from 'matrix-js-sdk';
 import { getMatrixClient } from './matrix';
 export type WorkKind = 'task' | 'note' | 'event' | 'poll';
-export type WorkItem = { id: string; revision: string; author: string; at: number; kind: WorkKind; title: string; text: string; status: 'todo' | 'doing' | 'done'; assignee: string; due: string; options: string[]; votes: Record<string, number | number[]>; multiple: boolean; closesAt: number; closed: boolean };
+export type WorkItem = { id: string; revision: string; author: string; at: number; kind: WorkKind; title: string; text: string; status: 'todo' | 'doing' | 'done'; assignee: string; due: string; options: string[]; votes: Record<string, number | number[]>; multiple: boolean; closesAt: number; closed: boolean; rsvps?: Record<string,'going'|'maybe'|'declined'> };
 const namespace = 'io.tavern.collaboration';
 function context(roomId: string) { const c = getMatrixClient(), room = c?.getRoom(roomId); if (!c || !room || room.getMyMembership() !== 'join') throw new Error('Join this conversation first.'); return { c, room }; }
 const clean = (v: unknown, max = 16000) => typeof v === 'string' ? v.slice(0, max) : '';
@@ -20,6 +20,10 @@ export function projectWork(events: MatrixEvent[]): WorkItem[] {
         if (!item.closed && (!item.closesAt || event.getTs() < item.closesAt) && choices.length <= (item.multiple ? item.options.length : 1) && choices.every(choice=>Number.isInteger(choice) && choice >= 0 && choice < item.options.length)) {
           if (!choices.length) delete item.votes[author]; else item.votes[author] = item.multiple ? choices as number[] : choices[0] as number;
         }
+        continue;
+      }
+      if (p.operation === 'rsvp' && item.kind === 'event') {
+        if (['going','maybe','declined'].includes(p.response)) item.rsvps = { ...item.rsvps, [author]: p.response };
         continue;
       }
       // Content edits have one author, preventing an arbitrary member from rewriting a note or poll.
@@ -43,7 +47,10 @@ export async function getWork(roomId: string) {
 }
 async function send(roomId: string, body: string, payload: object) {
   const { c, room } = context(roomId);
+  const actor=c.getUserId(),device=c.getDeviceId?.();
+  const current=()=>getMatrixClient()===c&&c.getUserId()===actor&&c.getDeviceId?.()===device&&c.getRoom(roomId)===room&&room.getMyMembership()==='join';
   if (!await c.getCrypto()?.isEncryptionEnabledInRoom(room.roomId)) throw new Error('Collaboration requires an encrypted conversation.');
+  if(!current())throw new Error('Your account or conversation changed. Reopen the calendar.');
   return c.sendMessage(roomId, { msgtype: 'm.text', body, [namespace]: { version: 1, ...payload } } as any);
 }
 export async function createWork(roomId: string, value: { kind: WorkKind; title: string; text: string; assignee: string; due: string; options: string[]; multiple?: boolean; closesAt?: number }) {
@@ -53,16 +60,19 @@ export async function createWork(roomId: string, value: { kind: WorkKind; title:
   if (value.assignee && context(roomId).room.getMember(value.assignee)?.membership !== 'join') throw new Error('Assign tasks to a joined member.');
   return send(roomId, `${value.kind.toUpperCase()}: ${value.title}\n${value.text}${value.kind==='poll'?'\n'+value.options.map((x,i)=>`${i+1}. ${x}`).join('\n'):''}`, { operation:'create', ...value });
 }
-export async function updateWork(roomId: string, item: WorkItem, operation: 'status' | 'vote' | 'close' | 'edit' | 'archive', data: Record<string, unknown> = {}) {
+export async function updateWork(roomId: string, item: WorkItem, operation: 'status' | 'vote' | 'close' | 'edit' | 'archive' | 'rsvp', data: Record<string, unknown> = {}) {
+  const owner=context(roomId).c,actor=owner.getUserId(),device=owner.getDeviceId?.();
   const current = (await getWork(roomId)).items.find(x=>x.id===item.id);
+  if(getMatrixClient()!==owner||owner.getUserId()!==actor||owner.getDeviceId?.()!==device)throw new Error('Your account changed. Reopen this conversation.');
   if (!current || current.revision !== item.revision) throw new Error('This item changed. Review the latest version and retry.');
+  if (operation === 'rsvp' && (current.kind !== 'event' || !['going','maybe','declined'].includes(String(data.response)))) throw new Error('Choose a valid event response.');
   if (operation === 'vote') {
     const choices = Array.isArray(data.choices) ? [...new Set(data.choices)] : [data.choice];
     if (current.kind !== 'poll' || pollClosed(current)) throw new Error('This poll is closed.');
     if (choices.length > (current.multiple ? current.options.length : 1) || choices.some(choice=>!Number.isInteger(choice) || Number(choice) < 0 || Number(choice) >= current.options.length)) throw new Error('Choose a valid poll answer.');
   }
   const me = context(roomId).c.getUserId();
-  if (operation !== 'vote' && current.author !== me && !(operation==='status' && current.assignee===me)) throw new Error('Only the author can edit this item; an assignee can update task progress.');
+  if (operation !== 'vote' && operation !== 'rsvp' && current.author !== me && !(operation==='status' && current.assignee===me)) throw new Error('Only the author can edit this item; an assignee can update task progress.');
   return send(roomId, `${operation}: ${item.title}${operation==='edit'?'\n'+clean(data.text):''}`, { ...data, operation, root:item.id, revision:item.revision });
 }
 export async function loadWorkHistory(roomId: string) { const { c, room } = context(roomId); await c.scrollback(room,100); }
