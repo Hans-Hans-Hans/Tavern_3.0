@@ -79,3 +79,32 @@ test('channel context notification settings opens the selected room notification
   await sheet.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Lobby', level: 1, exact: true })).toBeVisible();
 });
+
+
+test('owner opens a different voice channel and keeps its native settings sections usable through sync', async ({ page }) => {
+  await page.route('**/api/channels/admission/capability', route => route.fulfill({ json: { version: 1, available: true } }));
+  await fixture(page, true, '?management=1');
+  await page.getByRole('button', { name: 'Games server', exact: true }).click();
+  const voice = page.locator('.channel-navigation').getByRole('button', { name: 'Gaming Voice', exact: true });
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await voice.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true }).click();
+    const sheet = page.getByRole('dialog');
+    await sheet.getByRole('tab', { name: 'Permissions', exact: true }).click();
+    const access = sheet.getByRole('region', { name: 'Private channel access', exact: true });
+    const enabled = access.getByRole('checkbox', { name: 'Use selected roles and members', exact: true });
+    await expect(enabled).toBeEnabled();
+    if (cycle) await expect(enabled).toBeChecked(); else await enabled.check();
+    await access.getByRole('checkbox', { name: 'Gaming', exact: true }).check();
+    await page.evaluate(() => (window as any).dmFixture.emit());
+    await expect(access.getByRole('checkbox', { name: 'Gaming', exact: true })).toBeChecked();
+    await sheet.getByRole('tab', { name: 'Overview', exact: true }).click();
+    await expect(sheet.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Gaming Voice');
+    await sheet.getByRole('tab', { name: 'Permissions', exact: true }).click();
+    await expect(access.getByRole('checkbox', { name: 'Gaming', exact: true })).toBeChecked();
+    await access.getByRole('button', { name: 'Save channel access', exact: true }).click();
+    await expect(access.getByRole('status')).toContainText('Private channel access saved');
+    await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(voice).toBeVisible();
+  }
+});
