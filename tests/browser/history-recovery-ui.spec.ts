@@ -11,6 +11,7 @@ async function fixture(page: Page, configured = true, openDialog = true) {
     export const historyRecoverySnapshot=()=>({busy:false,checked:true,local:{stores:0,keys:0,skipped:0,supported:true},error:'',...historyPatch});
     export const subscribeSecurity=fn=>{listeners.add(fn);return()=>listeners.delete(fn);};
     export const restoreLocalHistory=async()=>{};
+    export const historyKeyOperation=async()=>{throw Error('Email key import is outside this manual-recovery fixture.');};
     export const generateRecoveryKey=async()=>({privateKey:new Uint8Array(32),encodedPrivateKey:'test fixture recovery key'});
     export const setupRecovery=async()=>{configured=true;unlocked=true;listeners.forEach(fn=>fn());};
     export const recoverEncryption=async(key,all,progress)=>{window.recoveryArguments={key,all};if(key==='wrong')throw new Error('This recovery key does not match your account.');unlocked=true;progress('Encrypted history restored.');listeners.forEach(fn=>fn());};
