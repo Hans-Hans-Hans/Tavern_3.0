@@ -12,6 +12,24 @@ async function setup(page: Page) {
 const channel = (page: Page, id: string) => page.locator(`[data-channel-id="!${id}:local"] .channel-navigation-row`);
 const category = (page: Page, id: string) => page.locator(`[data-category-id="${id}"]`);
 
+test('uncategorized children can be organized when native state returns them in a different order', async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => { const w = window as any; w.layout = { ...w.layout, channels: [] }; w.reverseNativeState = true; w.emit(); });
+  await expect(page.locator('.channel-category').filter({ has: category(page, '') }).locator('[data-channel-id]')).toHaveCount(5);
+  for (const id of ['general', 'rules', 'voice']) {
+    const source = channel(page, id), target = category(page, 'games');
+    await expect(source).toHaveAttribute('draggable', 'true');
+    const transfer = await page.evaluateHandle(() => new DataTransfer());
+    await source.dispatchEvent('dragstart', { dataTransfer: transfer });
+    await navigationDrop(target, transfer);
+    await source.dispatchEvent('dragend', { dataTransfer: transfer }); await transfer.dispose();
+    await expect.poll(() => page.evaluate(id => (window as any).layout.channels.find((row: any) => row.id === '!'+id+':local')?.category, id)).toBe('games');
+  }
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.reload();
+  await expect.poll(() => page.locator('.channel-category').filter({ has: category(page, 'games') }).locator('[data-channel-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-channel-id')))).toEqual(['!general:local', '!rules:local', '!voice:local']);
+});
+
 test('native acceptance drops before the intended row even after sidebar auto-scroll moves that row', async ({ page }) => {
   await setup(page);
   const target = channel(page, 'rules'), source = channel(page, 'voice');

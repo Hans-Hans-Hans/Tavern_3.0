@@ -31,6 +31,13 @@ Personal server order and folders retain version 1 of
 it does not delete or recreate their native rooms. Existing room IDs, categories,
 keys and memberships stay intact on upgrade.
 
+Children without an explicit saved position now use a stable room-ID fallback.
+Existing saved category/channel positions retain their exact order. This read-time
+normalization is idempotent and requires no room recreation or state rewrite;
+the next authorized move saves the resulting explicit order. Matrix models room
+state as a [keyed lookup](https://spec.matrix.org/unstable/), so arrival/response
+order cannot serve as a persistent position.
+
 Layout changes render optimistically, check fresh native/custom authority and
 submit the captured previous-event revision. Rejection restores current state
 and retains a useful draft. Remote Matrix state updates update connected clients.
@@ -170,6 +177,15 @@ row after its target despite intending before. The probe now repositions and
 drops in one browser task; that regression and all fifteen navigation cases pass.
 Production drop behavior and the native persisted-order assertions are unchanged.
 The complete native workflow with these fixes remains required.
+
+At `4122bbe`, all 455 browser cases and three native direct audio/cleanup probes
+passed. Games failed on its first category move with a false stale-layout error.
+The same error was present in the preceding failed native logs. Unsaved root
+children had been appended in state-event iteration order, which could differ
+between the cached SDK state and the fresh native response. The deterministic
+fallback above fixes that comparison while retaining actual concurrent-write
+rejection. Two focused regressions failed before the correction; 32 model cases,
+27 creation/navigation browser cases and the production build pass afterward.
 
 The selected conversation now reads at most three earlier SDK history pages
 when its initial sync contains only control events. It keeps undecryptable rows,

@@ -21,6 +21,18 @@ test('layout save names current native revision and preserves channel IDs', asyn
   assert.equal(f.writes.length, 1); assert.equal(f.writes[0][2]['io.tavern.previous_event'], '$saved');
   assert.deepEqual(f.writes[0][2].channels, [{ id: '!one:local', category: 'a' }]);
 });
+
+test('a native state response with a different child-event order does not invent a layout conflict', async () => {
+  const f = setup();
+  f.events.find(event => event.type === 'io.tavern.server.layout').content.channels = [];
+  f.events.push(...['!three:local', '!two:local'].map(state_key => ({ type: 'm.space.child', state_key, content: { via: ['local'] } })));
+  const before = f.model.readServerLayout('!server:local'), next = f.model.moveChannel(before, '!one:local', 'a');
+  f.client.roomState = async () => structuredClone([...f.events].reverse());
+  await f.model.saveServerLayout('!server:local', next, before);
+  assert.equal(f.writes.length, 1);
+  assert.equal(f.writes[0][2]['io.tavern.previous_event'], '$saved');
+  assert.deepEqual(f.writes[0][2].channels, next.channels);
+});
 test('stale layout edits reject concurrent category changes and channel additions', async () => {
   for (const change of [f => { f.events.at(-1).content.categories[0].name = 'Elsewhere'; }, f => { f.events.push({ type: 'm.space.child', state_key: '!new:local', content: { via: ['local'] } }); }]) {
     const f = setup(); f.hook = () => change(f);

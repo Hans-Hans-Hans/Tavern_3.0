@@ -4,6 +4,16 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## September 12 recovery and channel-management checkpoint
 
+At `4122bbe`, all 455 browser cases and three more native direct audio/cleanup
+probes passed. Native Games diagnostics isolated the first category move, and
+the log reported a stale-layout rejection. The same error appeared in the prior
+failed runs. Children without saved positions had been appended using the order
+of native state events, so a different ordering of the same state could fail the
+comparison. The normalizer now gives only unsaved children a stable room-ID
+fallback and preserves every saved manual position. Two regressions failed before
+this correction; 32 model cases, 27 creation/navigation browser cases and the
+production build pass with it. Final combined native acceptance remains required.
+
 Latest checkpoint: `c0670f9` passed three consecutive native direct calls with
 actual bidirectional received audio and cleanup/reload after the handled-call
 replay fix. Its native Games probe stopped at drag/category; a subsequent probe

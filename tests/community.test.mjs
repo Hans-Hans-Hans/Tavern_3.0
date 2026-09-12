@@ -42,6 +42,15 @@ test('moving a channel retains all members and rejects unknown category', () => 
   const old = normalizeServerLayout({ categories: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], channels: [{ id: '!one:x', category: 'a' }, { id: '!two:x', category: 'b' }] });
   const next = moveChannel(old, '!one:x', 'b', '!two:x'); assert.deepEqual(next.channels, [{ id: '!one:x', category: 'b' }, { id: '!two:x', category: 'b' }]); assert.equal(old.channels[0].category, 'a'); assert.throws(() => moveChannel(old, '!one:x', 'gone')); assert.throws(() => moveChannel(old, '!foreign:x', 'a'));
 });
+
+test('legacy children without saved positions converge independently of state-event order and never reorder saved positions', () => {
+  const saved = { version: 1, categories: [{ id: 'chat', name: 'Chat' }], channels: [{ id: '!z:local', category: 'chat' }, { id: '!a:local', category: '' }] };
+  const forward = ['!z:local', '!b:local', '!a:local', '!c:local'], reverse = [...forward].reverse();
+  const expected = [{ id: '!z:local', category: 'chat' }, { id: '!a:local', category: '' }, { id: '!b:local', category: '' }, { id: '!c:local', category: '' }];
+  assert.deepEqual(normalizeServerLayout(saved, forward).channels, expected);
+  assert.deepEqual(normalizeServerLayout(saved, reverse).channels, expected);
+  assert.deepEqual(normalizeServerLayout({}, forward), normalizeServerLayout({}, reverse));
+});
 test('untrusted appearance cannot inject CSS or an external image', () => { assert.equal(normalizeChannelAppearance({ accent: 'url(https://tracker)' }).accent, ''); assert.equal(cleanMxc('mxc://server/media'), 'mxc://server/media'); assert.equal(cleanMxc('mxc://server/media?token=secret'), ''); });
 test('server layout writes deny users without server authority before sending', async () => {
   let sent = false; client = { getUserId: () => '@member:local', getRoom: () => ({ getMyMembership: () => 'join', isSpaceRoom: () => true, currentState: { maySendStateEvent: () => false } }), sendStateEvent: () => { sent = true; } };

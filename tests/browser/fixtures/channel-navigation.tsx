@@ -39,7 +39,7 @@ export function mountFixture() {
   for (const id of ['!server:local', ...Object.keys(names)]) w.rooms.set(id, { roomId: id, name: names[id] || 'Server', getMyMembership: () => w.left.has(id) ? 'leave' : 'join', isSpaceRoom: () => id === '!server:local', canInvite: () => true, currentState: { maySendStateEvent: () => w.allowed, getStateEvents: (type: string, key?: string) => key !== undefined ? event(id, type, key) : type === 'm.space.child' && id === '!server:local' ? Object.keys(names).map(key => event(id, type, key)) : type === 'm.space.parent' && id !== '!server:local' ? [event(id, type, '!server:local')] : [event(id, type)].filter(Boolean) } });
   w.client = {
     getUserId: () => w.actor, getDeviceId: () => w.device, getHomeserverUrl: () => 'https://local', getRoom: (id: string) => w.rooms.get(id), getAccountData: (type: string) => ({ getContent: () => w.prefs[type] }),
-    roomState: async (id: string) => { const result = structuredClone(state(id)); w.reads = (w.reads || 0) + 1; if (w.holdRead) await new Promise(resolve => { w.releaseRead = resolve; }); return result; },
+    roomState: async (id: string) => { const result = structuredClone(state(id)); w.reads = (w.reads || 0) + 1; if (w.holdRead) await new Promise(resolve => { w.releaseRead = resolve; }); return w.reverseNativeState ? result.reverse() : result; },
     sendStateEvent: async (id: string, type: string, value: any) => {
       w.started = structuredClone(value);
       if (w.holdSave) await new Promise(resolve => { w.releaseSave = resolve; });

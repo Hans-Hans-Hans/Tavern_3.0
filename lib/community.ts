@@ -36,7 +36,10 @@ export function normalizeServerLayout(value: unknown, roomIds?: string[]): Serve
   for (const raw of Array.isArray(p.categories) ? p.categories.slice(0, 100) : []) { const c = record(raw), id = clean(c.id, 80), name = clean(c.name, 60).trim(); if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || !name || categoryIds.has(id)) continue; categoryIds.add(id); categories.push({ id, name, icon: clean(c.icon, 16) }); }
   const channels: ServerLayout['channels'] = [];
   for (const raw of Array.isArray(p.channels) ? p.channels.slice(0, 1000) : []) { const c = record(raw), id = clean(c.id, 255); if (!id.startsWith('!') || channelIds.has(id) || (allowed && !allowed.has(id))) continue; channelIds.add(id); channels.push({ id, category: categoryIds.has(c.category) ? c.category : '' }); }
-  for (const id of roomIds || []) if (!channelIds.has(id)) { channels.push({ id, category: '' }); channelIds.add(id); }
+  // Matrix state-event arrays have no ordering guarantee. Only children without
+  // an explicit saved position need this stable fallback; manual order above
+  // must remain intact across sync, /state responses and legacy installations.
+  for (const id of [...new Set(roomIds || [])].sort()) if (!channelIds.has(id)) { channels.push({ id, category: '' }); channelIds.add(id); }
   return { version: 1, categories, channels };
 }
 export function moveChannel(layout: ServerLayout, channelId: string, category: string, beforeId?: string): ServerLayout {
