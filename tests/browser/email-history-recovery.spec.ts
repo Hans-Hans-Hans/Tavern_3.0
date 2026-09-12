@@ -7,7 +7,7 @@ async function fixture(page:Page,known=false){
  await page.goto('/email-history-test'+(known?'?known':''));
 }
 test('known browsers open without a recovery prompt or email',async({page})=>{
- await fixture(page,true);await expect.poll(()=>page.evaluate(()=>typeof(window as any).setKnown)).toBe('function');
+ await fixture(page,true);await page.waitForFunction(()=>typeof(window as any).setKnown==='function');
  await expect(page.getByRole('dialog')).toHaveCount(0);expect(await page.evaluate(()=>(window as any).starts)).toBe(0);
 });
 test('new device asks for only its email code after password login, retries wrong code and closes after recovery',async({page})=>{

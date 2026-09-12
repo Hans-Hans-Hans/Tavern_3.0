@@ -50,14 +50,14 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
         <label className='check-label'><input type='checkbox' checked={protect} onChange={e=>setProtect(e.target.checked)}/> I understand this protects available keys and cannot recover missing older keys.</label>
         <button className='secondary-button' disabled={busy||!protect||!status.emailReady}>Protect messages on this device</button>
       </form>}
-      <p>A password reset does not unlock this package. Keep a known device or an encrypted export of your message keys. Email recovery restores history; verifying someone?s identity remains a separate action.</p>
+      <p>A password reset does not unlock this package. Keep a known device or an encrypted export of your message keys. Email recovery restores history; verifying someone's identity remains a separate action.</p>
       {message&&<p role='status'>{message}</p>}{error&&<p role='alert'>{error}</p>}
     </section>}
     <Dialog open={open} onOpenChange={value=>{if(!busy){setOpen(value);if(!value){setCode('');setPassword('');}}}}><DialogContent className='tavern-dialog'><DialogHeader><DialogTitle>Unlock your message history</DialogTitle><DialogDescription>Enter the code sent to your verified email. This browser will remember your history keys so you can sign in here again without another recovery code.</DialogDescription></DialogHeader>
       <form className='dialog-form' onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');try{await recoverEmailHistory(challenge,code,password);if(current()){setPassword('');setCode('');setOpen(false);setMessage('Message history unlocked on this browser.');}}catch(e){if(current())setError((e as Error).message);}finally{if(current())setBusy(false);}}}>
         {(!hasHistoryLogin()||status?.passwordChanged||error.includes('password'))&&<label>Password used to protect history<input type='password' autoComplete='current-password' value={password} onChange={e=>setPassword(e.target.value)} required/></label>}
         <label>Email verification code<input autoComplete='one-time-code' inputMode='numeric' pattern='[0-9]{6}' maxLength={6} value={code} onChange={e=>setCode(e.target.value)} required/></label>
-        <button className='primary-button' disabled={busy||!challenge}>{busy?'Unlocking?':'Unlock history'}</button>
+        <button className='primary-button' disabled={busy||!challenge}>{busy?'Unlocking...':'Unlock history'}</button>
         <button type='button' className='text-button' disabled={busy} onClick={()=>void send()}>Send a new code</button>
         <button type='button' className='text-button' disabled={busy} onClick={()=>{setOpen(false);setPassword('');setCode('');}}>Continue without older history</button>
         {error&&<p role='alert'>{error}</p>}

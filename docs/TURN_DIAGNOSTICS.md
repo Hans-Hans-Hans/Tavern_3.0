@@ -115,8 +115,7 @@ review and are not rewritten by this generated-configuration repair.
 Three actual POSIX-shell regressions verify address validation, failure handling
 and argument preservation. The enhanced Docker byte-exchange phase failed in the `a5efbee` Linux run.
 That result does not confirm the full repair, despite successful allocation.
-The explicit relay binding is a source-confirmed candidate fix pending a new
-Linux allocation and byte-exchange run; this Windows workspace has no Docker daemon.
+Subsequent Linux runs at `3da60f6`, `0e11b82` and `051fea8` passed real coturn allocation, invalid-credential rejection, bidirectional relay-only byte exchange, cleanup, and the production browser traffic helper after the explicit relay binding fix. This Windows workspace has no Docker daemon.
 Failed relay exchanges now retain only fixed progress stages, bounded candidate
 counts and ICE/data-channel state enums, including the state before cleanup.
 They continue to require both actual nonce deliveries and both selected relay pairs.
@@ -145,5 +144,4 @@ Matrix SDK with controlled peer boundaries, including omitted statistics,
 contradictory routes, cancellation, account changes and final access revocation.
 The existing isolated coturn CI fixture now additionally serves and runs the
 actual production helper after its independent two-relay byte exchange. Its
-new production-helper acceptance was not reached in the `a5efbee` Linux run
-because the independent relay exchange failed first.
+production-helper acceptance was not reached in the `a5efbee` Linux run because the independent relay exchange failed first; it passed in the later runs listed above. This proves the isolated relay transport, not deployed microphone-to-speaker audio on two independent networks. Refresh the actual deployed Compose definition and recreate `coturn` to apply its new startup arguments; restarting the old container does not change those arguments.

@@ -6,6 +6,10 @@ This version is under development and testing on `V3`. These entries describe im
 
 ### Added
 
+- A dedicated Direct messages button in the server rail and mobile switcher, section-specific favorites, room-link refresh and an empty-DM start screen.
+- Password-protected email history recovery: known browsers reuse local keys; new devices verify a single-use email code to restore their saved backup key. Current message keys can be protected without deleting older backups or resetting signing identities.
+- Native email recovery acceptance through the isolated TLS SMTP service, including wrong-code rejection, actual encrypted-message restoration and subsequent known-browser login.
+
 - Persistent server/folder and channel/category ordering with full-row drop indicators, context menus, keyboard/touch Move dialogs, conflict handling and a mobile server organizer.
 - Native voice participant rows beneath channels and a persistent dock using the existing call's microphone, device settings and disconnect controls.
 - An explicit **Show in Direct Messages** action for joined encrypted private conversations whose personal list entry is missing; it preserves the existing room and messages.
