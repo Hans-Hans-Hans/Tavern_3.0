@@ -218,9 +218,12 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     // Teardown has its own bounded grace period after a connection deadline.
     deadline = Date.now() + 40000;
     let cleanupFailed = false;
+    const cleanupStages = [];
     for (const page of opened) {
+      let cleanupStage = 'session';
       try {
         await session(page);
+        cleanupStage = 'frame-ownership';
         const owned = await run(() => page.evaluate(({ nonce, roomId }) => {
           const probe = window.__tavernCiConferenceSmoke, frame = document.querySelector('iframe[title="Tavern encrypted conference"]');
           if (!frame) return 'closed';
@@ -228,7 +231,8 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
           return url.origin === location.origin && params.get('roomId') === roomId && probe?.nonce === nonce && probe.owns() ? 'owned' : 'changed';
         }, { nonce, roomId }), 'leave-scope', 5000);
         if (owned === 'changed') throw new Error();
-        if (owned === 'owned') { await run(() => page.getByRole('button', { name: 'Leave conference', exact: true }).click({ timeout: 10000 }), 'leave-widget', 10000); await run(() => page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }), 'leave-frame', 15000); }
+        if (owned === 'owned') { cleanupStage = 'leave-widget'; await run(() => page.getByRole('button', { name: 'Leave conference', exact: true }).click({ timeout: 10000 }), 'leave-widget', 10000); cleanupStage = 'leave-frame'; await run(() => page.locator(FRAME).waitFor({ state: 'detached', timeout: 15000 }), 'leave-frame', 15000); }
+        cleanupStage = 'native-membership';
         const owner = owners.get(page), keys = new Set([owner.userId, '_' + owner.userId + '_' + owner.deviceId + '_m.call', owner.userId + '_' + owner.deviceId + '_m.call']);
         const until = Math.min(deadline, Date.now() + 10000);
         for (;;) {
@@ -240,10 +244,10 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
           if (!remaining) break;
           requireProof(Date.now() < until, 'Native CI call membership did not clear after leaving.'); await pause(250);
         }
-      } catch { cleanupFailed = true; }
-      finally { try { await run(() => page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; if (probe?.nonce === nonce) probe.stop(); }, nonce), 'observer-cleanup', 3000); } catch { cleanupFailed = true; } }
+      } catch { cleanupFailed = true; cleanupStages.push(cleanupStage); }
+      finally { try { await run(() => page.evaluate(nonce => { const probe = window.__tavernCiConferenceSmoke; if (probe?.nonce === nonce) probe.stop(); }, nonce), 'observer-cleanup', 3000); } catch { cleanupFailed = true; cleanupStages.push('observer'); } }
     }
-    if (cleanupFailed && succeeded) throw new Error('Embedded conference connected but clean UI/native leave could not be confirmed.');
+    if (cleanupFailed && succeeded) throw new Error('Embedded conference connected but clean UI/native leave could not be confirmed (stages=' + cleanupStages.join(',') + ').');
   }
   console.log('PASS: two ordinary CI accounts joined the real embedded conference with synthetic devices, retained complete encrypted participant observations for twenty seconds, and left through the UI.');
 }

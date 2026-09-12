@@ -13,11 +13,25 @@ const stateTypes = new Set<string>([EventType.RoomCreate, EventType.RoomName, Ev
 const deviceTypes = new Set<string>([EventType.CallInvite, EventType.CallCandidates, EventType.CallAnswer, EventType.CallHangup, EventType.CallReject, EventType.CallSelectAnswer, EventType.CallNegotiate, EventType.CallSDPStreamMetadataChanged, EventType.CallSDPStreamMetadataChangedPrefix, EventType.CallReplaces, EventType.CallEncryptionKeysPrefix]);
 const raw = (event: MatrixEvent) => ({ ...event.getEffectiveEvent(), room_id: event.getRoomId(), unsigned: event.getUnsigned() }) as IRoomEvent;
 export class TavernCallDriver extends WidgetDriver {
-  private delayed = new Set<string>();
+  private delayed = new Map<string, string>();
   private ownKeys: Set<string>;
   private stopped = false;
+  private closing = false;
+  private memberships = new Set<string>();
+  private stateWrites = new Map<string, Promise<unknown>>();
+  private leaveListeners = new Set<() => void>();
   constructor(private client: MatrixClient, readonly roomId: string) { super(); const me=client.getUserId()!,device=client.getDeviceId()!; this.ownKeys=new Set([me,`_${me}_${device}_m.call`,`${me}_${device}_m.call`]); }
-  stop() { this.stopped=true; }
+  stop() { this.stopped=true; this.leaveListeners.clear(); }
+  beginLeave() { this.closing=true; }
+  private leaveChanged() { for(const notify of this.leaveListeners)notify(); }
+  waitForLeave(timeout: number) {
+    if(!this.memberships.size&&!this.stateWrites.size)return Promise.resolve();
+    return new Promise<void>(resolve=>{
+      const finish=()=>{clearTimeout(timer);this.leaveListeners.delete(changed);resolve();};
+      const changed=()=>{if(!this.memberships.size&&!this.stateWrites.size)finish();};
+      const timer=setTimeout(finish,Math.max(0,timeout));this.leaveListeners.add(changed);changed();
+    });
+  }
   private room(id?: string | null) { if (this.stopped || (id && id!==this.roomId)) throw new Error('Conference access is limited to its active room.'); const room=this.client.getRoom(this.roomId); if (!room || room.getMyMembership()!=='join' || !room.hasEncryptionStateEvent()) throw new Error('Conference room is unavailable or unencrypted.'); return room; }
   private state(type: string, key?: string | null) { this.room(); if(type!==EventType.GroupCallMemberPrefix || key==null || !this.ownKeys.has(key)) throw new Error('Conference may update only this device’s call membership.'); }
   async validateCapabilities(requested: Set<Capability>) {
@@ -31,7 +45,22 @@ export class TavernCallDriver extends WidgetDriver {
   }
   async sendEvent(type:string,content:unknown,stateKey?:string|null,roomId?:string|null) {
     const room=this.room(roomId); let result:{event_id:string};
-    if(stateKey!=null){this.state(type,stateKey);result=await this.client.sendStateEvent(room.roomId,type as any,content as any,stateKey);}
+    if(stateKey!=null){
+      this.state(type,stateKey);
+      const value=content as any,clear=!!value&&typeof value==='object'&&!Array.isArray(value)&&(Object.keys(value).length===0||(Object.keys(value).length===1&&Array.isArray(value.memberships)&&value.memberships.length===0));
+      if(this.closing&&!clear)throw new Error('The conference is leaving.');
+      // Keep the final empty state behind already submitted writes for this key.
+      // The widget acknowledges hangup before its native leave request finishes.
+      const previous=this.stateWrites.get(stateKey)||Promise.resolve();
+      const writing=previous.catch(()=>{}).then(async()=>{
+        this.state(type,stateKey);
+        const sent=await this.client.sendStateEvent(room.roomId,type as any,content as any,stateKey);
+        if(clear)this.memberships.delete(stateKey);else this.memberships.add(stateKey);
+        return sent;
+      });
+      this.stateWrites.set(stateKey,writing);
+      try{result=await writing;}finally{if(this.stateWrites.get(stateKey)===writing)this.stateWrites.delete(stateKey);this.leaveChanged();}
+    }
     else { if(!sendTypes.has(type))throw new Error('Unsupported conference event.');
       if(type===EventType.RoomRedaction){const data=content as any;if(typeof data?.redacts!=='string')throw new Error('Missing redaction target.');const event=room.findEventById(data.redacts);if(!event||event.getSender()!==this.client.getUserId()||!receiveTypes.has(event.getType()))throw new Error('Only your call events can be redacted here.');result=await this.client.redactEvent(room.roomId,data.redacts);}
       else result=await this.client.sendEvent(room.roomId,type as any,content as any);
@@ -41,12 +70,18 @@ export class TavernCallDriver extends WidgetDriver {
   async sendDelayedEvent(delay:number,type:string,content:unknown,stateKey?:string|null,roomId?:string|null) {
     this.room(roomId);this.state(type,stateKey);
     if(!Number.isFinite(delay)||delay<0||delay>86400000||!content||Object.keys(content as object).length)throw new Error('Delayed conference events may only clear this device’s membership.');
-    const result=await this.client._unstable_sendDelayedStateEvent(this.roomId,{delay},type as any,content as any,stateKey!);this.delayed.add(result.delay_id);return{roomId:this.roomId,delayId:result.delay_id};
+    if(this.closing)throw new Error('The conference is leaving.');
+    const result=await this.client._unstable_sendDelayedStateEvent(this.roomId,{delay},type as any,content as any,stateKey!);this.delayed.set(result.delay_id,stateKey!);return{roomId:this.roomId,delayId:result.delay_id};
   }
   private checkDelay(id:string){this.room();if(!this.delayed.has(id))throw new Error('Unknown conference delayed event.');}
   async cancelScheduledDelayedEvent(id:string){this.checkDelay(id);await this.client._unstable_cancelScheduledDelayedEvent(id);this.delayed.delete(id);}
   async restartScheduledDelayedEvent(id:string){this.checkDelay(id);await this.client._unstable_restartScheduledDelayedEvent(id);}
-  async sendScheduledDelayedEvent(id:string){this.checkDelay(id);await this.client._unstable_sendScheduledDelayedEvent(id);this.delayed.delete(id);}
+  async sendScheduledDelayedEvent(id:string){
+    this.checkDelay(id);const key=this.delayed.get(id)!,previous=this.stateWrites.get(key)||Promise.resolve();
+    const writing=previous.catch(()=>{}).then(async()=>{this.checkDelay(id);await this.client._unstable_sendScheduledDelayedEvent(id);this.delayed.delete(id);this.memberships.delete(key);});
+    this.stateWrites.set(key,writing);
+    try{await writing;}finally{if(this.stateWrites.get(key)===writing)this.stateWrites.delete(key);this.leaveChanged();}
+  }
   async sendToDevice(type:string,encrypted:boolean,map:Record<string,Record<string,object>>) {
     const room=this.room();if(!encrypted||!deviceTypes.has(type))throw new Error('Call device messages must be encrypted.');
     for(const [user,devices] of Object.entries(map)){if(room.getMember(user)?.membership!=='join')throw new Error('Call recipient is not a room member.');for(const [device,content] of Object.entries(devices)){if(!device||device==='*')throw new Error('An exact recipient device is required.');if(type===EventType.CallEncryptionKeysPrefix&&(content as any).room_id!==this.roomId)throw new Error('Call key belongs to another room.');await this.client.encryptAndSendToDevice(type,[{userId:user,deviceId:device}],content);}}
@@ -88,7 +123,19 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   for(const action of ['io.element.join','io.element.device_mute'])api.on('action:'+action,(event:CustomEvent)=>{event.preventDefault();void api.transport.reply(event.detail,{});if(action==='io.element.join')onJoined?.();else onDevices?.(devices(event.detail.data));});
   const stopTelemetry=observeConferenceTelemetry({iframe,widgetId,session:telemetrySession,roomId,isCurrent:()=>!stopped&&!signal?.aborted&&client.getUserId()===actor&&client.getDeviceId()===deviceId&&client.getHomeserverUrl()===homeserver&&client.getRoom(roomId)===room&&room.getMyMembership()==='join',onUpdate:value=>options.onTelemetry?.(value)});
   iframe.src=url.href;
-  const cleanup=async()=>{if(stopped)return;stopped=true;stopTelemetry();await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise(r=>setTimeout(r,2500))]);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);if(iframe.src===url.href)iframe.src='about:blank';};
+  let closing:Promise<void>|null=null;
+  const cleanup=():Promise<void>=>closing??=(async()=>{
+    stopped=true;stopTelemetry();driver.beginLeave();
+    const deadline=Date.now()+5000;let timer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      await Promise.race([api.transport.send('im.vector.hangup',{}).catch(()=>{}),new Promise<void>(resolve=>{timer=setTimeout(resolve,2500);})]);
+      await driver.waitForLeave(deadline-Date.now());
+    }finally{
+      clearTimeout(timer);driver.stop();api.stop();if(!managedSession)releaseMedia('conference');
+      client.off(RoomEvent.Timeline,timeline);client.off(RoomStateEvent.Events,state);client.off(ClientEvent.ToDeviceEvent,device);client.off(MatrixEventEvent.Decrypted,decrypted);
+      if(iframe.src===url.href)iframe.src='about:blank';
+    }
+  })();
   return Object.assign(cleanup,{setDevices:async(patch:ConferenceDevices)=>{if(stopped)throw new Error('The conference has ended.');const result=devices(await api.transport.send('io.element.device_mute',patch));if(stopped)return;onDevices?.(result);if(Object.entries(patch).some(([key,value])=>(result as any)[key]!==value))throw new Error('The call is still preparing this device. Check its settings in the conference.');}});
   }catch(error){if(!managedSession)releaseMedia('conference');throw error;}
 }

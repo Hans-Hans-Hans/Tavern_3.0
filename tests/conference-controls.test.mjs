@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { loadTs } from './load-ts.mjs';
 globalThis.location = { origin: 'https://tavern.test' };
+const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 
 function setup() {
   let api, telemetry;
   class WidgetApi extends EventEmitter {
-    constructor() { super(); api = this; this.controls = { audio_enabled: true, video_enabled: false }; this.transport = { reply: async (_event, response) => { this.lastReply = response; }, send: async (action, patch) => { this.lastAction = action; if (action === 'io.element.device_mute' && !this.unavailable) Object.assign(this.controls, patch); return this.controls; } }; }
+    constructor(_widget, _iframe, driver) { super(); api = this; this.driver=driver; this.controls = { audio_enabled: true, video_enabled: false }; this.transport = { reply: async (_event, response) => { this.lastReply = response; }, send: async (action, patch) => { this.lastAction = action; if (action === 'io.element.device_mute' && !this.unavailable) Object.assign(this.controls, patch); return this.controls; } }; }
     setViewedRoomId() {}
     stop() { this.stopped = true; }
   }
@@ -20,7 +21,7 @@ function setup() {
     'matrix-js-sdk': { ClientEvent: enums, EventType: enums, MatrixEventEvent: enums, RoomEvent: enums, RoomStateEvent: enums },
     'matrix-widget-api': { ClientWidgetApi: WidgetApi, Widget: class {}, WidgetDriver: class {}, WidgetEventCapability: {}, EventDirection: {}, MatrixCapabilities: {}, OpenIDRequestState: {} },
   });
-  const room = { getMyMembership: () => 'join', loadMembersIfNeeded: async () => {}, currentState: { maySendStateEvent: () => true } };
+  const room = { roomId:'!room:local',hasEncryptionStateEvent:()=>true,getMyMembership: () => 'join', loadMembersIfNeeded: async () => {}, currentState: { maySendStateEvent: () => true } };
   const client = new EventEmitter(); Object.assign(client, { getRoom: () => room, getCrypto: () => ({ isEncryptionEnabledInRoom: async () => true }), _unstable_getRTCTransports: async () => [{}], getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', getHomeserverUrl: () => 'https://tavern.test' });
   return { conference, client, room, api: () => api, telemetry: () => telemetry };
 }
@@ -43,6 +44,55 @@ test('unsupported device change is not reported as successful and old cleanup pr
   await assert.rejects(controls.setDevices({ video_enabled: true }), /still preparing/);
   iframe.src = 'https://tavern.test/element-call/index.html#new-session';
   await controls(); assert.equal(iframe.src, 'https://tavern.test/element-call/index.html#new-session');
+});
+
+test('hangup acknowledgement keeps the widget and driver alive until its native membership clear completes',async()=>{
+  const {conference,client,api}=setup(),iframe={src:''},clear=deferred();
+  client.sendStateEvent=async(_room,_type,value)=>{if(!Object.keys(value).length)await clear.promise;return {event_id:'$state'};};
+  const controls=await conference.mountConference(client,'!room:local',iframe,()=>{},undefined,undefined,true);
+  const driver=api().driver,key='_@me:local_DEVICE_m.call';
+  await driver.sendEvent('GroupCallMemberPrefix',{device_id:'DEVICE'},key);
+  let clearing;
+  api().transport.send=async()=>{clearing=driver.sendEvent('GroupCallMemberPrefix',{},key);return {};};
+  const stopping=controls();assert.equal(controls(),stopping);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.notEqual(api().stopped,true);assert.notEqual(iframe.src,'about:blank');
+  await assert.rejects(driver.sendEvent('GroupCallMemberPrefix',{device_id:'DEVICE'},key),/leaving/);
+  clear.resolve();await clearing;await stopping;
+  assert.equal(api().stopped,true);assert.equal(iframe.src,'about:blank');
+});
+
+test('an empty membership is sent after an in-flight membership write instead of racing it',async()=>{
+  const {conference,client,api}=setup(),iframe={src:''},joining=deferred(),writes=[];
+  client.sendStateEvent=async(_room,_type,value)=>{writes.push(value);if(Object.keys(value).length)await joining.promise;return {event_id:'$state'};};
+  const controls=await conference.mountConference(client,'!room:local',iframe,()=>{},undefined,undefined,true);
+  const driver=api().driver,key='_@me:local_DEVICE_m.call';
+  const joined=driver.sendEvent('GroupCallMemberPrefix',{device_id:'DEVICE'},key);
+  await new Promise(resolve=>setImmediate(resolve));
+  let clearing;
+  api().transport.send=async()=>{clearing=driver.sendEvent('GroupCallMemberPrefix',{},key);return {};};
+  const stopping=controls();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(writes.length,1);assert.notEqual(api().stopped,true);
+  joining.resolve();await joined;await clearing;await stopping;
+  assert.deepEqual(writes,[{device_id:'DEVICE'},{}]);assert.equal(api().stopped,true);
+});
+
+test('native delayed-leave submission stays available during teardown and completes only its owned device key',async()=>{
+  const {conference,client,api}=setup(),iframe={src:''},clear=deferred();
+  client.sendStateEvent=async()=>({event_id:'$joined'});
+  client._unstable_sendDelayedStateEvent=async()=>({delay_id:'owned-delay'});
+  client._unstable_sendScheduledDelayedEvent=async id=>{assert.equal(id,'owned-delay');await clear.promise;};
+  const controls=await conference.mountConference(client,'!room:local',iframe,()=>{},undefined,undefined,true);
+  const driver=api().driver,key='_@me:local_DEVICE_m.call';
+  await driver.sendDelayedEvent(8000,'GroupCallMemberPrefix',{},key);
+  await driver.sendEvent('GroupCallMemberPrefix',{device_id:'DEVICE'},key);
+  let clearing;
+  api().transport.send=async()=>{clearing=driver.sendScheduledDelayedEvent('owned-delay');return {};};
+  const stopping=controls();await new Promise(resolve=>setImmediate(resolve));
+  assert.notEqual(api().stopped,true);
+  await assert.rejects(driver.sendScheduledDelayedEvent('another-device-delay'),/Unknown conference delayed event/);
+  clear.resolve();await clearing;await stopping;
+  assert.equal(api().stopped,true);assert.equal(iframe.src,'about:blank');
 });
 
 test('embedded version discovery uses the public native URL while the authenticated driver stays on its managed client', async () => {
