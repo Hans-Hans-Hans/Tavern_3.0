@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import './management-sections.css';
 
 export type ManagementSection = { id: string; title: string; content: ReactNode };
+const ManagementNavigation = createContext<(section: string) => void>(() => {});
+export const useManagementNavigation = () => useContext(ManagementNavigation);
 
 /** Key the parent by its account and server/channel scope. Visited editors remain
  * mounted within that scope, while unopened editors do not fetch or mount. */
@@ -17,7 +19,7 @@ export function ManagementSections({ label, sections, initialSection }: { label:
     setVisited(previous => previous.has(id) ? previous : new Set([...previous, id]));
     setSelected(id);
   }
-  return <Tabs className='management-sections' value={current} onValueChange={choose}>
+  return <ManagementNavigation.Provider value={choose}><Tabs className='management-sections' value={current} onValueChange={choose}>
     <TabsList className='management-section-navigation' aria-label={label}>
       {sections.map(section => <TabsTrigger key={section.id} value={section.id}>{section.title}</TabsTrigger>)}
     </TabsList>
@@ -26,5 +28,5 @@ export function ManagementSections({ label, sections, initialSection }: { label:
       inert={current !== section.id ? true : undefined} className='management-section-panel'>
       {section.content}
     </TabsContent>)}
-  </Tabs>;
+  </Tabs></ManagementNavigation.Provider>;
 }

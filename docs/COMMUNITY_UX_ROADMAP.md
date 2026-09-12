@@ -37,7 +37,7 @@ must be visibly unavailable; client-side explanations do not grant permissions.
 | 7 — Call resilience | Recoverable call UI and clearer device/network feedback | A failed call cannot take down messaging; reconnect and device changes preserve user control and encryption |
 | 8 — Mobile, accessibility and performance | Cross-cutting refinement and measured acceptance | 320/375/430/768/desktop layouts; focus, contrast and reduced motion; real-phone checks and measured loading/scroll performance |
 
-Phase 1 is implemented in this checkpoint. Phases 2–8 are the next work, building
+Phases 1 and 2 are implemented in these checkpoints. Phases 3–8 are the next work, building
 on their already implemented foundations. No placeholder controls were added
 for those future phases. Mobile and accessibility checks apply to each phase,
 not only to the final phase.
@@ -119,6 +119,44 @@ documented in [V3 hardening](V3_HARDENING.md). Follow the existing
 [installation guide](INSTALLATION.md) for deployment.
 
 The preceding hardening checkpoint (`5424493`) failed GitHub CI at **Start clean
-canonical stack and verify persistence**; its channel-menu job passed. The job
-logs were unavailable with the credentials in this workspace. Local frontend
-checks do not establish that this separate full-stack failure has been resolved.
+canonical stack and verify persistence**; its channel-menu job passed. Follow-up
+access to the job logs identified an obsolete attachment-button selector. The
+`f8c63c2` rerun passed real encrypted uploads/downloads, authenticated avatar
+thumbnails, fresh-device email recovery, DM persistence and invitation privacy.
+It next exposed a moderation probe that submitted an identical native join
+update. That probe now exercises a changed event and a fresh invited join across
+ban/lift transitions. Full-stack acceptance still requires a passing complete
+workflow on the updated revision; see [validation](VALIDATION.md).
+
+## Phase 2: server management and friends
+
+Server settings open on **Overview**. The optional owner setup guide derives
+progress from synced artwork/description, linked channels, welcome settings,
+custom roles and other joined/invited members. Actions open the existing editors;
+opening a step never marks it complete. Hiding the guide lasts within that open
+settings window. It does not create a new permission or configuration store.
+
+Authorized integrations, report review, audit and warnings are available beside
+organization, welcome, roles, emoji, stickers, notifications and invitations.
+The shared settings navigation mounts editors when visited and retains their
+drafts when changing sections. Account/server replacement retires that scope;
+hidden panels cannot take focus. Existing direct menu entry points remain.
+
+The creation wizard now keeps Back/Continue/Create visible while its body
+scrolls. Channel-type cards use consistent spacing, explicit selection and
+44px controls. Both flows retain native authorization and partial-creation
+receipts. The wizard is checked at 320/375/430/768/1280px.
+
+**Direct messages → Friends** provides copyable, revocable friend codes,
+received/sent requests, search and existing remove/block/privacy controls.
+The view survives reload and browser navigation. An optional server address
+defaults to this instance; federation and cross-instance discovery remain
+disabled. See [Friends](FRIENDS.md) for workflow, API, privacy and the additive
+database change. Friendships do not grant community membership or decrypt keys.
+
+Coverage includes code persistence after database reopen, code collisions,
+recipient authority, privacy/block checks, replacement during profile lookup,
+same-origin protection, audit redaction, deactivation cleanup, account changes,
+late replies, mobile layout and settings-draft retention. The real-stack smoke
+also exercises the production Friends screen and API; fixture-based browser
+tests are not presented as deployed acceptance.

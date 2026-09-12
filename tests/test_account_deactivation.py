@@ -42,6 +42,7 @@ class DeactivationTests(unittest.IsolatedAsyncioTestCase):
         db = self.service.store.db
         db.execute("UPDATE accounts SET email='alice@example.test',verified=1,timezone='Europe/Paris' WHERE user_id='@alice:test'")
         db.execute("INSERT INTO social_preferences VALUES('@alice:test','nobody')")
+        db.execute("INSERT INTO social_friend_codes VALUES('@alice:test','123456789ABC',1)")
         db.execute("INSERT INTO social_requests VALUES('contact','@alice:test','@owner:test','accepted',1,1)")
         db.execute("INSERT INTO social_requests VALUES('unrelated','@other:test','@owner:test','accepted',1,1)")
         db.execute("INSERT INTO social_blocks VALUES('@alice:test','@owner:test',1)")
@@ -67,7 +68,7 @@ class DeactivationTests(unittest.IsolatedAsyncioTestCase):
         result = await response.json()
         self.assertEqual(result['deactivation']['phase'], 'complete')
         db = self.service.store.db
-        for table in ('accounts', 'sessions', 'challenges', 'recovery_codes', 'social_preferences', 'invitation_redemptions'):
+        for table in ('accounts', 'sessions', 'challenges', 'recovery_codes', 'social_preferences', 'social_friend_codes', 'invitation_redemptions'):
             self.assertEqual(db.execute('SELECT count(*) FROM ' + table + ' WHERE user_id=?', ('@alice:test',)).fetchone()[0], 0, table)
         self.assertEqual([row[0] for row in db.execute('SELECT id FROM social_requests')], ['unrelated'])
         self.assertEqual([tuple(row)[:2] for row in db.execute('SELECT * FROM social_blocks')], [('@owner:test', '@alice:test')])

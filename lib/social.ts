@@ -1,7 +1,7 @@
 import { getMatrixClient } from './matrix';
 import { accountArtworkOwner, requestApi } from './api';
 export type ContactRequest = { id: string; sender: string; target: string; status: 'pending' | 'accepted'; created: number; updated: number };
-export type SocialState = { requests: ContactRequest[]; blocked: string[]; privacy: 'everyone' | 'shared_server' | 'nobody'; hasMore: boolean };
+export type SocialState = { requests: ContactRequest[]; blocked: string[]; privacy: 'everyone' | 'shared_server' | 'nobody'; hasMore: boolean; friendCode?: string };
 export async function socialApi(path = '', method = 'GET', body?: object): Promise<SocialState> {
   const owner = getMatrixClient(), actor = owner?.getUserId(), generation = accountArtworkOwner();
   const current = () => { if (getMatrixClient() !== owner || owner?.getUserId() !== actor || accountArtworkOwner() !== generation) throw new Error('Your account changed. Reopen Contacts before continuing.'); };

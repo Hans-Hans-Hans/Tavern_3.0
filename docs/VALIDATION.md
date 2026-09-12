@@ -2,6 +2,36 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## September 12 Friends and server management checkpoint
+
+This extends phase 2 of the [community roadmap](COMMUNITY_UX_ROADMAP.md) with
+saved-state owner setup guidance, authorized settings sections, persistent
+wizard navigation and [friend codes](FRIENDS.md). The existing friendship API
+keeps its authority/privacy rules and gains a persistent, revocable identifier.
+
+The production TypeScript/Vite build and all 707 model cases pass. The full
+Windows Python run completed 810 tests: 793 passed and 17 platform/environment
+checks were skipped. The full browser run passed 494 cases. A subsequent
+14-case Friends run checked the final avatar/feedback refinements, including
+request drafts, account replacement, code rotation and 320/375/1280px layouts.
+The native workflow remains the separate deployment gate for this checkpoint.
+
+CI run [34720016288](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34720016288)
+on `f8c63c2` confirmed encrypted file storage/download, profile thumbnails,
+known-device and email/key history recovery, direct-message persistence and
+invitation privacy. Rollback checks passed. It failed in the native moderation
+probe because an identical joined-member event returned HTTP 200, the documented
+deduplication path in the pinned Synapse implementation. The updated probe
+requires HTTP 403 for a changed event and for a fresh invited join under a
+temporary ban, then verifies successful admission after lifting the ban. No
+production permission rule or rejection assertion was relaxed.
+
+The updated full-stack smoke also uses the real Friends UI to send a code-only
+request, checks recipient-only acceptance and verifies code replacement/reload.
+Local browser fixtures and API tests do not establish this deployed result.
+Physical iOS/Android acceptance, an operator backup/restore rehearsal and the
+remaining roadmap phases are still separate release work.
+
 ## September 12 file-size controls and UX plan checkpoint
 
 ### Follow-on usability implementation

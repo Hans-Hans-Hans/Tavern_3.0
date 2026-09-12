@@ -79,6 +79,51 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
     async def request(self, method, path='', actor='@alice:local', body=None):
         return await self.client.request(method, '/api/social' + path, headers={'Test-Session': actor} if actor else {}, json=body)
 
+    async def test_friend_code_persists_and_only_recipient_can_accept(self):
+        state = await (await self.request('GET', actor='@bob:local')).json()
+        code = state['friendCode']
+        self.assertRegex(code, r'^TAV-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$')
+        self.assertEqual((await (await self.request('GET', actor='@bob:local')).json())['friendCode'], code)
+        response = await self.request('POST', '/requests', body={'target': code.lower().replace('-', ' '), 'server': 'https://local/'})
+        self.assertEqual(response.status, 201)
+        result = await response.json()
+        self.assertNotEqual(result['friendCode'], code)
+        row = result['requests'][0]
+        self.assertEqual(row['target'], '@bob:local')
+        self.assertEqual((await self.request('PATCH', '/requests/' + row['id'], body={'operation': 'accept'})).status, 403)
+        self.assertEqual((await self.request('PATCH', '/requests/' + row['id'], actor='@bob:local', body={'operation': 'accept'})).status, 200)
+
+    async def test_rotation_revokes_old_code_and_preserves_relationships(self):
+        code = (await (await self.request('GET', actor='@bob:local')).json())['friendCode']
+        self.assertEqual((await self.request('POST', '/requests', body={'target': code})).status, 201)
+        response = await self.request('POST', '/friend-code', actor='@bob:local', body={'previousCode': code})
+        self.assertEqual(response.status, 200)
+        state = await response.json()
+        self.assertNotEqual(state['friendCode'], code)
+        self.assertEqual(len(state['requests']), 1)
+        self.assertEqual((await self.request('POST', '/friend-code', actor='@bob:local', body={'previousCode': code})).status, 409)
+        self.assertEqual((await self.request('POST', '/requests', actor='@carol:local', body={'target': code})).status, 400)
+        self.assertEqual((await self.request('POST', '/requests', actor='@carol:local', body={'target': state['friendCode']})).status, 201)
+
+    async def test_codes_do_not_bypass_privacy_blocks_or_account_authority(self):
+        code = (await (await self.request('GET', actor='@bob:local')).json())['friendCode']
+        self.assertEqual((await self.request('POST', '/friend-code', body={'previousCode': code, 'user_id': '@bob:local'})).status, 409)
+        self.assertEqual((await self.request('POST', '/friend-code', actor='', body={'previousCode': code})).status, 401)
+        self.assertEqual((await self.request('POST', '/requests', actor='@bob:local', body={'target': code})).status, 400)
+        self.assertEqual((await self.request('POST', '/requests', body={'target': code, 'server': 'other.example'})).status, 400)
+        await self.request('PUT', '/privacy', actor='@bob:local', body={'requests': 'nobody'})
+        self.assertEqual((await self.request('POST', '/requests', body={'target': code})).status, 403)
+        await self.request('PUT', '/privacy', actor='@bob:local', body={'requests': 'everyone'})
+        await self.request('PUT', '/blocks/@alice:local', actor='@bob:local')
+        self.assertEqual((await self.request('POST', '/requests', body={'target': code})).status, 403)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM social_requests').fetchone()[0], 0)
+
+    async def test_revocation_during_profile_lookup_prevents_stale_code_use(self):
+        code = (await (await self.request('GET', actor='@bob:local')).json())['friendCode']
+        self.on_profile = lambda: social.rotate_code(self.db, '@bob:local', code)
+        self.assertEqual((await self.request('POST', '/requests', body={'target': code})).status, 409)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM social_requests').fetchone()[0], 0)
+
     async def test_handler_ignores_forged_sender_and_enforces_accept_author(self):
         response = await self.request('POST', '/requests', body={'target': '@bob:local', 'sender': '@mallory:local'})
         self.assertEqual(response.status, 201)

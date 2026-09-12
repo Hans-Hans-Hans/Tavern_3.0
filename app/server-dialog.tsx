@@ -102,6 +102,7 @@ export function ServerDialog({ open, naming, onClose, onCreated }: { open: boole
       <DialogHeader><DialogTitle>{created ? 'Finish your server' : `Create a ${terms.server}`}</DialogTitle><DialogDescription>A place for your people. Choose a starting point and make it yours.</DialogDescription></DialogHeader>
       <ol className="server-creation-steps" aria-label="Creation progress">{steps.map((title, index) => <li key={title} aria-current={step === index ? 'step' : undefined}><span aria-hidden="true">{step > index ? <Check size={16}/> : index + 1}</span>{title}</li>)}</ol>
       <form className="dialog-form server-creation-form" aria-busy={pending} onSubmit={event => { event.preventDefault(); if (pending) return; if (step < 2) next(); else void create(); }}>
+        <div className="server-creation-body">
         <h2 ref={heading} tabIndex={-1} className="server-creation-heading">{steps[step]}</h2>
         <fieldset disabled={frozen}>
           {step === 0 && <>
@@ -142,6 +143,7 @@ export function ServerDialog({ open, naming, onClose, onCreated }: { open: boole
         <ExperienceError error={error} draft={created ? 'Your server and completed channels are kept. Retry finishes the remaining setup.' : 'Your form entries are kept.'}/>
         {uncertain && <p role="status">Creation could not be confirmed. Check All channels and your server list before creating another copy. Automatic creation retries are paused.</p>}
         {!!receipts.current.size && <ul aria-label="Created channels">{[...receipts.current.values()].map(result => <li key={result.roomId}>{result.name}: {result.errors.length ? 'Needs remaining setup' : 'Ready'}</li>)}</ul>}
+        </div>
         <div className="server-creation-footer">{step > 0 && !created && !uncertain && <button type="button" className="secondary-button" disabled={pending} onClick={() => { setError(null); setStep(step - 1); }}>Back</button>}<button className="primary-button" disabled={pending || !name.trim() || uncertain || !policyLoaded}>{busy ? progress || 'Opening your server…' : artBusy ? 'Uploading icon…' : step < 2 ? 'Continue' : created ? 'Finish remaining setup' : `Create ${terms.server}`}</button>{created && <button type="button" className="secondary-button" disabled={pending} onClick={() => void openCreated()}>Open created server</button>}</div>
       </form>
     </DialogContent>

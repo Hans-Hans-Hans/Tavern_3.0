@@ -38,6 +38,22 @@ async function channelContextAction(page: Page, trigger: ReturnType<Page['locato
   finally { await page.evaluate(() => (window as any).stopChannelMenuTrace?.()).catch(() => {}); }
 }
 
+test('Friends opens from direct messages and survives reload without becoming a message feed', async ({page}) => {
+  await page.route('**/api/social', route => route.fulfill({ json: { friendCode: 'TAV-1234-5678-9ABC', requests: [], blocked: [], privacy: 'everyone' } }));
+  await page.route('**/api/social/events', route => route.fulfill({ contentType: 'text/event-stream', body: '' }));
+  await fixture(page, true, '?management=1');
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
+  await page.getByRole('button', { name: 'Friends', exact: true }).click();
+  await expect(page).toHaveURL(/#view=friends$/);
+  await expect(page.locator('.friends-workspace').getByRole('textbox', { name: 'Your friend code', exact: true })).toHaveValue('TAV-1234-5678-9ABC');
+  await page.reload();
+  await expect(page.locator('.friends-workspace')).toBeVisible();
+  await expect(page.locator('.workspace-select strong')).toHaveText('Direct messages');
+  expect(await page.evaluate(() => (window as any).workspaceCalls.some(([action]: string[]) => action === 'friends'))).toBe(false);
+  await page.getByRole('button', { name: 'Games server', exact: true }).click();
+  await expect(page.locator('.friends-workspace')).toHaveCount(0);
+});
+
 test('server switching restores its last selected channel and Home is a selectable landing page', async ({page}) => {
   await fixture(page,true,'?management=1');
   await page.getByRole('button',{name:'Games server',exact:true}).click();

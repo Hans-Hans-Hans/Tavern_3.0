@@ -249,6 +249,21 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         _, _, response = await self.login()
         self.assertNotIn("Max-Age", response.headers["Set-Cookie"])
 
+    async def test_friend_code_rotation_requires_same_origin_and_keeps_code_out_of_audit(self):
+        cookie, _, _ = await self.login()
+        response = await self.request('GET', '/api/social', cookie=cookie)
+        code = (await response.json())['friendCode']
+        for origin in (None, 'https://evil.example'):
+            denied = await self.request('POST', '/api/social/friend-code', {'previousCode': code}, cookie, origin=origin)
+            self.assertEqual(denied.status, 403)
+        response = await self.request('POST', '/api/social/friend-code', {'previousCode': code}, cookie)
+        self.assertEqual(response.status, 200)
+        replacement = (await response.json())['friendCode']
+        self.assertNotEqual(replacement, code)
+        audit = json.dumps([dict(row) for row in self.service.store.db.execute('SELECT * FROM audit')])
+        self.assertNotIn(code, audit)
+        self.assertNotIn(replacement, audit)
+
     async def test_rotation_and_logout_invalidate_current_and_previous_cookie(self):
         old, _, _ = await self.login()
         self.service.store.db.execute("UPDATE sessions SET rotated=?", (time.time() - 901,))

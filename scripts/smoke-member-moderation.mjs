@@ -129,8 +129,22 @@ export async function memberModerationSmoke({ admin, alice, bob, adminSession, a
           { algorithm: 'm.megolm.v1.aes-sha2', ciphertext: 'ci-authorization-rejection-only', session_id: 'ci', device_id: bobSession.deviceId, sender_key: 'ci' }, 'PUT');
         assert.equal(checked(denied, 403, 'Inherit server restriction on native child writes').errcode, 'M_FORBIDDEN');
       }
-      if (type === TYPES[1]) await deny(channel, 'm.room.member', { membership: 'join' }, BOB, bob);
+      // Pinned Synapse returns the persisted event for an identical membership
+      // update before module callbacks. Exercise an actual new profile event.
+      // https://github.com/element-hq/synapse/blob/v1.160.0/synapse/handlers/room_member.py#L930-L941
+      if (type === TYPES[1]) await deny(channel, 'm.room.member', { membership: 'join', displayname: 'CI blocked profile ' + runId }, BOB, bob);
       const cleared = await put(server, type, { ...clear, [PREVIOUS]: revision }, alice, key(BOB));
+      if (type === TYPES[1]) {
+        // Prove fresh admission separately: invite while unrestricted, apply
+        // the parent ban, reject the invited join, then admit after lifting it.
+        await leave(channel, bob, BOB);
+        const membership = () => native(admin, statePath(channel, 'm.room.member', BOB));
+        checked(await matrixSmokeInvite(membership, () => native(admin, roomPath(channel) + '/invite', { user_id: BOB })), 200, 'Invite unrestricted isolated member');
+        const freshBan = await put(server, type, { ...content, [PREVIOUS]: cleared }, alice, key(BOB));
+        await deny(channel, 'm.room.member', { membership: 'join' }, BOB, bob);
+        await put(server, type, { ...clear, [PREVIOUS]: freshBan }, alice, key(BOB));
+        await join(channel, bob, BOB);
+      }
       await deny(server, type, { ...content, [PREVIOUS]: revision });
       assert.notEqual(cleared, revision);
     }

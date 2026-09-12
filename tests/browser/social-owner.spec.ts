@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const contact = (peer: string) => ({ requests: [{ id: 'request-' + peer, sender: '@owner:local', target: peer, status: 'accepted', created: 1, updated: 1 }], blocked: [], privacy: 'everyone', hasMore: false });
+const contact = (peer: string) => ({ friendCode: 'TAV-1234-5678-9ABC', requests: [{ id: 'request-' + peer, sender: '@owner:local', target: peer, status: 'accepted', created: 1, updated: 1 }], blocked: [], privacy: 'everyone', hasMore: false });
 async function fixture(page: Page) {
   const backend = { reads: [] as string[], writes: [] as any[], data: contact('@old-contact:local'), beforeRead: null as null | ((snapshot: any) => Promise<void>), beforeWrite: null as null | (() => Promise<void>), reject: false };
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'application/javascript', body: 'export const getMatrixClient=()=>window.socialOwner?.client;export const onMatrixUpdate=fn=>{window.socialOwner.listeners.add(fn);return()=>window.socialOwner.listeners.delete(fn)};' }));
@@ -29,20 +29,20 @@ test('stale confirmation cannot issue a write if the device changes before the n
 });
 
 test('a late old account read cannot restore its contacts, search or request draft after replacement', async ({ page }) => {
-  const backend = await fixture(page); await page.getByLabel('Add a contact').fill('@old-draft:local'); await page.getByLabel('Find a contact').fill('Old');
+  const backend = await fixture(page); await page.getByLabel('Friend code', { exact: true }).fill('@old-draft:local'); await page.getByLabel('Find a contact').fill('Old');
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; }); backend.beforeRead = async () => { backend.beforeRead = null; await gate; };
   await page.getByRole('button', { name: 'Refresh contacts' }).click(); await expect.poll(() => backend.reads.length).toBe(2);
   backend.data = contact('@new-contact:local'); await page.evaluate(() => (window as any).socialOwner.switchDevice('B'));
-  await expect(page.getByText('@new-contact:local', { exact: true })).toBeVisible(); await expect(page.getByLabel('Add a contact')).toHaveValue(''); await expect(page.getByLabel('Find a contact')).toHaveValue('');
+  await expect(page.getByText('@new-contact:local', { exact: true })).toBeVisible(); await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue(''); await expect(page.getByLabel('Find a contact')).toHaveValue('');
   release(); await expect(page.getByText('@old-contact:local', { exact: true })).toHaveCount(0); await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('a late write completion cannot clear the replacement account draft or show its old response', async ({ page }) => {
   const backend = await fixture(page); let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; }); backend.beforeWrite = async () => { backend.beforeWrite = null; await gate; };
-  await page.getByLabel('Add a contact').fill('@old-draft:local'); await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect.poll(() => backend.writes.length).toBe(1);
+  await page.getByLabel('Friend code', { exact: true }).fill('@old-draft:local'); await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect.poll(() => backend.writes.length).toBe(1);
   backend.data = contact('@new-contact:local'); await page.evaluate(() => (window as any).socialOwner.switchDevice('B')); await expect(page.getByText('@new-contact:local', { exact: true })).toBeVisible();
-  await page.getByLabel('Add a contact').fill('@new-draft:local'); release(); await expect(page.getByLabel('Add a contact')).toHaveValue('@new-draft:local'); await expect(page.getByRole('alert')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect(page.getByLabel('Add a contact')).toHaveValue('');
+  await page.getByLabel('Friend code', { exact: true }).fill('@new-draft:local'); release(); await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue('@new-draft:local'); await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue('');
   expect(backend.writes.map(write => [write.device, write.body.target])).toEqual([['A', '@old-draft:local'], ['B', '@new-draft:local']]); await expect(page.getByText('@old-contact:local', { exact: true })).toHaveCount(0);
 });
 
@@ -55,7 +55,75 @@ test('an earlier refresh cannot undo a confirmed contact removal in the same acc
 });
 
 test('service rejection preserves the current request draft and supports an explicit retry', async ({ page }) => {
-  const backend = await fixture(page); backend.reject = true; await page.getByLabel('Add a contact').fill('@friend:local'); await page.getByRole('button', { name: 'Send request', exact: true }).click();
-  await expect(page.getByRole('alert')).toHaveText('Contacts service is temporarily unavailable.'); await expect(page.getByLabel('Add a contact')).toHaveValue('@friend:local');
-  backend.reject = false; await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect(page.getByLabel('Add a contact')).toHaveValue(''); await expect(page.getByRole('alert')).toHaveCount(0); expect(backend.writes).toHaveLength(2);
+  const backend = await fixture(page); backend.reject = true; await page.getByLabel('Friend code', { exact: true }).fill('@friend:local'); await page.getByRole('button', { name: 'Send request', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Contacts service is temporarily unavailable.'); await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue('@friend:local');
+  backend.reject = false; await page.getByRole('button', { name: 'Send request', exact: true }).click(); await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue(''); await expect(page.getByRole('alert')).toHaveCount(0); expect(backend.writes).toHaveLength(2);
+});
+
+test('a friend code works by itself, with server selection left optional', async ({ page }) => {
+  const backend = await fixture(page);
+  await expect(page.getByRole('textbox', { name: 'Your friend code', exact: true })).toHaveValue('TAV-1234-5678-9ABC');
+  await expect(page.getByLabel('Server address')).toBeHidden();
+  await page.getByLabel('Friend code', { exact: true }).fill('TAV-ABCD-2345-6789');
+  await page.getByRole('button', { name: 'Send request', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Friend request sent');
+  expect(backend.writes[0].body).toEqual({ target: 'TAV-ABCD-2345-6789' });
+});
+
+test('replacing a code requires confirmation and only displays the acknowledged replacement', async ({ page }) => {
+  const backend = await fixture(page);
+  await page.getByRole('button', { name: 'Replace code', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Your friends and existing requests stay');
+  expect(backend.writes).toHaveLength(0);
+  backend.data = { ...backend.data, friendCode: 'TAV-ABCD-2345-6789' };
+  await page.getByRole('button', { name: 'Replace friend code', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Your friend code', exact: true })).toHaveValue('TAV-ABCD-2345-6789');
+  expect(backend.writes[0]).toMatchObject({ path: '/api/social/friend-code', method: 'POST', body: { previousCode: 'TAV-1234-5678-9ABC' } });
+  await expect(page.getByText('@old-contact:local', { exact: true })).toBeVisible();
+});
+
+test('a new request draft typed during delivery is preserved', async ({ page }) => {
+  const backend = await fixture(page); let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; }); backend.beforeWrite = () => gate;
+  await page.getByLabel('Friend code', { exact: true }).fill('TAV-ABCD-2345-6789');
+  await page.getByRole('button', { name: 'Send request', exact: true }).click();
+  await expect.poll(() => backend.writes.length).toBe(1);
+  await page.getByLabel('Friend code', { exact: true }).fill('TAV-DCBA-9876-5432'); release();
+  await expect(page.getByRole('status')).toContainText('Friend request sent');
+  await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue('TAV-DCBA-9876-5432');
+});
+
+test('received and sent requests are separated with matching management actions', async ({ page }) => {
+  const backend = await fixture(page);
+  backend.data.requests = [
+    { id: 'incoming', sender: '@incoming:local', target: '@owner:local', status: 'pending', created: 1, updated: 1 },
+    { id: 'outgoing', sender: '@owner:local', target: '@outgoing:local', status: 'pending', created: 1, updated: 1 },
+  ];
+  await page.getByRole('button', { name: 'Refresh contacts' }).click();
+  await page.getByRole('button', { name: 'Pending (2)', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Received', exact: true }).getByRole('button', { name: 'Accept' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Sent', exact: true }).getByRole('button', { name: 'Cancel request' })).toBeVisible();
+  await page.getByRole('region', { name: 'Received', exact: true }).getByRole('button', { name: 'Accept' }).click();
+  await expect.poll(() => backend.writes.length).toBe(1);
+  expect(backend.writes[0]).toMatchObject({ path: '/api/social/requests/incoming', method: 'PATCH', body: { operation: 'accept' } });
+});
+
+test('a successful refresh clears a resolved error without discarding the friend draft', async ({ page }) => {
+  const backend = await fixture(page); backend.reject = true;
+  await page.getByLabel('Friend code', { exact: true }).fill('TAV-ABCD-2345-6789');
+  await page.getByRole('button', { name: 'Send request', exact: true }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  backend.reject = false; await page.getByRole('button', { name: 'Refresh contacts' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByLabel('Friend code', { exact: true })).toHaveValue('TAV-ABCD-2345-6789');
+});
+
+for (const width of [320, 375, 1280]) test(`friend codes and management fit ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 850 }); await fixture(page);
+  await expect(page.getByRole('textbox', { name: 'Your friend code', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  expect(await page.locator('.friends-panel').evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  for (const button of await page.locator('.friends-panel button:visible').all()) expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  if (width === 375 || width === 1280) await page.screenshot({ path: `work/friends-${width}.png`, fullPage: true });
 });

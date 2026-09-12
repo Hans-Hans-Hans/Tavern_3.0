@@ -95,7 +95,7 @@ class Deactivations:
         peers = {r[0] for r in db.execute('SELECT target FROM social_requests WHERE sender=? UNION SELECT sender FROM social_requests WHERE target=?', (user, user))}
         db.execute('BEGIN IMMEDIATE')
         try:
-            for table in ('sessions', 'challenges', 'recovery_codes', 'social_preferences'):
+            for table in ('sessions', 'challenges', 'recovery_codes', 'social_preferences', 'social_friend_codes'):
                 db.execute('DELETE FROM ' + table + ' WHERE user_id=?', (user,))
             db.execute('DELETE FROM social_requests WHERE sender=? OR target=?', (user, user))
             db.execute('DELETE FROM social_blocks WHERE blocker=?', (user,))

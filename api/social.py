@@ -7,6 +7,14 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+try:
+    from .friend_codes import ensure_schema as ensure_codes, normalize_code, own_code, resolve_code, rotate_code
+except ImportError:
+    try:
+        from friend_codes import ensure_schema as ensure_codes, normalize_code, own_code, resolve_code, rotate_code
+    except ImportError:
+        from api.friend_codes import ensure_schema as ensure_codes, normalize_code, own_code, resolve_code, rotate_code
+
 
 def helpers():
     try:
@@ -17,6 +25,7 @@ def helpers():
 
 
 def ensure_schema(db):
+    ensure_codes(db)
     db.executescript('''
       CREATE TABLE IF NOT EXISTS social_requests(id TEXT PRIMARY KEY,sender TEXT NOT NULL,target TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS social_sender_status ON social_requests(sender,status,updated DESC);
@@ -80,11 +89,24 @@ def snapshot(db, user):
     rows = db.execute("SELECT id,sender,target,status,created,updated FROM social_requests WHERE (sender=? OR target=?) AND status IN ('pending','accepted') ORDER BY updated DESC LIMIT 501", (user, user)).fetchall()
     blocked = [row[0] for row in db.execute('SELECT blocked FROM social_blocks WHERE blocker=? ORDER BY created DESC LIMIT 1000', (user,))]
     preference = db.execute('SELECT requests FROM social_preferences WHERE user_id=?', (user,)).fetchone()
-    return {'requests': [dict(row) for row in rows[:500]], 'hasMore': len(rows) > 500, 'blocked': blocked, 'privacy': preference[0] if preference else 'everyone'}
+    return {'requests': [dict(row) for row in rows[:500]], 'hasMore': len(rows) > 500, 'blocked': blocked, 'privacy': preference[0] if preference else 'everyone', 'friendCode': own_code(db, user)}
 
 
 async def state(request):
     service, session, user = session_context(request)
+    return web.json_response(snapshot(service.store.db, user))
+
+
+async def renew_friend_code(request):
+    APIError, body_json = helpers()
+    service, session, user = session_context(request)
+    service.store.rate('friend-code:' + user, 5, 3600)
+    value = await body_json(request)
+    service.require_session(request)
+    if not rotate_code(service.store.db, user, value.get('previousCode')):
+        raise APIError(409, 'Your friend code changed. Refresh before replacing it.')
+    service.audit(user, 'contacts.code_rotated', user)
+    announce(request, user)
     return web.json_response(snapshot(service.store.db, user))
 
 
@@ -112,9 +134,21 @@ async def send_request(request):
     service, session, user = session_context(request)
     service.store.rate('friend-request:' + user, 10, 300)
     value = await body_json(request)
+    service.require_session(request)
     target = value.get('target')
+    server = value.get('server', '')
+    if not isinstance(server, str) or len(server) > 255:
+        raise APIError(400, 'Enter a valid server address.')
+    server = server.strip().removeprefix('https://').rstrip('/')
+    if server and server.casefold() != user.split(':', 1)[1].casefold():
+        raise APIError(400, 'This Tavern supports friends on this instance. Cross-instance friendships are not enabled.')
+    requested_code = normalize_code(target)
+    if requested_code:
+        target = resolve_code(service.store.db, requested_code)
+        if not target:
+            raise APIError(400, 'That friend code is unavailable. Check the code or ask your friend for a new one.')
     if not isinstance(target, str) or not re.fullmatch(r'@[^\s:]{1,128}:[^\s]{1,255}', target) or target == user:
-        raise APIError(400, 'Enter another member’s full Matrix ID.')
+        raise APIError(400, 'Enter someone else’s friend code or full account address.')
     # Accounts on this self-hosted instance have durable privacy settings here.
     if target.split(':', 1)[1] != user.split(':', 1)[1]:
         raise APIError(400, 'Contact requests are available to accounts on this Tavern instance.')
@@ -138,12 +172,14 @@ async def send_request(request):
     if db.execute('SELECT 1 FROM social_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)', (user, target, target, user)).fetchone():
         raise APIError(403, 'This contact request cannot be sent.')
     service.require_session(request)
+    if requested_code and resolve_code(db, requested_code) != target:
+        raise APIError(409, 'That friend code changed. Ask your friend for their current code.')
     if service.deactivations.unavailable(target):
         raise APIError(400, 'That account is unavailable.')
     now = time.time()
     active = db.execute("SELECT id FROM social_requests WHERE ((sender=? AND target=?) OR (sender=? AND target=?)) AND status IN ('pending','accepted')", (user, target, target, user)).fetchone()
     if active:
-        raise APIError(409, 'A contact request or relationship already exists. Check Pending and Contacts.')
+        raise APIError(409, 'A friend request or friendship already exists. Check Pending and All.')
     if db.execute("SELECT count(*) FROM social_requests WHERE (sender=? OR target=?) AND status IN ('pending','accepted')", (user, user)).fetchone()[0] >= 500:
         raise APIError(409, 'Your contact list is full. Remove a contact or cancel a request first.')
     if db.execute("SELECT count(*) FROM social_requests WHERE (sender=? OR target=?) AND status IN ('pending','accepted')", (target, target)).fetchone()[0] >= 500:
@@ -251,5 +287,5 @@ def register_routes(app):
     ensure_schema(app['service'].store.db)
     app['social_watchers'] = {}
     app['social_locks'] = {}
-    app.add_routes([web.get('/api/social', state), web.get('/api/social/events', events), web.post('/api/social/requests', send_request), web.patch('/api/social/requests/{identity}', respond),
+    app.add_routes([web.get('/api/social', state), web.get('/api/social/events', events), web.post('/api/social/friend-code', renew_friend_code), web.post('/api/social/requests', send_request), web.patch('/api/social/requests/{identity}', respond),
                     web.delete('/api/social/contacts/{peer}', remove_contact), web.put('/api/social/privacy', privacy), web.put('/api/social/blocks/{peer}', block), web.delete('/api/social/blocks/{peer}', block)])

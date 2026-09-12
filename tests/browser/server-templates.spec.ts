@@ -169,6 +169,10 @@ for (const width of [320, 375, 430, 768, 1280]) test(`wizard fits ${width}px wit
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     const primary = page.getByRole('button', { name: step === 1 ? 'Continue' : 'Create server', exact: true });
     expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const footer = (await page.locator('.server-creation-footer').boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(footer.y).toBeGreaterThanOrEqual(0);
+    expect(footer.y + footer.height).toBeLessThanOrEqual(viewport.height);
     if (step === 1) await primary.click();
   }
   await expect(page.getByRole('region', { name: 'Server preview' })).toContainText('hangout');

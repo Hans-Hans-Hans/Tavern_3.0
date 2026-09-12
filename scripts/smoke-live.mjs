@@ -24,6 +24,7 @@ import { memberModerationSmoke } from './smoke-member-moderation.mjs';
 import { deactivationSmoke } from './smoke-deactivation.mjs';
 import { matrixSmokeRequest } from './matrix-smoke-request.mjs';
 import { dismissOptionalOnboarding } from './smoke-workspace-ready.mjs';
+import { friendsSmoke } from './smoke-friends.mjs';
 
 if (process.env.TAVERN_CI_SMOKE !== 'true') throw new Error('Live smoke runs only on the isolated CI stack.');
 if (!process.env.TAVERN_CI_TLS) throw new Error('The isolated CI certificate directory is required.');
@@ -154,6 +155,7 @@ try {
   assert.equal(aliceSession.admin, false); assert.equal(bobSession.admin, false);
   assert.equal((await api(alice, '/api/admin/users')).status, 403);
   console.log('PASS: two ordinary accounts sign in and administrator endpoints reject their sessions.');
+  await friendsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready });
   // Validate fresh-device encrypted delivery before the independent media
   // workload. A call failure must not hide the bot's native key-delivery result.
   await systemMessagesSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, ready, createPage: page, login });
