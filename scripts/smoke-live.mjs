@@ -276,11 +276,22 @@ try {
   assert.equal((await api(alice, '/_matrix/client/v3/profile/' + encodeURIComponent(aliceSession.userId) + '/avatar_url', undefined, true)).data.avatar_url, avatarUri);
   assert.equal((await api(alice, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/state/m.room.member/' + encodeURIComponent(aliceSession.userId), undefined, true)).data.avatar_url, avatarUri);
   await alice.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-  await bob.reload(); await ready(bob);
-  const sharedAvatar = bob.getByRole('button', { name: 'View CI Alice profile', exact: true }).first().getByRole('img', { name: 'CI Alice', exact: true });
-  await expect(sharedAvatar).toHaveAttribute('src', /^blob:/);
-  await sharedAvatar.scrollIntoViewIfNeeded();
-  await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  let thumbnailRequests = 0; const thumbnailStatuses = [];
+  const isThumbnail = url => new URL(url).pathname.startsWith('/api/matrix/_matrix/client/v1/media/thumbnail/');
+  const thumbnailRequest = request => { if (isThumbnail(request.url())) thumbnailRequests = Math.min(100, thumbnailRequests + 1); };
+  const thumbnailResponse = response => { if (isThumbnail(response.url()) && thumbnailStatuses.length < 20) thumbnailStatuses.push(response.status()); };
+  bob.on('request', thumbnailRequest); bob.on('response', thumbnailResponse);
+  try {
+    await bob.reload(); await ready(bob);
+    const sharedAvatar = bob.getByRole('button', { name: 'View CI Alice profile', exact: true }).first().getByRole('img', { name: 'CI Alice', exact: true });
+    await expect(sharedAvatar).toHaveAttribute('src', /^blob:/);
+    await sharedAvatar.scrollIntoViewIfNeeded();
+    await expect.poll(() => sharedAvatar.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  } catch (failure) {
+    const member = await api(bob, '/_matrix/client/v3/rooms/' + encodeURIComponent(roomId) + '/state/m.room.member/' + encodeURIComponent(aliceSession.userId), undefined, true).catch(() => null);
+    console.error('Avatar acceptance diagnostics:', JSON.stringify({ nativeMembershipReadable: member?.status === 200, nativeAvatarMatches: member?.data?.avatar_url === avatarUri, thumbnailRequests, thumbnailStatuses }));
+    throw failure;
+  } finally { bob.off('request', thumbnailRequest); bob.off('response', thumbnailResponse); }
   console.log('PASS: a cropped profile avatar uploads, persists in the account and room, and loads through authenticated thumbnails for another user after reload.');
   await historyRecoverySmoke({ admin, adminSession, origin, api, ready, createPage: page, login, encryptedResponse, encryptedEvent });
   await privateDiscussionSmoke({ admin, alice, bob, adminSession, aliceSession, bobSession, origin, api, encryptedResponse, encryptedEvent });
