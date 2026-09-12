@@ -11,3 +11,10 @@ Creation and subsequent server linking, category placement and invitations are s
 Drafts, completion callbacks and retries are tied to the current client, user, device and browser account generation. Replacing the server or account retires the visible draft and suppresses late callbacks. Native authorization remains authoritative; separate state reads do not provide a cross-room atomic transaction.
 
 Validation: `tests/channel-creation.test.mjs` checks actual model initial state, authority/category boundaries, inherited policy, copied-state changes, partial setup, ambiguous invitation acknowledgement, privacy/topology changes and owner retirement. `tests/browser/channel-creation.spec.ts` mounts the real form/model with controlled native transport and covers voice configuration, category/member outcomes, same-room repair, server/account replacement, behavior guidance and a 320px viewport. Live native creation continues to use the production Matrix SDK; these browser tests do not claim a deployed media connection.
+
+Channel settings use one set of native management helpers. **Overview** contains
+the authorized name/topic editor and appearance settings. **Behavior** contains
+type and channel policy. **Permissions** contains selected private audiences,
+Tavern role overrides and native permission thresholds. **Moderation** contains
+member removal, bans and native member-power changes alongside the existing
+scoped moderation tools. Editing a name no longer requires opening Permissions.

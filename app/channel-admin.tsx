@@ -5,18 +5,18 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 const labels: Record<ConversationAction, string> = { kick: 'Remove from conversation', ban: 'Ban from conversation', unban: 'Lift ban', moderator: 'Set native power to 50', member: 'Set native power to 0' };
 const operations = Object.keys(labels) as ConversationAction[];
-export function ChannelAdmin({ roomId, onChanged }: { roomId: string; onChanged: () => Promise<unknown> }) {
+export function ChannelAdmin({ roomId, onChanged, section }: { roomId: string; onChanged: () => Promise<unknown>; section?: 'details' | 'members' }) {
   const client = getMatrixClient(), room = client?.getRoom(roomId);
   const [name, setName] = useState(room?.name || ''), [topic, setTopic] = useState(room?.currentState.getStateEvents('m.room.topic', '')?.getContent().topic || '');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [target, setTarget] = useState(''), [action, setAction] = useState<ConversationAction | ''>(''), [reason, setReason] = useState('');
   const [pending, setPending] = useState<{ target: string; action: ConversationAction; reason: string; power: number } | null>(null), [confirmation, setConfirmation] = useState(''), [, refresh] = useState(0);
   useEffect(() => onMatrixUpdate(() => refresh(value => value + 1)), []);
   if (!room || !client?.getUserId()) return null;
-  const canEdit = canEditConversationDetails(roomId);
-  const members = room.getMembers().filter(member => operations.some(operation => canAdministerMember(roomId, member.userId, operation)));
+  const canEdit = section !== 'members' && canEditConversationDetails(roomId);
+  const members = section === 'details' ? [] : room.getMembers().filter(member => operations.some(operation => canAdministerMember(roomId, member.userId, operation)));
   if (!canEdit && !members.length && !pending) return null;
   async function changed() { try { await onChanged(); } catch { setError('The change was saved, but refreshing the conversation failed. Reopen its details.'); } }
-  return <section className='channel-admin'><h3>Manage conversation</h3>
+  return <section className='channel-admin'><h3>{section === 'details' ? 'Channel details' : section === 'members' ? 'Member access' : 'Manage conversation'}</h3>
     {canEdit && <form className='dialog-form' onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError('');
       try { await saveConversationDetails(roomId, name, topic); await changed(); } catch (e: any) { setError(e.message); } finally { setBusy(false); }
