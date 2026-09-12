@@ -25,7 +25,10 @@ export function directAudioDiagnostic(values){
     ice:choose('ICE transport',['new','checking','connected','completed','disconnected','failed','closed']),
     gathering:choose('ICE gathering',['new','gathering','complete']),route:choose('Local route',['TURN relay','host','srflx','prflx']),
     local:count('Local ICE candidates'),relay:count('Local relay candidates'),remote:count('Remote ICE candidates'),
-    down:rate('Download media rate'),up:rate('Upload media rate'),iceErrors};
+    down:rate('Download media rate'),up:rate('Upload media rate'),iceErrors,
+    signaling:choose('Signaling',['stable','have-local-offer','have-remote-offer','have-local-pranswer','have-remote-pranswer','closed']),
+    localDescription:choose('Local description',['offer','answer','pranswer','rollback','not set']),remoteDescription:choose('Remote description',['offer','answer','pranswer','rollback','not set']),
+    gatheredRelay:count('Gathered relay candidates')};
 }
 
 // A separate allocation attempt after a failed real call distinguishes missing

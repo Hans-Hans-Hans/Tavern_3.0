@@ -71,7 +71,7 @@ test('stopping call measurements ignores a pending report and schedules no more 
 });
 
 test('ICE errors retain only bounded numeric codes and retire with their peer', async () => {
-  const old = Object.assign(new EventTarget(), { connectionState: 'new', iceConnectionState: 'new', iceGatheringState: 'complete' });
+  const old = Object.assign(new EventTarget(), { connectionState: 'new', iceConnectionState: 'new', iceGatheringState: 'complete', localDescription: {type:'offer',sdp:'v=0'} });
   const values = []; const call = { peerConn: old, getCurrentCallStats: async () => [] };
   const stop = quality.watchCallQuality(call, value => values.push(value), 5);
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -84,6 +84,15 @@ test('ICE errors retain only bounded numeric codes and retire with their peer', 
   await new Promise(resolve => setTimeout(resolve, 12));
   old.dispatchEvent(failure(438)); assert.deepEqual(values.at(-1).iceErrors, []);
   stop(); const count = values.length; call.peerConn.dispatchEvent(failure(701)); assert.equal(values.length, count);
+});
+
+test('signaling diagnostics count gathered relays without retaining SDP, addresses or fingerprint data', () => {
+  const setup = quality.projectCallSetup({ signalingState: 'have-local-offer', localDescription: { type: 'offer', sdp: 'v=0\r\na=ice-pwd:secret\r\na=fingerprint:private\r\na=candidate:1 1 udp 1 192.0.2.1 50000 typ relay\r\na=candidate:2 1 udp 1 192.0.2.2 50001 typ host\r\n' }, remoteDescription: null });
+  assert.deepEqual(setup, { signaling: 'have-local-offer', localDescription: 'offer', remoteDescription: 'not set', gatheredRelayCandidates: 1 });
+  assert.doesNotMatch(JSON.stringify(setup), /secret|private|192\.0\.2|5000/);
+  assert.equal(quality.projectCallSetup({ localDescription: { type: 'offer', sdp: 'x'.repeat(131073) } }).gatheredRelayCandidates, null);
+  const report = { ...quality.projectCallQuality([], new Map(), 'new', 'new', 'complete').quality, ...setup };
+  assert.equal(quality.callConnectionPresentation(report).label, 'Connecting media…', 'An empty stats report does not prove that no relay was gathered.');
 });
 test('speech activity shares the existing SDK feed analyser and respects mute and cleanup', () => {
   const events = { VolumeChanged: 'volume', Speaking: 'speaking', MuteStateChanged: 'mute', NewStream: 'stream', Disposed: 'disposed' };

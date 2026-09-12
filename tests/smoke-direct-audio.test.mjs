@@ -5,7 +5,7 @@ import {proveDirectEndpoint,directAudioSmoke,directAudioDiagnostic} from '../scr
 test('failure diagnostics retain finite transport states and numeric counters without arbitrary text or addresses',()=>{
   assert.deepEqual(directAudioDiagnostic({'Connection':'connected','ICE transport':'completed','ICE gathering':'complete','Local route':'TURN relay',
     'Local ICE candidates':'2','Local relay candidates':'2','Remote ICE candidates':'4','Download media rate':'5.2 kbps','Upload media rate':'0 kbps'}),
-    {connection:'connected',ice:'completed',gathering:'complete',route:'TURN relay',local:2,relay:2,remote:4,down:5.2,up:0,iceErrors:[]});
+    {connection:'connected',ice:'completed',gathering:'complete',route:'TURN relay',local:2,relay:2,remote:4,down:5.2,up:0,iceErrors:[],signaling:'unavailable',localDescription:'unavailable',remoteDescription:'unavailable',gatheredRelay:null});
   assert.deepEqual(directAudioDiagnostic({'ICE error codes':'701, 438'}).iceErrors,[701,438]);
   const value=directAudioDiagnostic({'Connection':'sensitive','ICE transport':'token-value','Local route':'192.0.2.4',
     'Local ICE candidates':'123456','Remote ICE candidates':{},'Download media rate':'123 token','Upload media rate':'Infinity kbps',cookie:'secret'});
