@@ -1,11 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dmRequestsSmoke } from '../scripts/smoke-dm-requests.mjs';
+import { assertDirectInvitationSync, dmRequestsSmoke } from '../scripts/smoke-dm-requests.mjs';
 
 const origin = 'https://chat.example.test';
 const aliceSession = { userId: '@cialice:chat.example.test', deviceId: 'CI_ALICE', admin: false };
 const bobSession = { userId: '@cibob:chat.example.test', deviceId: 'CI_BOB', admin: false };
 const noop = async () => {};
+
+test('recipient sync proof requires the actual self invitation and direct marker without accepting sender-side state', () => {
+  const id = '!request:chat.example.test';
+  const event = { type: 'm.room.member', state_key: bobSession.userId, sender: aliceSession.userId, content: { membership: 'invite', is_direct: true } };
+  const sync = events => ({ rooms: { invite: { [id]: { invite_state: { events } } } } });
+  assertDirectInvitationSync(sync([event]), id);
+  for (const events of [[], [event, event], [{ ...event, sender: bobSession.userId }], [{ ...event, content: { membership: 'invite' } }], [{ ...event, content: { membership: 'join', is_direct: true } }]]) {
+    assert.throws(() => assertDirectInvitationSync(sync(events), id));
+  }
+  assert.throws(() => assertDirectInvitationSync({ rooms: { join: { [id]: {} } } }, id));
+});
 function options(api) {
   return { origin, aliceSession, bobSession, alice: { url: () => origin + '/' }, bob: { url: () => origin + '/' }, api, ready: noop, encryptedResponse: noop, encryptedEvent: noop };
 }

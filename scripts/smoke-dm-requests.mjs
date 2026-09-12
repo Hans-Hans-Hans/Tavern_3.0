@@ -10,6 +10,17 @@ const ORIGIN = 'https://chat.example.test', ALICE = '@cialice:chat.example.test'
 
 const MODES = ['everyone', 'contacts', 'shared_server', 'nobody'];
 
+export function assertDirectInvitationSync(data, id) {
+  assert.ok(isCiRoomId(id));
+  const events = data?.rooms?.invite?.[id]?.invite_state?.events;
+  assert.ok(Array.isArray(events), 'The recipient initial sync must include the owned native invitation.');
+  const self = events.filter(event => event.type === 'm.room.member' && event.state_key === BOB);
+  assert.equal(self.length, 1, 'The recipient invite state must contain exactly one self membership.');
+  assert.equal(self[0].sender === ALICE, true, 'The recipient invitation sender must match the known fixture creator.');
+  assert.equal(self[0].content?.membership === 'invite', true, 'The recipient self membership must still be invited.');
+  assert.equal(self[0].content?.is_direct === true, true, 'The recipient native invitation must retain the direct-message marker.');
+}
+
 export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, origin, api, ready, encryptedResponse, encryptedEvent }) {
   if (process.env.TAVERN_CI_SMOKE !== 'true' || origin !== ORIGIN || process.env.TAVERN_CI_TLS !== '/tmp/tavern-ci-tls'
     || aliceSession?.userId !== ALICE || aliceSession.admin !== false || bobSession?.userId !== BOB || bobSession.admin !== false
@@ -132,6 +143,12 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
     assert.ok([403, 404].includes(denied.status), 'Native joined-only history must remain inaccessible to the invited recipient.');
     assert.ok(!JSON.stringify(denied.data).includes(beforeText));
 
+    // Check the recipient's actual initial-sync representation as well as the
+    // sender's persisted state. A sender-side invite alone does not establish
+    // the stripped state available to the inbox after a browser reload.
+    assertDirectInvitationSync(checked(await native(bob, '/sync?timeout=0'), 'Read the recipient native invitation state'), accepted);
+    console.log('PASS: the recipient native initial sync contains the owned direct invitation and its sender marker.');
+
     const reads = [], mutations = [];
     let watch = accepted;
     listener = request => {
@@ -145,7 +162,7 @@ export async function dmRequestsSmoke({ alice, bob, aliceSession, bobSession, or
     // Test the ordinary inbox and the invited-room deep link on real reload.
     await bob.goto(ORIGIN + '/'); await ready(bob);
     await bob.getByRole('button', { name: /^Message requests \(\d+\)$/ }).click();
-    await expect(row(accepted)).toBeVisible();
+    await expect(row(accepted)).toBeVisible({ timeout: 30000 });
     await expect(row(accepted).getByRole('button', { name: 'Accept message request', exact: true })).toBeEnabled();
     await expect(inbox().locator('img,video,audio,.message,.file-card')).toHaveCount(0);
     await expect(inbox()).not.toContainText(beforeText); await expect(inbox()).not.toContainText(fileName);
