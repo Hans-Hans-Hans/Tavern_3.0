@@ -49,3 +49,8 @@ the separate real embedded-conference CI acceptance test. A real browser WebRTC
 receiver test measures sound before deafen, silence during it, and sound afterward
 without replacing the connection. The native Games voice acceptance also requires
 the shipped widget's receiver tracks and acknowledged dock controls to change.
+
+That native self-deafen/undeafen sequence passed at `46b6a04` with two users,
+followed by moving a channel during the same call and clean native leave. The
+overall workflow subsequently failed a sidebar layout check after reload; this
+voice result is not an overall acceptance pass or a deployed-host audio test.

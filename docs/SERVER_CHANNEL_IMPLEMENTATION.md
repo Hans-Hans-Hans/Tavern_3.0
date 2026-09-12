@@ -187,6 +187,16 @@ fallback above fixes that comparison while retaining actual concurrent-write
 rejection. Two focused regressions failed before the correction; 32 model cases,
 27 creation/navigation browser cases and the production build pass afterward.
 
+At `46b6a04`, native Games acceptance passed all creation, ordering, private
+audience and two-user conference steps through clean leave. The shipped widget
+also passed self-deafen/undeafen: its existing remote audio receiver tracks were
+disabled and restored while the microphone stayed muted. Moving a channel during
+that call updated both browsers. The subsequent Alice reload showed the previous
+layout, so refresh persistence at this checkpoint remains a failed acceptance
+gate. Three consecutive native direct calls again passed bidirectional audio and
+cleanup/reload. The next diagnostic checkpoint compares bounded native state and
+reload sync observations to identify the remaining inconsistency.
+
 The selected conversation now reads at most three earlier SDK history pages
 when its initial sync contains only control events. It keeps undecryptable rows,
 coalesces concurrent reads and checks the exact current account, device, room

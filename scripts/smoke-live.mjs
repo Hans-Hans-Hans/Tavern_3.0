@@ -48,7 +48,9 @@ function browserError(text, exception = false) {
     [/not defined/, 'Undefined reference'],
     [/Maximum call stack|too much recursion/i, 'Recursive observer'],
   ].filter(([pattern]) => pattern.test(text)).map(([, label]) => label);
-  errors.push(conferenceProbe ? (exception ? 'Browser exception' : 'Browser console error') + (categories.length ? ': ' + categories.join(', ') : ' (see bounded probe result)') : text.slice(0, 2000));
+  const line = text.split('\n')[0].replace(/(?:https?|wss?):\/\/[^\s)]+/g, '[URL]').slice(0, 600);
+  const safe = !/(?:token|secret|password|authorization|cookie|ciphertext|credential|\bv=0\b)/i.test(line) && !/[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/.test(line);
+  errors.push(conferenceProbe ? (exception ? 'Browser exception: ' : 'Browser console error: ') + (safe ? line : categories.join(', ') || '(credential-bearing detail omitted)') : text.slice(0, 2000));
   if (errors.length > 200) errors.splice(0, errors.length - 200);
 }
 async function page() {

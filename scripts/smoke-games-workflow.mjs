@@ -49,19 +49,21 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
   const row = (page, id) => sidebar(page).locator('[data-channel-id]').filter({ has: page.locator('.channel-navigation-row') }).filter({ has: page.getByRole('button', { name: rooms.get(id), exact: true }) }).locator('.channel-navigation-row');
   const category = (page, id) => sidebar(page).locator('[data-category-id]').filter({ has: page.getByRole('button', { name: id === games ? 'Games' : 'Other games', exact: true }) });
   let games, other, dragStage = 'idle';
-  const syncObservations = new Map(), responseReaders = new Map();
+  const syncObservations = new Map(), responseReaders = new Map(), documents = new Map();
   const boundedOrder = value => Array.isArray(value?.channels) ? value.channels.slice(0, 10).map(row => ({ channel: [...rooms.keys()].indexOf(row.id), category: ['', games, other].indexOf(row.category) })) : null;
   for (const page of owners.keys()) {
     const observe = async response => {
+      const document = documents.get(page);
       const url = new URL(response.url());
       if (url.pathname !== '/api/matrix/_matrix/client/v3/sync' || !server || response.status() !== 200) return;
       try {
         const joined = (await response.json()).rooms?.join?.[server];
-        if (!joined) return;
+        if (!joined || documents.get(page) !== document) return;
         const pick = events => events?.filter(event => event.type === 'io.tavern.server.layout' && event.state_key === '').map(event => boundedOrder(event.content)) || [];
         const values = syncObservations.get(page) || [];
         values.push({ initial: !url.searchParams.has('since'), state: pick(joined.state?.events), after: pick(joined['org.matrix.msc4222.state_after']?.events), timeline: pick(joined.timeline?.events) });
-        syncObservations.set(page, values.slice(-6));
+        const initial = values.find(value => value.initial);
+        syncObservations.set(page, [...initial ? [initial] : [], ...values.filter(value => !value.initial).slice(-6)]);
       } catch { /* A response cancelled by navigation carries no usable state. */ }
     };
     responseReaders.set(page, observe); page.on('response', observe);
@@ -160,8 +162,10 @@ export async function gamesWorkflowSmoke({ alice, bob, aliceSession, bobSession,
     stage = 'reload-persistence';
     for (const [page, owner] of owners) {
       stage = owner === aliceSession ? 'alice-reload-persistence' : 'bob-reload-persistence';
-      syncObservations.set(page, []);
+      documents.set(page, {}); syncObservations.set(page, []);
+      await page.evaluate(() => { window.__tavernCiReloadMarker = true; });
       await page.reload(); await ready(page); await page.getByRole('button', { name, exact: true }).click();
+      assert.equal(await page.evaluate(() => window.__tavernCiReloadMarker === true), false, 'Reload must create a new browser document.');
       await ordering(page, games, [voice, minecraft]); await ordering(page, other, [tarkov]);
       await expect(sidebar(page).getByRole('list', { name: 'Voice participants in Gaming Voice', exact: true })).toHaveCount(0);
     }
