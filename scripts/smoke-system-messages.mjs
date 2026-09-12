@@ -17,6 +17,19 @@ const SUBJECT = '@cinoticesubject:chat.example.test', TYPE = 'io.tavern.server.s
 const HOOK = 'ci-system-notices', CONTROL = 'http://127.0.0.1:18086';
 const run = promisify(execFile);
 
+export function noticeCryptoCategory(message) {
+  const codes = ['MEGOLM_UNKNOWN_INBOUND_SESSION_ID', 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE', 'MEGOLM_KEY_WITHHELD',
+    'OLM_UNKNOWN_MESSAGE_INDEX', 'HISTORICAL_MESSAGE_NO_KEY_BACKUP', 'HISTORICAL_MESSAGE_BACKUP_UNCONFIGURED',
+    'HISTORICAL_MESSAGE_WORKING_BACKUP', 'HISTORICAL_MESSAGE_USER_NOT_JOINED', 'SENDER_IDENTITY_PREVIOUSLY_VERIFIED',
+    'UNSIGNED_SENDER_DEVICE', 'UNKNOWN_SENDER_DEVICE'];
+  if (typeof message !== 'string') return null;
+  for (const code of codes) if (message.includes(code)) return code;
+  if (/missing (?:room|session) key|unknown inbound session|has not sent us the keys/i.test(message)) return 'missing_room_key';
+  if (/decrypt.*(?:olm|to.device)|(?:olm|to.device).*decrypt/i.test(message)) return 'to_device_decryption';
+  if (/decrypt.*(?:fail|error)|(?:fail|error).*decrypt/i.test(message)) return 'decryption_error';
+  return null;
+}
+
 export function systemNoticeMessages(events) {
   assert.ok(Array.isArray(events) && events.length <= 100, 'Inspect a bounded native message page.');
   // /messages also includes the bot's own membership join. Count message events,
@@ -131,6 +144,22 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     checked(await api(admin,'/api/admin/users',{username,displayName,password}),201,'Create only the dedicated isolated account');
   }
   const runId=randomBytes(12).toString('hex'), serverName='CI system notices '+runId+' server', channelName='CI system notices '+runId+' channel';
+  const observations = new Map([alice,bob].map(page => [page,{ botToDevice:0, categories:new Set() }]));
+  const diagnostics = [];
+  for (const page of [alice,bob]) {
+    const observation = observations.get(page);
+    const consoleListener = message => { const category=noticeCryptoCategory(message.text()); if(category) observation.categories.add(category); };
+    const responseListener = response => {
+      const url = new URL(response.url());
+      if(url.origin!==ORIGIN || !url.pathname.endsWith('/sync') || response.status()!==200) return;
+      void response.json().then(body => {
+        const events=body?.to_device?.events;
+        if(Array.isArray(events)) observation.botToDevice+=events.filter(event => event?.sender===BOT && event?.type==='m.room.encrypted').length;
+      }).catch(()=>{});
+    };
+    page.on('console',consoleListener); page.on('response',responseListener);
+    diagnostics.push(()=>{page.off('console',consoleListener);page.off('response',responseListener);});
+  }
   const createFixture = config => matrixSmokeCreateFixture(body => native(alice,'/createRoom',body),config);
   const server = checked(await createFixture({name:serverName,visibility:'private',preset:'private_chat',
     creation_content:{type:'m.space','m.federate':false,'io.tavern.ci_system':runId}}),200,'Create a fresh isolated native Space').room_id;
@@ -204,7 +233,11 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     const text=SUBJECT+(change==='join'?' joined the server.':' left the server.');
     for (const page of [alice,bob]) {
       await page.goto(ORIGIN+'/#room='+encodeURIComponent(channel)); await ready(page);
-      await expect(page.locator('article.message[id='+JSON.stringify('message-'+current)+'] .message-body')).toHaveText(text,{timeout:60000});
+      try { await expect(page.locator('article.message[id='+JSON.stringify('message-'+current)+'] .message-body')).toHaveText(text,{timeout:60000}); }
+      catch(error) {
+        console.error('System notice decryption:', [...observations].map(([owner,value])=>({side:owner===alice?'alice':'bob',botToDevice:value.botToDevice,categories:[...value.categories]})));
+        throw error;
+      }
     }
     return {eventId:current,change,sourceId,text};
   }
@@ -296,6 +329,7 @@ export async function systemMessagesSmoke({ admin, alice, bob, adminSession, ali
     console.log('PASS: route disable and a destination-only outsider stop further queued notices without plaintext fallback or replay.');
   } catch (error) { failure=error; }
   finally {
+    for(const stop of diagnostics) stop();
     const cleanup=[];
     if (enabled) try { await save(false); } catch { cleanup.push('disable isolated route'); }
     if (adminJoined) try { await leaveRoom(admin,channel,ADMIN); } catch { cleanup.push('leave isolated outsider room'); }

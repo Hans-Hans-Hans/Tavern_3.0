@@ -40,6 +40,10 @@ jobs:
           done
           npx playwright install --with-deps chromium
       - run: npm run test:browser
+        id: browser
+        # Keep independent native encryption/media evidence; the final gate
+        # still fails the workflow if any browser regression fails.
+        continue-on-error: true
       - name: Verify isolated browser TURN allocation
         id: turn-allocation
         # Collect native-stack evidence even if this independent fixture fails.
@@ -157,8 +161,8 @@ jobs:
           docker compose -p tavern-ci exec -T synapse python -c 'from pathlib import Path; import hashlib; print(hashlib.sha256(Path("/data/server.signing.key").read_bytes()).hexdigest())' > /tmp/tavern-identity-after
           cmp /tmp/tavern-identity-before /tmp/tavern-identity-after
           curl --fail http://127.0.0.1:18081/health
-      - name: Require successful isolated TURN allocation
-        if: always() && steps.turn-allocation.outcome == 'failure'
+      - name: Require successful browser and isolated TURN checks
+        if: always() && (steps.browser.outcome == 'failure' || steps.turn-allocation.outcome == 'failure')
         run: exit 1
       - name: Collect stack logs
         if: always()

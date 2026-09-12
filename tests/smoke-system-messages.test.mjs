@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { systemNoticeMessages } from '../scripts/smoke-system-messages.mjs';
+import { noticeCryptoCategory, systemNoticeMessages } from '../scripts/smoke-system-messages.mjs';
+
+test('native notice diagnostics return finite categories without message content or keys', () => {
+  assert.equal(noticeCryptoCategory('secret URL and token'), null);
+  assert.equal(noticeCryptoCategory({ code:'MEGOLM_KEY_WITHHELD' }), null);
+  assert.equal(noticeCryptoCategory('secret: MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE'), 'MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE');
+  assert.equal(noticeCryptoCategory('Unable to decrypt Olm event: private details'), 'to_device_decryption');
+  assert.equal(noticeCryptoCategory('The sender has not sent us the keys for secret message'), 'missing_room_key');
+});
 
 test('native bot history excludes its membership join while retaining every encrypted or plaintext message', () => {
   const sender = '@cisystembot:chat.example.test';

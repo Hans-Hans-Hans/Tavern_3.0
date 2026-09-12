@@ -94,7 +94,9 @@ concurrent revision rejection, account retirement, touch/keyboard Move controls,
 narrow dialogs, selected audience creation/edit/retry/discovery and voice lifecycle.
 Recent focused checks passed eleven creation/audience/discovery browser cases
 through the real API wrapper, three existing native administration browser cases,
-eight audience model/writer cases and TypeScript checking. There is no separate
+eight audience model/writer cases and TypeScript checking. Full-workspace browser
+coverage also exercises the channel notification action and three owner settings
+open/save/reopen cycles with real SDK room models and controlled native HTTP. There is no separate
 lint script in package.json; the production build includes TypeScript checking.
 
 The actual isolated Synapse/PostgreSQL/LiveKit gates have passed private audience
@@ -107,18 +109,24 @@ DM request acceptance, encrypted replies and recipient classification after relo
 The exact two-user Games workflow is encoded in
 [the native acceptance probe](../scripts/smoke-games-workflow.mjs): real UI creation,
 drag/drop across two clients, role-restricted voice, live sidebar participants,
-movement during the call, clean leave and reload persistence. Its latest run
-exposed the doubled API prefix now corrected. A later run stopped during the
-private-editor interaction; precise native UI diagnostics are in place, and the
-complete workflow remains an acceptance gate.
+movement during the call, clean leave and reload persistence. The complete
+workflow passed at `3cc6b62`, after the API-prefix and management-section fixes.
+Intermittent context-menu dismissal in the separate Linux browser suite remains
+under investigation; local full-workspace and production-bundle repetitions pass.
 
 [Direct audio acceptance](../scripts/smoke-direct-audio.mjs) requires three calls,
 actual relay media rates and synthetic audio samples in both existing remote
 playback streams. It retains failures even when confirmed cleanup permits other
-checks to continue. All three consecutive calls passed at `371b91c`, including
+checks to continue. All three consecutive calls passed at `371b91c` and `3cc6b62`, including
 actual received audio and owned cleanup on each call. The final complete green
 workflow and audible phone/PC media on the deployed host remain open gates. No
 synthetic test can prove an unobserved physical microphone or speaker.
+
+At `3cc6b62`, native avatar persistence, encrypted messages/files, email-code
+history recovery and known-browser login also passed. The overall run stopped
+when a fresh encrypted system-bot notice was unreadable by its recipients.
+Offline exact-version matrix-nio to Rust crypto interoperability passes; native
+key-delivery diagnostics are being used to isolate the remaining failure.
 
 Email recovery requires a previously enrolled matching backup key; it cannot
 recreate older keys lost everywhere. Previously downloaded history cannot be

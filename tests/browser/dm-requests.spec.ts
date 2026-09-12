@@ -19,6 +19,25 @@ async function fixture(page: Page, workspace = false, hash = '') {
   await page.goto('/dm-requests-test' + hash); await expect(workspace ? page.locator('.profile-button') : page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
 }
 
+async function channelContextAction(page: Page, trigger: ReturnType<Page['locator']>, action: string) {
+  await page.evaluate(() => {
+    const w = window as any; w.channelMenuTrace = [];
+    w.stopChannelMenuTrace?.();
+    const record = (event: Event) => {
+      const target = event.target as Element;
+      if (w.channelMenuTrace.length < 40) w.channelMenuTrace.push({ type: event.type, tag: target?.tagName,
+        role: target?.getAttribute?.('role'), slot: target?.getAttribute?.('data-slot'),
+        menu: !!document.querySelector('[role="menu"]'), dialog: !!document.querySelector('[role="dialog"]') });
+    };
+    const types = ['pointerdown', 'pointerup', 'click', 'contextmenu', 'focusin'];
+    for (const type of types) document.addEventListener(type, record, true);
+    w.stopChannelMenuTrace = () => { for (const type of types) document.removeEventListener(type, record, true); };
+  });
+  try { await trigger.click({ button: 'right' }); await page.getByRole('menuitem', { name: action, exact: true }).click(); }
+  catch (error) { console.error('Channel menu interaction:', await page.evaluate(() => (window as any).channelMenuTrace).catch(() => 'unavailable')); throw error; }
+  finally { await page.evaluate(() => (window as any).stopChannelMenuTrace?.()).catch(() => {}); }
+}
+
 test('native invitation inbox shows identity and scope without fetching previews, then classifies the accepted room', async ({ page }) => {
   await fixture(page); await expect(page.getByText('Invited by @alice:local')).toBeVisible(); await expect(page.getByText(/does not prove who else can read/)).toBeVisible();
   await expect(page.locator('img,video,audio')).toHaveCount(0); expect(await page.evaluate(() => (window as any).dmFixture.calls)).toEqual([]);
@@ -69,8 +88,7 @@ test('generic invitation review and invitation deep links route direct messages 
 
 test('channel context notification settings opens the selected room notification editor', async ({ page }) => {
   await fixture(page, true);
-  await page.getByRole('button', { name: 'Lobby', exact: true }).click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Notification settings', exact: true }).click();
+  await channelContextAction(page, page.getByRole('button', { name: 'Lobby', exact: true }), 'Notification settings');
   const sheet = page.getByRole('dialog');
   await expect(sheet.getByRole('tab', { name: 'Notifications', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(sheet.getByRole('heading', { name: 'Channel notifications', exact: true })).toBeVisible();
@@ -87,8 +105,7 @@ test('owner opens a different voice channel and keeps its native settings sectio
   await page.getByRole('button', { name: 'Games server', exact: true }).click();
   const voice = page.locator('.channel-navigation').getByRole('button', { name: 'Gaming Voice', exact: true });
   for (let cycle = 0; cycle < 3; cycle++) {
-    await voice.click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Edit channel & permissions', exact: true }).click();
+    await channelContextAction(page, voice, 'Edit channel & permissions');
     const sheet = page.getByRole('dialog');
     await sheet.getByRole('tab', { name: 'Permissions', exact: true }).click();
     const access = sheet.getByRole('region', { name: 'Private channel access', exact: true });

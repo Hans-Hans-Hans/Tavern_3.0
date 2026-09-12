@@ -775,3 +775,17 @@ event asynchronously. Cleanup now requires the recipient's ended state before
 closing its panel, then verifies no panel reappears after either reload. Native
 validation is still required; this is a stronger cleanup check, not evidence of
 a new transport defect or a completed production deployment.
+
+At `3cc6b62`, all three native direct calls and the complete two-user Games
+workflow passed, including private voice, live participant lists, dragging a
+channel during the call, clean leave and refresh persistence. Native avatar
+hydration, encrypted file/message delivery and TLS SMTP email recovery also
+passed. The run then failed fresh system-bot notice decryption. Exact pinned
+matrix-nio/vodozemac output decrypts with the installed Rust crypto library in
+an offline interoperability reproduction; this does not prove native key delivery.
+
+At `00760fd`, 445 browser cases passed and two new full-workspace menu cases
+failed when the context menu detached before selection. These cases pass locally,
+including a production bundle and throttled browser scheduling. Finite UI event
+traces now accompany failures. Browser failures remain a required final gate,
+while independent native checks can continue to gather evidence in the same run.
