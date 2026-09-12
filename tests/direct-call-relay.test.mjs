@@ -30,7 +30,7 @@ async function fixture(task) {
   const calls = loadTs('../lib/calls.ts', { './media-session': loadTs('../lib/media-session.ts', {}), 'matrix-js-sdk': sdk,
     'matrix-js-sdk/lib/webrtc/callFeed': { CallFeed }, 'matrix-js-sdk/lib/webrtc/callEventTypes': { SDPStreamMetadataPurpose },
     'matrix-js-sdk/lib/webrtc/callEventHandler': { CallEventHandlerEvent }, 'matrix-js-sdk/lib/webrtc/call': nativeCall,
-    './instance': { readInstanceConfig: async () => ({ callsEnabled: true }) }, './api': { accountArtworkOwner: () => f.account }, './call-relay': relay });
+    './instance': { readInstanceConfig: async () => ({ callsEnabled: true }) }, './api': { accountArtworkOwner: () => f.account }, './call-relay': relay, './call-dismissal': loadTs('../lib/call-dismissal.ts', {}) });
   f.call = () => {
     const call = client.createCall('!dm:local');
     call.getOpponentMember = () => ({ userId: '@sender:local' }); call.initOpponentCrypto = async () => {}; call.chooseOpponent = () => {};
@@ -109,6 +109,16 @@ test('initial configuration failure is contained by the native listener and neve
   await assert.doesNotReject(f.invite(call));
   assert.equal(call.peerConn.connectionState, 'closed'); assert.equal(call.state, nativeCall.CallState.Ended);
   f.incoming(call); assert.equal(f.calls.callSnapshot().call, null); assert.equal(f.answered.length, 0);
+}));
+
+test('a handled invitation replay closes only the replayed SDK peer and sends no second hangup to the other device', () => fixture(async f => {
+  const first = f.call(); first.callId = 'handled'; await f.invite(first); f.incoming(first);
+  f.calls.endCall(); assert.equal(f.calls.callSnapshot().call, null);
+  const replay = f.call(); replay.callId = 'handled'; await f.invite(replay);
+  let suppressed; const hangup = replay.hangup; replay.hangup = (reason, suppressEvent) => { suppressed = suppressEvent; hangup(); };
+  f.incoming(replay); assert.equal(f.calls.callSnapshot().call, null); assert.equal(replay.peerConn.connectionState, 'closed'); assert.equal(suppressed, true);
+  const next = f.call(); next.callId = 'new-call'; await f.invite(next); f.incoming(next);
+  assert.equal(f.calls.callSnapshot().call, next);
 }));
 
 test('group calls, established peers and retired client listeners are never rerouted', () => fixture(async f => {

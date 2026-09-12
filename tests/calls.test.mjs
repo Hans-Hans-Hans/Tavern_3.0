@@ -25,7 +25,7 @@ function setup(enabled = true) {
   const calls = loadTs('../lib/calls.ts', {
     './media-session': ownership,
     'matrix-js-sdk': { CallEvent: { State: 'state', FeedsChanged: 'feeds', Hangup: 'hangup', Error: 'failure', Replaced: 'replaced', PeerConnectionCreated: 'peer-created' }, CallFeedEvent: { NewStream: 'stream', MuteStateChanged: 'mute' }, ClientEvent: { TurnServers: 'turn-servers', TurnServersError: 'turn-error' } },
-    './api': { accountArtworkOwner: () => client }, './call-relay': relay,
+    './api': { accountArtworkOwner: () => client }, './call-relay': relay, './call-dismissal': loadTs('../lib/call-dismissal.ts', {}),
     'matrix-js-sdk/lib/webrtc/callFeed': { CallFeed: Feed },
     'matrix-js-sdk/lib/webrtc/callEventTypes': { SDPStreamMetadataPurpose: { Usermedia: 'usermedia' } },
     './instance': { readInstanceConfig: async () => ({ callsEnabled: enabled }) },

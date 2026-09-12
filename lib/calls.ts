@@ -7,6 +7,7 @@ import { CallEventHandlerEvent } from 'matrix-js-sdk/lib/webrtc/callEventHandler
 import { CallErrorCode, CallState } from 'matrix-js-sdk/lib/webrtc/call';
 import { accountArtworkOwner } from './api';
 import { callRelayError, callCancelledError, currentCallRelay, refreshCallRelay, configureInitialCallRelay } from './call-relay';
+import { createCallDismissals } from './call-dismissal';
 let client: MatrixClient | null = null;
 let active: MatrixCall | null = null;
 let error = '';
@@ -21,6 +22,7 @@ const listeners = new Set<() => void>();
 const changed = () => listeners.forEach(fn => fn());
 let detach: (() => void) | null = null;
 let detachRelay: (() => void) | null = null;
+let dismissed: ReturnType<typeof createCallDismissals> | null = null;
 function identityOwner(c: MatrixClient) {
   const account = accountArtworkOwner(), actor = c.getUserId(), device = c.getDeviceId(), base = c.getHomeserverUrl();
   return () => client === c && accountArtworkOwner() === account && c.getUserId() === actor && c.getDeviceId() === device && c.getHomeserverUrl() === base;
@@ -34,16 +36,20 @@ export function subscribeCalls(fn: () => void) { listeners.add(fn); return () =>
 export function callSnapshot() { return { call: active, error, busy, media, client }; }
 function attach(call: MatrixCall) {
   claimMedia('direct',true);detach?.(); active = call; error = '';
+  const handled = dismissed;
+  const stateChanged = () => { if ([CallState.Connecting, CallState.Connected, CallState.Ended].includes(call.state)) handled?.remember(call.callId); changed(); };
   const failure = (e: Error) => { error = e.message; changed(); };
   const replaced = (next: MatrixCall) => attach(next);
-  const ended=()=>{if(active===call)releaseMedia('direct');changed();};
-  call.on(CallEvent.State, changed); call.on(CallEvent.FeedsChanged, changed); call.on(CallEvent.Hangup, ended);
+  const ended=()=>{handled?.remember(call.callId);if(active===call)releaseMedia('direct');changed();};
+  call.on(CallEvent.State, stateChanged); call.on(CallEvent.FeedsChanged, changed); call.on(CallEvent.Hangup, ended);
   call.on(CallEvent.Error, failure); call.on(CallEvent.Replaced, replaced);
-  detach = () => { call.off(CallEvent.State, changed); call.off(CallEvent.FeedsChanged, changed); call.off(CallEvent.Hangup, ended); call.off(CallEvent.Error, failure); call.off(CallEvent.Replaced, replaced); };
+  detach = () => { call.off(CallEvent.State, stateChanged); call.off(CallEvent.FeedsChanged, changed); call.off(CallEvent.Hangup, ended); call.off(CallEvent.Error, failure); call.off(CallEvent.Replaced, replaced); };
   changed();
 }
 function incoming(call: MatrixCall) {
   if (call.groupCallId || hasEnded(call)) return;
+  if (active === call) return;
+  if (dismissed?.has(call.callId)) { call.hangup(CallErrorCode.UserHangup, true); return; }
   const sender = call.getOpponentMember()?.userId;
   if (sender && client?.getIgnoredUsers().includes(sender)) { call.reject(); return; }
   const room = client?.getRoom(call.roomId);
@@ -51,7 +57,10 @@ function incoming(call: MatrixCall) {
   attach(call);
 }
 export function initializeCalls(c: MatrixClient) {
-  resetCalls(); client = c; c.getMediaHandler().restoreMediaSettings(media.audioInput, media.videoInput); c.on(CallEventHandlerEvent.Incoming, incoming);
+  resetCalls(); client = c;
+  let storage: Storage | undefined; try { storage = sessionStorage; } catch { /* optional tab storage */ }
+  dismissed = createCallDismissals([c.getHomeserverUrl(), c.getUserId() || '', c.getDeviceId() || ''], storage);
+  c.getMediaHandler().restoreMediaSettings(media.audioInput, media.videoInput); c.on(CallEventHandlerEvent.Incoming, incoming);
   const identity = identityOwner(c);
   const peerCreated = (peer: RTCPeerConnection, call: MatrixCall) => {
     // SDK emits synchronously before setting remote SDP / creating an offer,
@@ -70,7 +79,7 @@ export function initializeCalls(c: MatrixClient) {
   c.on(CallEvent.PeerConnectionCreated, peerCreated);
   detachRelay = () => { c.off(CallEvent.PeerConnectionCreated, peerCreated); };
 }
-export function resetCalls() { mediaEpoch++; detachRelay?.(); detachRelay = null; if (active && active.state !== CallState.Ended) active.hangup(CallErrorCode.UserHangup, false); detach?.(); detach = null; client?.off(CallEventHandlerEvent.Incoming, incoming); client = null; active = null;releaseMedia('direct'); busy = false; error = ''; changed(); }
+export function resetCalls() { mediaEpoch++; detachRelay?.(); detachRelay = null; if (active) dismissed?.remember(active.callId); if (active && active.state !== CallState.Ended) active.hangup(CallErrorCode.UserHangup, false); detach?.(); detach = null; client?.off(CallEventHandlerEvent.Incoming, incoming); client = null; active = null;dismissed=null;releaseMedia('direct'); busy = false; error = ''; changed(); }
 async function requireRelay(roomId: string) {
   const current = client;
   if (!current) throw new Error('Sign in before starting a call.');
@@ -120,7 +129,7 @@ export async function answerCall(video: boolean) {
     if (owned() && active === call && epoch === mediaEpoch) changed();
   } finally { if (active === call && epoch === mediaEpoch) { busy = false; changed(); } }
 }
-export function endCall() { mediaEpoch++; if (active?.state === CallState.Ringing) active.reject(); else if (active && active.state !== CallState.Ended) active.hangup(CallErrorCode.UserHangup, false); detach?.(); detach = null; active = null;releaseMedia('direct'); busy = false; error = ''; changed(); }
+export function endCall() { mediaEpoch++; if (active) dismissed?.remember(active.callId); if (active?.state === CallState.Ringing) active.reject(); else if (active && active.state !== CallState.Ended) active.hangup(CallErrorCode.UserHangup, false); detach?.(); detach = null; active = null;releaseMedia('direct'); busy = false; error = ''; changed(); }
 export async function toggleCall(kind: 'mic' | 'camera' | 'screen') {
   if (!active) return;
   if (kind === 'mic') { if (media.pushToTalk || media.deafened) throw new Error('Disable push to talk or deafen before unmuting your microphone.'); await active.setMicrophoneMuted(!active.isMicrophoneMuted()); }
