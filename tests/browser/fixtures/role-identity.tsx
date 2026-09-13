@@ -31,6 +31,7 @@ export function mountFixture() {
   createRoot(document.getElementById('root')!).render(<main style={{ maxWidth: 700, margin: 'auto', padding: 12 }}>
     <section aria-label='Chat name'><ActionMenu actions={[{label:'Assign roles',run:()=>{f.assignmentOpened=true;}}]}><span className='message-author-trigger'><QuickProfile roomId={server} serverId={server} userId={member} onOpenFull={()=>{}}><button className='message-author'><ServerRoleName serverId={server} userId={member}>Morgan</ServerRoleName></button></QuickProfile></span></ActionMenu></section>
     <section aria-label='Direct-message name'><ServerRoleName userId={member}>Morgan</ServerRoleName></section>
+    <section aria-label='Chat avatar'><ActionMenu actions={[{ label: 'Assign roles', run: () => { f.avatarAssignmentOpened = true; } }]}><span className='message-avatar-trigger'><QuickProfile roomId={server} serverId={server} userId={member} onOpenFull={() => {}}><button aria-label='View Morgan profile'><span style={{ display: 'inline-flex', width: 40, height: 40 }}>MO</span></button></QuickProfile></span></ActionMenu></section>
     <MemberDirectory roomId={server} serverId={server} onProfile={() => {}} onMessage={() => {}}/>
   </main>);
 }

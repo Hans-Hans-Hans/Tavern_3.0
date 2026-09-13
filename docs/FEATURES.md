@@ -22,6 +22,14 @@ profiles retain all assigned role badges. Online role groups, an offline group
 and a role-combination preview complete this display update. See
 [role management](ROLE_MANAGEMENT.md) for remaining Discord compatibility limits.
 
+The first phase 4 checkpoint improves server emoji management with a square
+upload preview, previous-name search, slot counts, clear empty states and
+reviewed rename/removal dialogs. Rejected changes retain the draft. Uploads and
+queued changes stay bound to the account, device and open editor. Chat avatars
+also support the same profile-click and right-click role actions as chat names.
+Uploaded role artwork and the remaining profile/status refinements are still
+follow-on work.
+
 The [V3 usability update](UX_UPDATE.md) adds Home and conversation resume, quieter
 recovery prompts, server templates, access explanations, notification presets,
 an admin overview, sticker packs, event RSVPs/time-zone comparison and personal

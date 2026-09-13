@@ -21,9 +21,9 @@ role's color or icon lets a lower role supply it. Role edits and removals update
 the displayed identity from current synced settings. Direct messages without a
 server context keep their normal names.
 
-Click a chat name or a member to open their profile. Profiles show the complete
+Click a chat name, avatar or member to open their profile. Profiles show the complete
 assigned role list in hierarchy order, with icons and colored dots. Right-click
-a chat name for member actions, including **Assign roles** when authorized.
+a chat name or avatar for member actions, including **Assign roles** when authorized.
 The automatic
 Member role is omitted from that badge list; ownership has its own marker.
 Online/away members appear under their highest role marked for separate display.

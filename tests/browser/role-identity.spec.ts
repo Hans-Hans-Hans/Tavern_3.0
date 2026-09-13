@@ -29,6 +29,14 @@ test('chat names support profile clicks and role actions through the composed co
   await name.click({button:'right'});await page.getByRole('menuitem',{name:'Assign roles',exact:true}).click();
   expect(await page.evaluate(()=>(window as any).roleIdentityFixture.assignmentOpened)).toBe(true);
 });
+test('chat avatars retain profile clicks and right-click role actions', async ({ page }) => {
+  await fixture(page);
+  const avatar = page.getByRole('region', { name: 'Chat avatar' }).getByRole('button');
+  await avatar.click(); await expect(page.locator('.quick-profile')).toBeVisible(); await page.keyboard.press('Escape');
+  await avatar.click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Assign roles', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).roleIdentityFixture.avatarAssignmentOpened)).toBe(true);
+  await expect(page.locator('.message-avatar-trigger')).toHaveCSS('display', 'inline-flex');
+});
 for(const width of [320,375,1280])test('role names and profile badges fit at '+width+'px',async({page})=>{
   await page.setViewportSize({width,height:800});await fixture(page);
   await page.getByRole('region',{name:'Gardeners'}).getByRole('button',{name:/^Morgan/}).click();

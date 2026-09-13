@@ -3,5 +3,6 @@
 .server-role-badges{display:flex;flex-wrap:wrap;gap:6px;max-width:100%}.server-role-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--background);color:var(--foreground);font-size:.75rem;line-height:1.4;overflow-wrap:anywhere;max-width:100%;min-width:0}.server-role-badge-dot{width:9px;height:9px;flex:0 0 9px;border-radius:50%}
 .message-meta .message-author{padding:0;text-align:left;font-size:inherit;font-weight:600;min-width:0;max-width:100%}.message-author:hover .server-role-name-text{text-decoration:underline}
 .message-author-trigger{display:inline-flex;min-width:0;max-width:100%}
+.message-avatar-trigger{display:inline-flex;align-self:flex-start;flex-shrink:0}
 .community-member-profile .server-role-name{display:inline-flex;flex-direction:row;gap:5px}.community-member-profile .server-role-name-text{display:inline}
 @media(forced-colors:active){.server-role-name-text{color:CanvasText!important}.server-role-badge-dot{border:1px solid CanvasText}}

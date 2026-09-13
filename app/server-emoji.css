@@ -1,0 +1,30 @@
+.server-emoji-manager { min-width: 0; display: grid; gap: 16px; }
+.server-emoji-heading { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
+.server-emoji-heading h3 { margin: 0 0 8px; }
+.server-emoji-heading p { margin: 0; }
+.server-emoji-count { flex: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: .8rem; white-space: nowrap; }
+.server-emoji-manager .server-emoji-upload { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 20px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
+.server-emoji-preview { min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; align-self: start; gap: 12px; padding: 18px 8px; border-radius: 12px; background: var(--muted); color: var(--muted-foreground); }
+.server-emoji-preview img { width: 72px; height: 72px; object-fit: contain; }
+.server-emoji-preview small { max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.server-emoji-upload-fields { min-width: 0; display: grid; gap: 12px; }
+.server-emoji-upload-fields input { min-width: 0; max-width: 100%; }
+.server-emoji-upload-fields p { margin: 0; }
+.server-emoji-manager .product-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; }
+.server-emoji-search { display: grid; gap: 8px; }
+.server-emoji-search input { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--background); color: var(--foreground); }
+.server-emoji-collection { display: grid; min-width: 0; }
+.server-emoji-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 44px 44px; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.server-emoji-row-name { min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.server-emoji-row-name small { color: var(--muted-foreground); }
+.server-emoji-row > button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; width: 44px; border-radius: 8px; color: var(--foreground); }
+.server-emoji-row > button:hover { background: var(--muted); }
+.server-emoji-row > button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.server-emoji-empty { padding: 24px 16px; margin: 0; text-align: center; border: 1px dashed var(--border); border-radius: 12px; color: var(--muted-foreground); }
+@media (max-width: 520px) {
+  .server-emoji-heading { flex-wrap: wrap; gap: 10px; }
+  .server-emoji-manager .server-emoji-upload { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
+  .server-emoji-preview { flex-direction: row; align-self: auto; justify-content: flex-start; padding: 12px; }
+  .server-emoji-preview small { text-align: left; }
+  .server-emoji-row { gap: 6px; }
+}

@@ -2,6 +2,27 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Server emoji and avatar actions checkpoint
+
+The first phase 4 change adds image previews, previous-name search, slot counts,
+draft-preserving errors and reviewed emoji removal. It uses the existing image
+pipeline and editor ownership guard. Thirteen additional model cases cover
+account/client/device/origin changes, departed membership, lost authority,
+queued work, editor disposal, accepted writes and stale image references.
+
+All **737 model tests**, the production TypeScript/Vite build and the full
+**522-case browser suite** passed locally. Browser coverage includes the real
+crop/preview path with controlled Matrix transport, rejected-write retry,
+aliases, canceled/stale removal, upload disposal, and 320/375/1280px layouts in
+both themes. Visual inspection corrected dark-mode action visibility and kept
+the native file selector aligned with the chosen preview. The final explicit
+preview-clearing adjustment is covered by a focused browser rerun.
+
+The avatar context-menu fix exercises profile clicks and right-click role
+actions through the real shared components. Native media storage and cross-
+device Matrix state resolution remain separate from these controlled browser
+fixtures. No new dependency, database migration or permission is introduced.
+
 ## Proxy sign-in recovery checkpoint
 
 A running installation returned the old generic `INVALID_INPUT` login error.

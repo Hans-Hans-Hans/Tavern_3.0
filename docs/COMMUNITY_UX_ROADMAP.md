@@ -219,3 +219,27 @@ creation, a two-member bulk save, native rejection of unauthorized elevation
 and reviewed removal through the real UI. See the [validation record](VALIDATION.md)
 for observed results; physical-phone acceptance and performance measurements
 remain release work. Phase 4 is profiles, status and emoji workflows.
+
+### Phase 4 first checkpoint: server emoji editing
+
+The existing emoji collection now has a square preview, image-name suggestion,
+slot count, explicit file/GIF handling, current/previous-name search and clear
+empty results. Rename and removal show the selected image and retain rejected
+drafts. Removal refuses an image replaced since the confirmation was opened.
+Recent aliases continue to resolve historical shortcodes.
+
+The implementation reuses authenticated image upload/cropping and the existing
+mounted editor ownership guard. It checks the original account, device, client,
+server and native state permission after asynchronous work and inside each
+queued change. Closing an editor stops work that has not been sent; a state write
+already acknowledged by the server stays acknowledged. Uploads already sent may
+remain in media storage if the subsequent emoji state write fails.
+
+Same-client changes are queued per server and reread native state. This is not
+a new cross-device transaction protocol; simultaneous writes from separate
+clients still follow native Matrix state resolution. No permission or state
+format migration is introduced. Native Synapse authorization remains final.
+
+The shared chat-avatar context menu now forwards its trigger to a DOM element,
+preserving profile clicks and right-click role actions. Profile/status editing,
+uploaded role artwork and broader role display styles remain next phase work.
