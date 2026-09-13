@@ -32,6 +32,14 @@ checks. That updated Docker workflow remains pending at this local checkpoint.
 Synthetic capture confirms track behavior; acoustic noise/echo quality still
 requires real microphones, speakers and phones.
 
+At **4caafc0**, [CI run 34776275789](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34776275789)
+passed the Linux build/browser checks, ordinary encrypted conference lifecycle
+and three consecutive direct calls with actual received synthetic audio. It
+failed the Games voice-channel stage. The outer Games error omitted the inner
+conference report, so the native probe now emits its finite stage and validated
+failure categories before cleanup. This run does not establish acceptance of
+the new voice-channel joining or microphone-mode workflow.
+
 ## Role artwork checkpoint
 
 Roles can use uploaded server emoji beside chat/member names and on profile

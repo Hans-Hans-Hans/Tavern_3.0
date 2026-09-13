@@ -272,7 +272,11 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       catch { statuses.push('unavailable'); failures.push('unavailable'); }
       finally { clearTimeout(timer); }
     }
-    throw new Error('Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ', devices=' + devices + ', failures=' + failures.join(',') + ').');
+    const diagnostic = 'Embedded conference failed (stage=' + stage + ', observations=' + statuses.join(',') + ', devices=' + devices + ', failures=' + failures.join(',') + ').';
+    // The enclosing Games workflow adds its own bounded report. Preserve this
+    // inner stage before cleanup removes the iframe and its live observations.
+    console.error('FAIL: ' + diagnostic);
+    throw new Error(diagnostic);
   } finally {
     // Teardown has its own bounded grace period after a connection deadline.
     deadline = Date.now() + 40000;
