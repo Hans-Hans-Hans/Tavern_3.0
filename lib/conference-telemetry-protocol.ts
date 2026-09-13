@@ -10,7 +10,8 @@ const failureCauses = ['MatrixError', 'ConnectionError', 'TypeError', 'RangeErro
 const failureReasons = ['NotAllowed', 'ServerUnreachable', 'InternalError', 'Cancelled', 'LeaveRequest', 'Timeout', 'WebSocket', 'ServiceNotFound'] as const;
 const failureMatrixCodes = ['M_FORBIDDEN', 'M_UNKNOWN_TOKEN', 'M_MISSING_TOKEN', 'M_NOT_FOUND', 'M_UNRECOGNIZED', 'M_LIMIT_EXCEEDED', 'M_UNKNOWN', 'M_BAD_JSON', 'M_NOT_JSON', 'M_UNAUTHORIZED', 'M_INVALID_PARAM', 'M_RESOURCE_LIMIT_EXCEEDED', 'M_UNSUPPORTED_ROOM_VERSION', 'M_INCOMPATIBLE_ROOM_VERSION'] as const;
 const failureStatuses = [400, 401, 403, 404, 408, 409, 410, 413, 429, 500, 502, 503, 504] as const;
-export type ConferenceFailure = { code: typeof CONFERENCE_FAILURE_CODES[number]; cause: typeof failureCauses[number] | null; status: typeof failureStatuses[number] | null; reason: typeof failureReasons[number] | null; matrixCode: typeof failureMatrixCodes[number] | null };
+export const CONFERENCE_FAILURE_DETAILS = ['media_connection', 'media_setup', 'signaling_closed', 'signaling_error', 'signaling_response', 'server_discovery'] as const;
+export type ConferenceFailure = { code: typeof CONFERENCE_FAILURE_CODES[number]; cause: typeof failureCauses[number] | null; status: typeof failureStatuses[number] | null; reason: typeof failureReasons[number] | null; matrixCode: typeof failureMatrixCodes[number] | null; detail?: typeof CONFERENCE_FAILURE_DETAILS[number] };
 export type ConferenceParticipant = {
   identity: string; userId: string; deviceId: string; displayName: string; avatarMxc: string | null;
   local: boolean; speaking: boolean; microphoneEnabled: boolean; cameraEnabled: boolean; screenShareEnabled: boolean;
@@ -28,16 +29,35 @@ const boolOrNull = (v: unknown) => v === null || typeof v === 'boolean';
 const numberOrNull = (v: unknown, max: number) => v === null || typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max;
 const allowed = <T extends string | number>(values: readonly T[], value: unknown): value is T => values.includes(value as T);
 function parseFailure(value: unknown): ConferenceFailure | null {
-  if (!record(value) || !keys(value, ['code', 'cause', 'status', 'reason', 'matrixCode']) || !allowed(CONFERENCE_FAILURE_CODES, value.code) ||
+  if (!record(value) || !keys(value, ['code', 'cause', 'status', 'reason', 'matrixCode', ...(Object.hasOwn(value, 'detail') ? ['detail'] : [])]) || !allowed(CONFERENCE_FAILURE_CODES, value.code) ||
       value.cause !== null && !allowed(failureCauses, value.cause) || value.status !== null && !allowed(failureStatuses, value.status) ||
-      value.reason !== null && !allowed(failureReasons, value.reason) || value.matrixCode !== null && !allowed(failureMatrixCodes, value.matrixCode)) return null;
-  return { code: value.code, cause: value.cause, status: value.status, reason: value.reason, matrixCode: value.matrixCode } as ConferenceFailure;
+      value.reason !== null && !allowed(failureReasons, value.reason) || value.matrixCode !== null && !allowed(failureMatrixCodes, value.matrixCode) || Object.hasOwn(value, 'detail') && !allowed(CONFERENCE_FAILURE_DETAILS, value.detail)) return null;
+  return { code: value.code, cause: value.cause, status: value.status, reason: value.reason, matrixCode: value.matrixCode, ...(Object.hasOwn(value, 'detail') ? { detail: value.detail } : {}) } as ConferenceFailure;
+}
+const retainedFailures = new WeakMap<object, ConferenceFailure>();
+/** Called only by the pinned connection-error constructor before it discards
+ * its SDK cause. Retain a finite projection, never the raw error or its text. */
+export function retainConferenceFailure(error: object, cause: unknown) {
+  try { retainedFailures.set(error, conferenceFailure({ code: 'SFU_ERROR', cause })); } catch { /* diagnostics cannot interrupt native error handling */ }
+}
+function connectionDetail(cause: Record<string, unknown>): ConferenceFailure['detail'] {
+  if (cause.name !== 'ConnectionError' || cause.reasonName !== 'InternalError' || typeof cause.message !== 'string') return;
+  // These prefixes are reviewed against the bundled LiveKit 2.22.0 source.
+  // Only a fixed category leaves this function; suffixes may contain secrets.
+  const message = cause.message.slice(0, 160);
+  if (/^could not establish (?:pc connection|PC connection,|(?:Publisher|Subscriber) connection, state:)/.test(message)) return 'media_connection';
+  if (/^(?:Publisher|Subscriber) connection not set$/.test(message)) return 'media_setup';
+  if (message.startsWith('Websocket got closed during a (re)connection attempt:')) return 'signaling_closed';
+  if (message.startsWith('Websocket error during a (re)connection attempt:') || message.startsWith('Encountered unknown websocket error during connection:')) return 'signaling_error';
+  if (message === 'no message received as first message' || message === 'Unexpected first message' || message.startsWith('did not receive join response, got ')) return 'signaling_response';
+  if (message.startsWith('Could not fetch region settings:')) return 'server_discovery';
 }
 /** Only typed categories are projected. Never return Error.message, stack,
  * arbitrary errcodes, localized text, request details or transport URLs. */
 export function conferenceFailure(error: unknown): ConferenceFailure {
   const failure: ConferenceFailure = { code: 'UNKNOWN_ERROR', cause: null, status: null, reason: null, matrixCode: null };
   if (!record(error)) { failure.cause = 'unknown'; return failure; }
+  const retained = retainedFailures.get(error); if (retained) return { ...retained };
   if (allowed(CONFERENCE_FAILURE_CODES, error.code)) failure.code = error.code;
   // Pinned LivekitConnectionError keeps reasonName here, without retaining cause.
   if (record(error.localisedMessageValues) && allowed(failureReasons, error.localisedMessageValues.reason)) failure.reason = error.localisedMessageValues.reason;
@@ -47,6 +67,7 @@ export function conferenceFailure(error: unknown): ConferenceFailure {
     seen.add(cause);
     if (allowed(failureMatrixCodes, cause.errcode)) { failure.matrixCode ??= cause.errcode; failure.cause = 'MatrixError'; }
     if (allowed(failureReasons, cause.reasonName)) { failure.reason ??= cause.reasonName; if (!failure.matrixCode) failure.cause = 'ConnectionError'; }
+    const detail = connectionDetail(cause); if (detail) failure.detail ??= detail;
     if (failure.cause === null || failure.cause === 'Error' || failure.cause === 'unknown') failure.cause = allowed(failureCauses, cause.name) ? cause.name : 'unknown';
     const status = cause.httpStatus ?? cause.status;
     if (allowed(failureStatuses, status)) failure.status ??= status;

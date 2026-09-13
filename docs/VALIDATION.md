@@ -4,6 +4,22 @@ This records observed checks for the 0.4 development code and its `V3` test chec
 
 ## Voice joining and microphone processing checkpoint
 
+The complete workflow on **fa0152c** subsequently passed:
+[CI run 34777858850](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34777858850).
+Both Linux jobs succeeded. Native acceptance includes click-to-join Games voice,
+confirmed Music/Speech microphone changes within the encrypted call, deafen and
+clean leave, ordinary conferences and three consecutive direct-audio calls.
+The missed observer handshake described below is resolved. This result remains
+separate from the operator's deployed `InternalError` report.
+
+The subsequent connection-error reporting repair retains finite underlying SDK
+failure categories before Element Call's wrapper discards the cause. The
+production build, all **753 model tests** and **21 focused browser cases** pass.
+Tests execute the actual transformed error constructor, verify detached bounded
+reports without raw cause retention, reject unrecognized details, and check the
+copied UI report for media/signaling failures. This improves diagnosis; it does
+not claim to fix an unidentified deployed media or signaling failure.
+
 Explicit voice channel selection now joins with the camera off and skips the
 lobby. Restoring navigation does not capture media. Camera and screen sharing
 remain available in the same persistent conference; active visual media exposes

@@ -33,3 +33,12 @@ For an existing stack, use the [V3 redeploy sequence](V3_HARDENING.md#existing-v
 For failures, start with [Troubleshooting](TROUBLESHOOTING.md) and
 [call authentication diagnostics](CALL_AUTHENTICATION.md). Never publish cookies,
 successful token responses or WebSocket URLs containing `access_token`.
+
+The call's **Copy call error details** button includes a finite `detail` when
+LiveKit identifies the failing step: `media_connection`, `media_setup`,
+`signaling_closed`, `signaling_error`, `signaling_response` or `server_discovery`.
+For example, `InternalError` with `media_connection` means the SDK could not
+establish its peer connection; it does not by itself identify a firewall rule.
+The pinned call client's error wrapper previously discarded this underlying
+cause. Tavern now retains only the classified result before it is lost. Raw
+error text, URLs and credentials are excluded from the copied report.

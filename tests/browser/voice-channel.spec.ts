@@ -154,6 +154,19 @@ test('active call failure exposes only safe copied details and does not leak int
   await expect(details).toHaveCount(0);
 });
 
+test('classified LiveKit errors explain the failed step and copy only finite details', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  for (const [detail, message] of [['media_connection', 'could not establish the media connection'], ['signaling_closed', 'signaling connection closed while connecting']]) {
+    await fixture(page); await join(page);
+    const failure = { code: 'SFU_ERROR', cause: 'ConnectionError', status: null, reason: 'InternalError', matrixCode: null, detail };
+    await page.evaluate(failure => { const f = (window as any).voiceFixture, value = f.sample(); value.failure = failure; f.publish(value); }, failure);
+    const panel = page.getByRole('alert', { name: 'Call error details' });
+    await expect(panel).toContainText(message);
+    await panel.getByRole('button', { name: 'Copy call error details', exact: true }).click();
+    expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText()))).toEqual(failure);
+  }
+});
+
 test('a pending voice join cannot open its old room after the keyed page is unmounted', async ({ page }) => {
   await fixture(page); await page.evaluate(() => { (window as any).voiceFixture.holdConfiguration = true; });
   await page.getByRole('button', { name: 'Join voice', exact: true }).click();

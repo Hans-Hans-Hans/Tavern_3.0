@@ -21,11 +21,14 @@ export const conferenceFailureFields = Object.freeze(Object.fromEntries(Object.e
   status: [null, 400, 401, 403, 404, 408, 409, 410, 413, 429, 500, 502, 503, 504],
   reason: [null, 'NotAllowed', 'ServerUnreachable', 'InternalError', 'Cancelled', 'LeaveRequest', 'Timeout', 'WebSocket', 'ServiceNotFound'],
   matrixCode: [null, 'M_FORBIDDEN', 'M_UNKNOWN_TOKEN', 'M_MISSING_TOKEN', 'M_NOT_FOUND', 'M_UNRECOGNIZED', 'M_LIMIT_EXCEEDED', 'M_UNKNOWN', 'M_BAD_JSON', 'M_NOT_JSON', 'M_UNAUTHORIZED', 'M_INVALID_PARAM', 'M_RESOURCE_LIMIT_EXCEEDED', 'M_UNSUPPORTED_ROOM_VERSION', 'M_INCOMPATIBLE_ROOM_VERSION'],
+  detail: ['media_connection', 'media_setup', 'signaling_closed', 'signaling_error', 'signaling_response', 'server_discovery'],
 }).map(([key, values]) => [key, Object.freeze(values)])));
 export function conferenceFailureDiagnostic(value) {
   const fields = Object.entries(conferenceFailureFields);
-  if (!object(value) || Object.keys(value).length !== fields.length || fields.some(([key, allowed]) => !Object.hasOwn(value, key) || !allowed.includes(value[key]))) return 'unavailable';
-  return fields.map(([key]) => value[key] === null ? 'none' : String(value[key])).join('/');
+  if (!object(value)) return 'unavailable';
+  const present = fields.filter(([key]) => key !== 'detail' || Object.hasOwn(value, key));
+  if (Object.keys(value).length !== present.length || present.some(([key, allowed]) => !Object.hasOwn(value, key) || !allowed.includes(value[key]))) return 'unavailable';
+  return present.map(([key]) => value[key] === null ? 'none' : String(value[key])).join('/');
 }
 
 const execute = promisify(execFile);
@@ -121,8 +124,10 @@ export function installConferenceObserver({ nonce, roomId, owner, owners, failur
     || params.get('baseUrl') !== origin || params.get('perParticipantE2EE') !== 'true') return false;
   const allowedFailure = Object.entries(failureFields).map(([key, values]) => [key, new Set(values)]);
   const projectFailure = value => {
-    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== allowedFailure.length || allowedFailure.some(([key, values]) => !Object.hasOwn(value, key) || !values.has(value[key]))) return null;
-    return Object.fromEntries(allowedFailure.map(([key]) => [key, value[key]]));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const present = allowedFailure.filter(([key]) => key !== 'detail' || Object.hasOwn(value, key));
+    if (Object.keys(value).length !== present.length || present.some(([key, values]) => !Object.hasOwn(value, key) || !values.has(value[key]))) return null;
+    return Object.fromEntries(present.map(([key]) => [key, value[key]]));
   };
   let challenge = '', sequence = 0, received = 0, since = null, status = 'waiting', packets = 0, fatal = false, failure = null;
   const current = () => { try { return location.origin === origin && frame.isConnected && frame.contentWindow === source && source.document === nativeDocument && frame.src === url.href; } catch { return false; } };
