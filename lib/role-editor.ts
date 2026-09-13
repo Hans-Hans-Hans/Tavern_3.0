@@ -24,9 +24,31 @@ export function roleCopy(policy: RolePolicy, rank: number, id: string, original?
 }
 export function removeRole(policy: RolePolicy, id: string): RolePolicy {
   if (id === 'everyone') throw new Error('The default Member role cannot be removed.');
+  if (roleRemovalImpact(policy, id).audiences) throw new Error('This role controls a private-channel audience. Update that audience in channel settings before removing the role.');
   const clean = (targets: RolePolicy['overrides']) => Object.fromEntries(Object.entries(targets).map(([key, value]) =>
     [key, { ...value, roles: Object.fromEntries(Object.entries(value.roles).filter(([role]) => role !== id)) }]));
   return { ...policy, roles: policy.roles.filter(role => role.id !== id),
     members: Object.fromEntries(Object.entries(policy.members).map(([user, ids]) => [user, ids.filter(role => role !== id)])),
     overrides: clean(policy.overrides), categoryOverrides: clean(policy.categoryOverrides) };
+}
+
+export function roleRemovalImpact(policy: RolePolicy, id: string) {
+  return { members: Object.values(policy.members).filter(ids => ids.includes(id)).length,
+    channels: Object.values(policy.overrides).filter(targets => Object.hasOwn(targets.roles, id)).length,
+    categories: Object.values(policy.categoryOverrides).filter(targets => Object.hasOwn(targets.roles, id)).length,
+    audiences: Object.values(policy.channelAdmissions || {}).filter(audience => audience.roleIds.includes(id)).length };
+}
+
+/** Move through existing positions; protected ranks and the default never move. */
+export function moveRole(policy: RolePolicy, id: string, target: string, rank: number): RolePolicy {
+  if (id === target) return policy;
+  const ordered = [...policy.roles].sort((a, b) => b.position - a.position);
+  const from = ordered.findIndex(role => role.id === id), to = ordered.findIndex(role => role.id === target);
+  if (from < 0 || to < 0) throw new Error('That role is no longer available.');
+  const affected = ordered.slice(Math.min(from, to), Math.max(from, to) + 1);
+  if (affected.some(role => role.id === 'everyone' || role.position >= rank)) throw new Error('Move roles only within the positions below your authority.');
+  const positions = ordered.map(role => role.position), reordered = [...ordered];
+  reordered.splice(to, 0, reordered.splice(from, 1)[0]);
+  const next = new Map(reordered.map((role, index) => [role.id, positions[index]]));
+  return { ...policy, roles: policy.roles.map(role => ({ ...role, position: next.get(role.id)! })) };
 }

@@ -113,8 +113,121 @@ for (const width of [320, 390, 650, 1280]) test('role controls fit a ' + width +
   await page.getByRole('tab', { name: 'Permissions', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: 'Publish camera video', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole('tab', { name: 'Appearance', exact: true }).click();
+  await page.getByRole('tab', { name: 'Display', exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole('tab', { name: 'Appearance', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+  await page.getByRole('tab', { name: 'Display', exact: true }).focus(); await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: 'Permissions', exact: true })).toBeFocused();
+});
+
+test('bulk role selections survive filters and tabs and save as one revision-checked policy', async ({ page }) => {
+  await fixture(page); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click();
+  await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Find members for this role' }).fill('Elliot');
+  await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)', exact: true }).check();
+  await page.getByRole('searchbox', { name: 'Find members for this role' }).fill('Moderator');
+  await page.getByRole('checkbox', { name: 'Select Moderator (@mod:test)', exact: true }).check();
+  await page.getByRole('tab', { name: 'Display', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Select Moderator (@mod:test)' })).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Select Moderator (@mod:test)' })).toBeChecked();
+  await page.getByRole('button', { name: 'Review 2 assignment changes' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Elliot'); await expect(page.getByRole('alertdialog')).toContainText('Moderator');
+  await page.getByRole('button', { name: 'Update role draft' }).click();
+  expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click();
+  await expect(page.locator('.role-save-bar')).toContainText('No unsaved changes');
+  const writes = await page.evaluate(() => (window as any).roleEditorFixture.writes);
+  expect(writes).toHaveLength(1); expect(writes[0].value['io.tavern.previous_event']).toBe('$roles-0');
+  expect(writes[0].value.members['@second:test']).toEqual(['helper']); expect(writes[0].value.members['@mod:test']).toEqual(['mod', 'helper']); expect(writes[0].value.members['@member:test']).toEqual(['helper']);
+});
+
+test('bulk removal requires review and never removes other assignments', async ({ page }) => {
+  await fixture(page); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Assignment action' }).selectOption('remove');
+  await page.getByRole('checkbox', { name: 'Select Morgan (@member:test)', exact: true }).check();
+  await page.getByRole('button', { name: 'Review 1 assignment change' }).click(); await page.getByRole('button', { name: 'Keep editing selection' }).click();
+  await expect(page.locator('.role-save-bar')).toContainText('No unsaved changes');
+  await page.getByRole('button', { name: 'Review 1 assignment change' }).click(); await page.getByRole('button', { name: 'Update role draft' }).click();
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click(); await expect(page.locator('.role-save-bar')).toContainText('No unsaved changes');
+  const policy = await page.evaluate(() => (window as any).roleEditorFixture.policy);
+  expect(policy.members['@member:test']).toEqual([]); expect(policy.members['@mod:test']).toEqual(['mod']);
+});
+
+test('a promotion during bulk review prevents the entire draft update', async ({ page }) => {
+  await fixture(page, '?actor=mod'); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Select Native peer (@peer:test)' })).toBeDisabled();
+  await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).check(); await page.getByRole('button', { name: 'Review 1 assignment change' }).click();
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.powers.users['@second:test'] = 50; f.notify(); });
+  await page.getByRole('button', { name: 'Update role draft' }).click();
+  await expect(page.getByRole('alertdialog').getByRole('alert')).toContainText('equal or higher server authority');
+  expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
+});
+
+test('a stale bulk save retains the staged assignment and cannot overwrite newer membership changes', async ({ page }) => {
+  await fixture(page); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).check(); await page.getByRole('button', { name: 'Review 1 assignment change' }).click(); await page.getByRole('button', { name: 'Update role draft' }).click();
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.policy = structuredClone(f.policy); f.policy.members['@new:test'] = ['helper']; f.revision++; f.notify(); });
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click();
+  await expect(page.getByRole('alert')).toContainText('changed elsewhere'); await expect(page.locator('.role-save-bar')).toContainText('Unsaved role changes');
+  await expect(page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).locator('..').locator('..')).toContainText('Assigned');
+  expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
+});
+
+test('bulk confirmation retires when the owning account changes', async ({ page }) => {
+  await fixture(page); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).check(); await page.getByRole('button', { name: 'Review 1 assignment change' }).click();
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account++; f.notify(); });
+  await expect(page.getByRole('alertdialog')).toHaveCount(0); expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
+});
+
+test('role removal reviews assignments and permission references and protects private audiences', async ({ page }) => {
+  await fixture(page, '?scopes'); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click();
+  await page.getByRole('button', { name: 'Remove role', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('1 member assignment, 1 channel override and 1 category override');
+  await page.getByRole('button', { name: 'Keep role', exact: true }).click(); await expect(page.getByRole('textbox', { name: 'Role name' })).toHaveValue('Helper');
+  await page.getByRole('button', { name: 'Remove role', exact: true }).click(); await page.getByRole('button', { name: 'Remove from draft', exact: true }).click();
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click(); await expect(page.locator('.role-save-bar')).toContainText('No unsaved changes');
+  const saved = await page.evaluate(() => (window as any).roleEditorFixture.policy);
+  expect(saved.roles.some((role: any) => role.id === 'helper')).toBe(false); expect(saved.members['@member:test']).toEqual([]); expect(saved.categoryOverrides.chat.roles.helper).toBeUndefined();
+  await fixture(page, '?audience'); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click();
+  await expect(page.getByRole('button', { name: 'Remove role', exact: true })).toBeDisabled(); await expect(page.getByText('This role is used by a private-channel audience.', { exact: false })).toBeVisible();
+});
+
+test('dragging a new role inserts it in the hierarchy while preserving existing assignments', async ({ page }) => {
+  await fixture(page); await page.getByRole('button', { name: 'Add role', exact: true }).click();
+  await page.getByRole('button', { name: /^Edit New role/ }).dragTo(page.getByRole('button', { name: 'Edit Moderator (mod)' }));
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click(); await expect(page.locator('.role-save-bar')).toContainText('No unsaved changes');
+  const policy = await page.evaluate(() => (window as any).roleEditorFixture.policy);
+  expect([...policy.roles].sort((a, b) => b.position - a.position).map(role => role.name)).toEqual(['New role', 'Moderator', 'Helper', 'Member']); expect(policy.members['@member:test']).toEqual(['helper']);
+});
+
+for (const width of [320, 375, 768, 1280]) test('bulk role review and access explanations fit at ' + width + 'px', async ({ page }) => {
+  await page.setViewportSize({ width, height: 720 }); await fixture(page, '?access');
+  await page.getByText('Explain a member’s access', { exact: true }).click();
+  const inspector = page.locator('.access-explanation');
+  await inspector.getByRole('combobox', { name: 'Member', exact: true }).selectOption('@member:test'); await inspector.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('!voice:test');
+  await inspector.getByRole('searchbox', { name: 'Find an action' }).fill('Invite people'); await inspector.getByText('How this is decided', { exact: true }).click();
+  await expect(inspector.getByRole('searchbox', { name: 'Find an action' })).toHaveCSS('border-top-style', 'solid');
+  await expect(inspector).toContainText('Denied by Member'); await expect(inspector).toContainText('A member-specific rule allows');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByText('Explain a member’s access', { exact: true }).click(); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
+  await expect(page.locator('.role-member-choice').first()).toHaveCSS('flex-direction', 'row');
+  await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).check(); await page.getByRole('button', { name: 'Review 1 assignment change' }).click();
+  const bounds = await page.getByRole('alertdialog').boundingBox(); expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+  await page.getByRole('button', { name: 'Keep editing selection' }).click();
+});
+
+test('role-combination preview excludes member exceptions and never impersonates or writes a policy', async ({ page }) => {
+  await fixture(page, '?access'); await page.getByText('Explain a member’s access', { exact: true }).click();
+  const inspector = page.locator('.access-explanation');
+  await inspector.getByRole('combobox', { name: 'Inspect access for' }).selectOption('roles');
+  await inspector.getByRole('checkbox', { name: '🌱 Helper' }).check();
+  await inspector.getByRole('combobox', { name: 'Channel', exact: true }).selectOption('!voice:test');
+  await inspector.getByRole('searchbox', { name: 'Find an action' }).fill('Invite people');
+  await expect(inspector.getByLabel('Saved role decisions')).toContainText('Blocked by role rules');
+  await expect(inspector).toContainText('This does not change your account'); await expect(inspector.locator('.role-access-native')).toHaveCount(0);
+  await inspector.getByRole('combobox', { name: 'Inspect access for' }).selectOption('member');
+  await inspector.getByRole('combobox', { name: 'Member', exact: true }).selectOption('@member:test');
+  await expect(inspector.getByLabel('Saved role decisions')).toContainText('Allowed by role rules');
+  expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
 });

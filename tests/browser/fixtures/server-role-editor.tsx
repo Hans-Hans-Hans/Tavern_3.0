@@ -17,10 +17,15 @@ export function mountFixture() {
   f.policy.roles.push({ id: 'helper', name: 'Helper', color: '#52b788', icon: '🌱', position: 10, permissions: ['pin_messages'], mentionable: false, separate: false });
   f.policy.members = { [mod]: ['mod'], [target]: ['helper'] };
   f.policy.categoryOverrides.chat = { roles: {}, users: {} };
+  if (params.has('scopes') || params.has('access')) {
+    f.policy.categoryOverrides.chat = { roles: { everyone: { invite: -1 }, helper: { invite: 1 } }, users: {} };
+    f.policy.overrides[channel] = { roles: { helper: { add_reactions: -1 } }, users: { [target]: { invite: 1 } } };
+  }
+  if (params.has('audience')) { f.policy.channelAdmissionVersion = 1; f.policy.channelAdmissions = { [channel]: { roleIds: ['helper'], userIds: [] } }; }
   if (params.has('marked')) f.policy = migratePublicationPolicy(f.policy);
   f.powers = { users: { [owner]: 100, [mod]: 50, '@peer:test': 50 }, users_default: 0 };
   f.layout = { categories: [{ id: 'chat', name: 'Chat', icon: '' }], channels: [{ id: channel, category: 'chat' }] };
-  f.members = [{ userId: owner, name: 'Owner' }, { userId: mod, name: 'Moderator' }, { userId: target, name: 'Morgan' }, { userId: '@peer:test', name: 'Native peer' }].map(member => ({ ...member, membership: 'join' }));
+  f.members = [{ userId: owner, name: 'Owner' }, { userId: mod, name: 'Moderator' }, { userId: target, name: 'Morgan' }, { userId: '@peer:test', name: 'Native peer' }, { userId: '@second:test', name: 'Elliot' }].map(member => ({ ...member, membership: 'join' }));
   f.notify = () => f.listeners.forEach((fn: () => void) => fn());
   const room = { roomId: server, name: 'Test server', isSpaceRoom: () => true, getMyMembership: () => f.membership, getJoinedMembers: () => f.members,
     getMember: (user: string) => f.members.find((item: any) => item.userId === user), currentState: {
@@ -39,7 +44,7 @@ export function mountFixture() {
     getStateEvent: async (_room: string, kind: string) => { const value = structuredClone(kind === 'io.tavern.roles' ? f.policy : kind === 'm.room.member' ? { membership: 'join' } : kind === 'm.room.power_levels' ? f.powers : f.layout); await waitRead(); return value; },
     roomState: async (id: string) => {
       const event = (type: string, content: unknown, state_key = '') => ({ type, state_key, content, event_id: '$fixture-' + type, sender: owner });
-      const value = id === server ? [event('m.room.create', { type: 'm.space', 'm.federate': false }), event('m.room.member', { membership: f.membership }, f.actor),
+      const value = id === server ? [event('m.room.create', { type: 'm.space', 'm.federate': false }), event('m.room.power_levels', structuredClone(f.powers)), ...f.members.map((member: any) => event('m.room.member', { membership: member.userId === f.actor ? f.membership : member.membership }, member.userId)),
         ...[channel, '!second:test'].map(id => event('m.space.child', f.childLink ? { via: ['test'] } : {}, id)), { type: 'io.tavern.roles', state_key: '', event_id: '$roles-' + f.revision, content: structuredClone(f.policy) }]
         : [event('m.room.create', { 'm.federate': false }), event('m.room.member', { membership: f.nativeChannelMembership }, f.actor), event('m.space.parent', f.parentLink ? { canonical: true, via: ['test'] } : {}, server)];
       await waitRead(); return value;

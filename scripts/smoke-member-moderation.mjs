@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { assertCiRoomCreation, isCiRoomId } from './ci-room-id.mjs';
 import { matrixSmokeCreateFixture, matrixSmokeInvite, matrixSmokeJoin, matrixSmokeLeave, matrixSmokeRequest } from './matrix-smoke-request.mjs';
+import { roleManagementSmoke } from './smoke-role-management.mjs';
 
 const ORIGIN = 'https://chat.example.test', ADMIN = '@ciadmin:chat.example.test', ALICE = '@cialice:chat.example.test', BOB = '@cibob:chat.example.test';
 const TYPES = ['io.tavern.timeout', 'io.tavern.tempban', 'io.tavern.server.nickname'], PREVIOUS = 'io.tavern.previous_event';
@@ -108,6 +109,7 @@ export async function memberModerationSmoke({ admin, alice, bob, adminSession, a
       await put(id, 'm.room.power_levels', { ...rooms.get(id).powers, users: { ...rooms.get(id).powers.users, [ALICE]: 50, [BOB]: 0 } });
     }
     const grants = ['timeout', 'ban', 'manage_nicknames']; await roles(server, grants);
+    await roleManagementSmoke({ admin, alice, adminSession, aliceSession, serverId: server, serverName: rooms.get(server).name, runId, origin, api });
     const memberBefore = structuredClone(stableEvent((await inspect(server)).find('m.room.member', BOB)));
     for (const type of TYPES) {
       const until = Date.now() + 600000;

@@ -21,9 +21,9 @@ test('scoped channel editor saves the selected role override without editing oth
   await expect(page.getByText('Assign member roles', { exact: true })).toHaveCount(0);
   const before = await page.evaluate(() => (window as any).roleEditorFixture.policy);
   await page.getByText('Explain a member’s access',{exact:true}).click();
-  await expect(page.locator('.access-explanation')).toContainText('This reads the saved policy');
-  await expect(page.locator('.access-explanation').getByRole('columnheader',{name:'After channel rules'})).toBeVisible();
-  await expect(page.locator('.access-explanation')).toContainText('Native channel membership: Joined');
+  await expect(page.locator('.access-explanation')).toContainText('Based on synced settings');
+  await expect(page.locator('.access-explanation').getByRole('list',{name:'Saved role decisions'})).toBeVisible();
+  await expect(page.locator('.access-explanation')).toContainText('Channel membership: Joined');
   await change(page); await page.getByRole('button', { name: 'Save channel role permissions' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).roleEditorFixture.changed)).toBe(1);
   const saved = await page.evaluate(() => (window as any).roleEditorFixture.writes[0]);

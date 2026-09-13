@@ -7,6 +7,8 @@ test('category permission editor saves real overrides and preserves unrelated co
   await page.evaluate(() => { const w = window as any; w.policy.categoryOverrides.other = { roles: { everyone: { invite: -1 } }, users: {} }; w.policy.categoryOverrides.chat = { roles: {}, users: { '@bob:local': { add_reactions: -1 } } }; });
   await page.getByRole('button', { name: 'Save category permissions', exact: true }).click(); await page.waitForFunction(() => (window as any).saves === 1);
   const categories = await page.evaluate(() => (window as any).policy.categoryOverrides); expect(categories.chat.roles.everyone.send_messages).toBe(-1); expect(categories.chat.users['@bob:local'].add_reactions).toBe(-1); expect(categories.other.roles.everyone.invite).toBe(-1);
+  expect(await page.evaluate(() => (window as any).policy['io.tavern.previous_event'])).toBe('$roles-0');
   await page.getByRole('button', { name: 'Reset this target to inherited' }).click(); await page.getByRole('button', { name: 'Save category permissions', exact: true }).click(); await page.waitForFunction(() => (window as any).saves === 2);
   expect(await page.evaluate(() => (window as any).policy.categoryOverrides.chat.roles.everyone)).toBeUndefined(); expect(await page.evaluate(() => (window as any).policy.categoryOverrides.chat.users['@bob:local'].add_reactions)).toBe(-1);
+  expect(await page.evaluate(() => (window as any).policy['io.tavern.previous_event'])).toBe('$roles-1');
 });

@@ -2,6 +2,37 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Roles and member management checkpoint
+
+Phase 3 of the [community roadmap](COMMUNITY_UX_ROADMAP.md) adds role-based bulk
+assignment, reviewed removal, hierarchy feedback and searchable access decisions.
+The TypeScript/Vite production build and all **724 model tests** pass locally.
+Focused model checks cover atomic draft changes, protected native/custom ranks,
+selection limits, drag insertion, private audiences, fresh revision checks and
+membership changes. Six focused native hierarchy unit tests pass, including whole-
+policy rejection when one bulk target has equal native authority.
+
+The full Windows Python suite completed **811 tests**: 794 passed and 17
+platform/environment checks were skipped.
+The full browser suite passed **512 tests**. Final chat-name context-menu
+composition is checked separately by the six role-identity browser cases.
+Visual inspection covered light/dark themes, phone and desktop layouts; the
+browser suite checks role controls at 320/375/768/1280px. A legacy category
+fixture now supplies native state revisions and asserts both successive saved
+revisions, retaining its concurrent-change preservation checks.
+
+The Discord display follow-up covers independent highest-role color/icon
+selection, complete profile badges, online role groups, offline grouping,
+read-only role combinations, account changes and removal of obsolete styling.
+The new isolated-stack acceptance uses the real Roles editor to create a styled
+role, assign both joined test members in one saved event, reject unauthorized
+elevation through native Synapse and remove the role without losing other
+assignments. That deployed check remains subject to a passing workflow on this
+revision. Browser fixtures do not establish live native authorization.
+
+No backend endpoint, database migration or dependency was added. Physical
+Android/iOS acceptance and measured performance remain separate release checks.
+
 ## September 12 Friends and server management checkpoint
 
 This extends phase 2 of the [community roadmap](COMMUNITY_UX_ROADMAP.md) with
@@ -40,6 +71,16 @@ HTTP 403/M_FORBIDDEN; successful or ambiguous creation is never retried. Eightee
 focused retry/denial tests pass. The full updated workflow remains the gate.
 Physical iOS/Android acceptance, an operator backup/restore rehearsal and the
 remaining roadmap phases are still separate release work.
+
+The complete follow-up workflow on **028b24a** passed:
+[CI run 34724990974](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34724990974).
+Both jobs succeeded, including 710 model tests, 495 browser tests and 810 Python
+cases (806 passed, four skipped). Native acceptance covered friend-code creation,
+recipient-only acceptance and rotation, encrypted direct/conference audio,
+encrypted files and system notices, fresh-device recovery, private channels,
+moderation, account deactivation, persistence, backup/restore and failed-update
+rollback. This closes the preceding phase 2 CI gate, independently of the new
+phase 3 workflow.
 
 ## September 12 file-size controls and UX plan checkpoint
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { toast } from 'sonner';
 import { getMatrixClient } from '@/lib/matrix';
 import { canAssignMemberRoles, effectiveRolePermissions, memberRoleRank, readRolePolicy, saveMemberRoles } from '@/lib/roles';
@@ -22,6 +22,7 @@ function MemberRoleForm({ serverId, userId, onChanged, onUnavailable }: Props) {
   const initial = readRolePolicy(serverId)?.members[userId] || [];
   const [selected, setSelected] = useState(initial), [previous, setPrevious] = useState(initial);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [query, setQuery] = useState('');
+  const reasonPrefix = useId();
   const policy = readRolePolicy(serverId), me = owner.user;
   const current = () => owner.current() && canAssignMemberRoles(serverId, userId);
   const available = current();
@@ -48,7 +49,8 @@ function MemberRoleForm({ serverId, userId, onChanged, onUnavailable }: Props) {
     <label>Find a role<input type="search" value={query} onChange={event => setQuery(event.target.value)}/></label>
     <fieldset disabled={busy} className="role-assignment-list">{roles.filter(role => role.name.toLowerCase().includes(query.toLowerCase().trim())).map(role => {
       const active = checked(role.id), allowed = role.id !== 'everyone' && role.position < rank && (active || role.permissions.every(permission => grants.has(permission)));
-      return <label className="check-label" key={role.id}><input type="checkbox" checked={active} disabled={!allowed} onChange={event => setSelected(ids => event.target.checked ? [...ids, role.id] : ids.filter(id => id !== role.id))}/><span style={{ color: role.color || undefined }}>{role.icon} {role.name}</span></label>;
+      const reason = role.id === 'everyone' ? 'Everyone receives this role automatically.' : role.position >= rank ? 'This role is at or above your highest role.' : !allowed ? 'This role grants permissions you do not have.' : '';
+      return <label className="check-label role-single-choice" key={role.id}><input type="checkbox" aria-label={(role.icon + ' ' + role.name).trim()} aria-describedby={reason ? reasonPrefix + role.id : undefined} checked={active} disabled={!allowed} onChange={event => setSelected(ids => event.target.checked ? [...ids, role.id] : ids.filter(id => id !== role.id))}/><span><strong style={{ color: role.color || undefined }}>{role.icon} {role.name}</strong>{reason && <small id={reasonPrefix + role.id}>{reason}</small>}</span></label>;
     })}</fieldset>
     {!roles.some(role => role.name.toLowerCase().includes(query.toLowerCase().trim())) && <p>No matching roles. Selected assignments are retained.</p>}
     <div className="product-actions"><button className="primary-button" disabled={busy}>Save member roles</button><button className="secondary-button" type="button" disabled={busy} onClick={() => { if (!current()) return; const ids = readRolePolicy(serverId)?.members[userId] || []; setSelected(ids); setPrevious(ids); setError(''); }}>Reload assignments</button></div>

@@ -13,6 +13,15 @@ guide, persistent wizard navigation, and a dedicated Friends screen with
 [revocable friend codes](FRIENDS.md), received/sent requests and optional server
 selection within the current installation.
 
+Phase 3 adds searchable bulk role assignment with review, clearer hierarchy,
+confirmed removal with impact counts, and searchable explanations of saved
+access rules. Role saves check fresh membership, authority and native revisions;
+failed saves retain the draft. The existing Synapse enforcement remains in place.
+Chat and member names now use hierarchy-selected role colors and one icon;
+profiles retain all assigned role badges. Online role groups, an offline group
+and a role-combination preview complete this display update. See
+[role management](ROLE_MANAGEMENT.md) for remaining Discord compatibility limits.
+
 The [V3 usability update](UX_UPDATE.md) adds Home and conversation resume, quieter
 recovery prompts, server templates, access explanations, notification presets,
 an admin overview, sticker packs, event RSVPs/time-zone comparison and personal

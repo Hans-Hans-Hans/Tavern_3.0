@@ -31,13 +31,13 @@ must be visibly unavailable; client-side explanations do not grant permissions.
 | 1 — Guided creation | Identity, optional icon, eight layouts, editable categories/channels and review | Real private rooms, accurate category placement, no duplicate retry, account fencing, keyboard/mobile checks |
 | 2 — Server management | Unified settings navigation and optional owner setup checklist | Existing settings open from real actions; explicit save/cancel and draft preservation; checklist reflects saved state |
 | 3 — Roles and members | Clear role hierarchy, searchable/bulk assignments and access inspector polish | Native authorization remains authoritative; destructive actions require confirmation; rejected saves preserve drafts |
-| 4 — Profiles and emoji | Consolidated profile/status editing, server identity and emoji workflows | Permissions and profile limits remain enforced; artwork uses authenticated media; keyboard and mobile pickers work |
+| 4 — Profiles and emoji | Consolidated profile/status editing, server identity, emoji and role artwork/display workflows | Permissions and profile limits remain enforced; artwork uses authenticated media; keyboard and mobile pickers work |
 | 5 — Messaging and discovery | Composer, threads, search, command navigation and notification refinement | Preserve drafts and scroll; predictable shortcuts; real thread follow/unread state and clear inherited settings |
 | 6 — Moderation and administration | Reports, audit and admin overview improvements | Human-readable events, actionable failures, server/instance authority kept distinct |
 | 7 — Call resilience | Recoverable call UI and clearer device/network feedback | A failed call cannot take down messaging; reconnect and device changes preserve user control and encryption |
 | 8 — Mobile, accessibility and performance | Cross-cutting refinement and measured acceptance | 320/375/430/768/desktop layouts; focus, contrast and reduced motion; real-phone checks and measured loading/scroll performance |
 
-Phases 1 and 2 are implemented in these checkpoints. Phases 3–8 are the next work, building
+Phases 1–3 are implemented in these checkpoints. Phases 4–8 are the next work, building
 on their already implemented foundations. No placeholder controls were added
 for those future phases. Mobile and accessibility checks apply to each phase,
 not only to the final phase.
@@ -160,3 +160,62 @@ same-origin protection, audit redaction, deactivation cleanup, account changes,
 late replies, mobile layout and settings-draft retention. The real-stack smoke
 also exercises the production Friends screen and API; fixture-based browser
 tests are not presented as deployed acceptance.
+
+## Phase 3: roles and member management
+
+**Server settings → Roles** now explains the administrator's highest role and
+protected positions. Dragging inserts a role at its destination; Move higher
+and Move lower provide keyboard and touch alternatives. Display, grouped
+permissions and existing single-member assignment remain in the same editor.
+Read-only assignments explain automatic roles, hierarchy and missing grants.
+
+The **Manage members** section searches loaded members by name or account ID and
+filters assigned/unassigned members. Select up to 50 eligible members, choose
+Add or Remove, and review the exact selection. Search and filter changes retain
+selection. **Update role draft** stages all assignments together; **Save roles
+and permissions** applies the complete draft. Other roles stay assigned. The
+list initially shows 50 results, with explicit controls for showing more and
+loading remaining native members. Assigning a role does not invite or join a
+member to any channel.
+
+Removing a role requires confirmation showing affected member assignments and
+channel/category overrides. Roles used by private-channel audiences must first
+be removed from those audiences through channel settings. Failed saves preserve
+the draft. A changed account or server retires its editor and pending reviews.
+
+**Explain a member's access** searches members and actions, filters allowed or
+blocked decisions, and explains server, category and channel precedence. It uses
+synced settings, explicitly excludes unsaved drafts, and separately reports
+native channel membership and authority. Other governing servers and deployment
+capabilities can still restrict an action.
+
+The follow-up Discord reference adds highest-role name colors and a single
+hierarchy-selected icon in chat, member lists and profiles. Profiles retain the
+full assigned role list. Online members use their highest separately displayed
+role group; offline members remain together. **Preview roles** compares combined
+role rules without impersonating anyone or including member-specific exceptions.
+See [role management](ROLE_MANAGEMENT.md) for current behavior and compatibility
+limits. Remaining Discord role artwork, display, permission and integration
+differences remain explicit follow-through work; this is not a claim of exact
+feature parity.
+
+### State and authorization
+
+This phase uses the existing `io.tavern.roles` event and Synapse module. There
+are no new endpoints, permissions, database migrations or environment variables.
+Every saved role policy, including older policies without call/audience version
+markers, now carries its current native revision. Save preflight reads fresh
+membership and power levels for changed assignments; a stale revision, departed
+target or native peer rejects the whole save. Existing native authorization
+remains authoritative. Role deletion only removes obsolete assignments and
+overrides; it does not rewrite private-channel audiences.
+
+The interface adds no dependencies. Member results and reviewed selections are
+bounded, editors retain their drafts when switching tabs, and hidden controls
+cannot take focus. Browser coverage checks 320/375/768/1280px layouts, native
+checkbox and keyboard controls, stale saves, promotion during review and account
+replacement. The isolated stack smoke additionally exercises styled-role
+creation, a two-member bulk save, native rejection of unauthorized elevation
+and reviewed removal through the real UI. See the [validation record](VALIDATION.md)
+for observed results; physical-phone acceptance and performance measurements
+remain release work. Phase 4 is profiles, status and emoji workflows.

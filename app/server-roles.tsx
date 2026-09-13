@@ -1,22 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { canManageServerRoles, enableConferencePublication, defaultRolePolicy, effectiveRolePermissions, memberRoleRank, memberServerRoles, nativeMemberPower, readRolePolicy, rolePermissions, saveRolePolicy, type RolePermission, type RolePolicy, type ServerRole } from '@/lib/roles';
 import { isPublicationPermission } from '@/lib/conference-publication';
-import { permissionGroups, removeRole, roleColors, roleCopy, roleIcons } from '@/lib/role-editor';
+import { moveRole, permissionGroups, removeRole, roleColors, roleCopy, roleIcons, roleRemovalImpact } from '@/lib/role-editor';
 import { serverChannelIds } from '@/lib/community';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useRoleEditorOwner } from './role-editor-owner';
+import { RoleMemberAssignments } from './role-member-assignments';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import './server-roles.css';
-
-export function ServerRoleBadges({ serverId, userId }: { serverId: string; userId: string }) {
-  const [, redraw] = useState(0);
-  useEffect(() => onMatrixUpdate(() => redraw(v => v + 1)), []);
-  const policy = readRolePolicy(serverId);
-  if (!policy) return null;
-  return <div className="inline-actions" style={{ flexWrap: 'wrap' }}>{userId === policy.owner && <span className="community-role">👑 Owner</span>}{memberServerRoles(policy, userId).map(role => <span className="community-role" style={{ color: role.color || undefined }} key={role.id}>{role.icon} {role.name}</span>)}</div>;
-}
 
 import { AccessExplanation } from './access-explanation';
 type Props = { serverId: string; channelId?: string; enabled: boolean; onChanged?: () => Promise<unknown> };
@@ -38,6 +31,7 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
   const [previous, setPrevious] = useState<RolePolicy | null>(() => original);
   const [selected, setSelected] = useState('everyone'), [query, setQuery] = useState(''), [permissionQuery, setPermissionQuery] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [tab, setTab] = useState('appearance');
+  const [removal, setRemoval] = useState<{ id: string; policy: RolePolicy } | null>(null);
   const [member, setMember] = useState(''), [memberQuery, setMemberQuery] = useState('');
   const [channel, setChannel] = useState(channelId || ''), [targetType, setTargetType] = useState<'roles' | 'users'>('roles'), [target, setTarget] = useState('');
   if (!owner.current() || !enabled || !canManageServerRoles(serverId)) return null;
@@ -63,10 +57,11 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
       setPolicy(value => ({ ...value, roles: [...value.roles, created] })); setSelected(created.id); setQuery(''); setTab('appearance'); setError('');
     } catch (e) { setError((e as Error).message); }
   }
-  function move(step: number, otherId?: string) {
-    const at = ordered.findIndex(item => item.id === role.id), other = otherId ? ordered.find(item => item.id === otherId) : ordered[at + step];
-    if (!other || other.id === 'everyone' || role.id === 'everyone' || !canEdit(role) || !canEdit(other)) return;
-    setPolicy(value => ({ ...value, roles: value.roles.map(item => item.id === role.id ? { ...item, position: other.position } : item.id === other.id ? { ...item, position: role.position } : item) }));
+  function move(step: number, otherId?: string, sourceId = role.id) {
+    const source = policy.roles.find(item => item.id === sourceId), at = ordered.findIndex(item => item.id === sourceId), other = otherId ? ordered.find(item => item.id === otherId) : ordered[at + step];
+    if (!source || !other || other.id === 'everyone' || source.id === 'everyone' || !canEdit(source) || !canEdit(other)) return;
+    if (!current()) return;
+    try { setPolicy(moveRole(policy, source.id, other.id, myRank)); setError(''); } catch (e) { setError((e as Error).message); }
   }
   async function save() {
     if (!current()) return;
@@ -85,28 +80,31 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
   const assignableMembers = room?.getJoinedMembers().filter(item => item.userId !== me && memberRoleRank(authority, item.userId) < myRank && nativeMemberPower(room, item.userId) < nativeMemberPower(room, me)) || [];
   const assignment = assignableMembers.find(item => item.userId === member);
   const rolePosition = ordered.findIndex(item => item.id === role.id);
+  const removalRole = removal ? policy.roles.find(item => item.id === removal.id) : undefined;
+  const impact = roleRemovalImpact(policy, removal?.id || role.id);
   return <section className="channel-admin server-roles-editor">
     <h3>{channelId ? 'Channel role permissions' : 'Server roles and permissions'}</h3>
-    <AccessExplanation serverId={serverId} channelId={channelId}/>
+    <AccessExplanation key={serverId + ':' + (channelId || '')} serverId={serverId} channelId={channelId}/>
     <p className="login-help">{channelId ? `Override permissions for ${channelRoom?.name || 'this channel'} in ${room?.name || 'this server'}. Other governing servers and native room permissions still apply. Role membership never joins someone to a channel.` : 'Give each role a recognizable look, choose its permissions, and assign it to members. Higher roles can manage only roles and members below them. Native Matrix permissions also apply.'}</p>
     <form className="dialog-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy}>
         {!channelId && <><div className="role-workbench">
           <nav className="role-navigation" aria-label="Server roles">
+            <div className="role-hierarchy-note"><strong>{me === authority.owner ? 'You own this server' : 'Your highest role: ' + memberServerRoles(authority, me)[0]?.name}</strong><p>Roles are ordered from highest to lowest. Drag a role or use Move higher/lower. Read-only roles stay protected.</p></div>
             <label>Find a role<input type="search" value={query} onChange={event => setQuery(event.target.value)}/></label>
             <div className="role-navigation-list">{ordered.filter(item => item.name.toLowerCase().includes(query.toLowerCase().trim())).map(item => <button type="button" key={item.id} aria-label={'Edit ' + item.name + ' (' + item.id + ')'} aria-pressed={item.id === role.id}
               draggable={item.id !== 'everyone' && canEdit(item)} onDragStart={event => { setSelected(item.id); event.dataTransfer.setData('text/tavern-role', item.id); }}
               onDragOver={event => { if (item.id !== 'everyone' && canEdit(item)) event.preventDefault(); }}
-              onDrop={event => { event.preventDefault(); const from = policy.roles.find(candidate => candidate.id === event.dataTransfer.getData('text/tavern-role')); if (from?.id === role.id) move(0, item.id); }}
+              onDrop={event => { event.preventDefault(); const from = policy.roles.find(candidate => candidate.id === event.dataTransfer.getData('text/tavern-role')); if (from) move(0, item.id, from.id); }}
               onClick={() => setSelected(item.id)}><span className="role-nav-name"><span className="role-dot" style={{ background: item.color || 'var(--foreground)' }}/><span>{item.icon} {item.name}</span></span><small>{item.id === 'everyone' ? 'Everyone' : Object.values(policy.members).filter(ids => ids.includes(item.id)).length + ' assigned'}{!canEdit(item) ? ' · Read only' : ''}</small></button>)}</div>
             {!ordered.some(item => item.name.toLowerCase().includes(query.toLowerCase().trim())) && <p>No matching roles.</p>}
             <button type="button" className="secondary-button" disabled={policy.roles.length >= 100} onClick={() => add()}><Plus size={16}/>Add role</button>
           </nav>
           <div className="role-detail">
-            <div className="role-preview" aria-label="Role preview"><span className="role-preview-avatar" aria-hidden="true">A</span><div><strong style={{ color: role.color || undefined }}>{role.icon} Avery</strong><span className="community-role" style={{ color: role.color || undefined }}>{role.icon} {role.name}</span><small>Preview of the role badge and member color</small></div></div>
+            <div className="role-preview" aria-label="Role preview"><span className="role-preview-avatar" aria-hidden="true">A</span><div><strong style={{ color: role.color || undefined }}>{role.icon} Avery</strong><span className="community-role" style={{ color: role.color || undefined }}>{role.icon} {role.name}</span><small>Color and icon are chosen independently from each member’s highest role that sets them</small></div></div>
             {!canEdit(role) && <p>This role is at or above your authority. Its settings are read only.</p>}
             <Tabs value={tab} onValueChange={setTab}>
-              <TabsList aria-label="Role settings"><TabsTrigger value="appearance">Appearance</TabsTrigger><TabsTrigger value="permissions">Permissions</TabsTrigger><TabsTrigger value="members">Members</TabsTrigger></TabsList>
+              <TabsList aria-label="Role settings"><TabsTrigger value="appearance">Display</TabsTrigger><TabsTrigger value="permissions">Permissions</TabsTrigger><TabsTrigger value="members">Manage members</TabsTrigger></TabsList>
               <TabsContent value="appearance"><fieldset disabled={!canEdit(role)} className="role-settings-fields">
                 <label>Role name<input aria-label="Role name" maxLength={60} required value={role.name} onChange={event => update({ name: event.target.value })}/></label>
                 <label>Role icon<input aria-label="Role icon" maxLength={16} value={role.icon} placeholder="Emoji or short symbol" onChange={event => update({ icon: event.target.value })}/></label>
@@ -115,8 +113,9 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
                 <div className="role-color-palette" aria-label="Suggested role colors">{roleColors.map(color => <button type="button" key={color} aria-label={'Use role color ' + color} aria-pressed={role.color === color} style={{ background: color }} onClick={() => update({ color })}/>)}</div>
                 <label className="check-label"><input type="checkbox" checked={role.mentionable} onChange={event => update({ mentionable: event.target.checked })}/>Allow members to mention this role</label>
                 <p className="login-help">This makes the role available in Tavern’s composer. Other encrypted clients can still name people directly.</p>
-                <label className="check-label"><input type="checkbox" checked={role.separate} onChange={event => update({ separate: event.target.checked })}/>Display this role separately in the member list</label>
-                <div className="role-actions"><button type="button" className="secondary-button" disabled={role.permissions.some(permission => !grants.has(permission))} onClick={() => add(role)}><Copy size={16}/>Duplicate role</button>{role.id !== 'everyone' && <><button type="button" disabled={!ordered[rolePosition - 1] || !canEdit(ordered[rolePosition - 1])} onClick={() => move(-1)} aria-label="Move role higher"><ArrowUp size={16}/></button><button type="button" disabled={!ordered[rolePosition + 1] || ordered[rolePosition + 1].id === 'everyone'} onClick={() => move(1)} aria-label="Move role lower"><ArrowDown size={16}/></button><button type="button" onClick={() => { setPolicy(value => removeRole(value, role.id)); setSelected('everyone'); }}><Trash2 size={16}/>Remove role</button></>}</div>
+                <label className="check-label"><input type="checkbox" disabled={role.id === 'everyone'} checked={role.separate} onChange={event => update({ separate: event.target.checked })}/>Display this role separately in the member list</label>
+                <div className="role-actions"><button type="button" className="secondary-button" disabled={role.permissions.some(permission => !grants.has(permission))} onClick={() => add(role)}><Copy size={16}/>Duplicate role</button>{role.id !== 'everyone' && <><button type="button" disabled={!ordered[rolePosition - 1] || !canEdit(ordered[rolePosition - 1])} onClick={() => move(-1)} aria-label="Move role higher"><ArrowUp size={16}/></button><button type="button" disabled={!ordered[rolePosition + 1] || ordered[rolePosition + 1].id === 'everyone'} onClick={() => move(1)} aria-label="Move role lower"><ArrowDown size={16}/></button><button type="button" disabled={!!roleRemovalImpact(policy, role.id).audiences} onClick={() => { if (current()) { setRemoval({ id: role.id, policy }); setError(''); } }}><Trash2 size={16}/>Remove role</button></>}</div>
+                {!!roleRemovalImpact(policy, role.id).audiences && <p className="role-draft-notice">This role is used by a private-channel audience. Update its audience in channel settings before removing this role.</p>}
                 <p className="login-help">New and duplicated roles are unassigned. Changes, including removal and order, take effect when you save.</p>
               </fieldset></TabsContent>
               <TabsContent value="permissions"><div className="role-settings-fields">
@@ -126,7 +125,7 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
                 <p className="login-help">Encrypted messages share one send permission. File contents, links, and media origin cannot be inspected by these permissions.</p>
                 {!policy.callPublicationVersion ? <div className="role-publication-note"><p>Voice and video publishing keeps its existing behavior until the owner enables the separate conference controls. Enabling preserves saved settings and adds audio, camera, and screen publishing to the Member role.</p>{original && me === original.owner && <button type="button" className="secondary-button" disabled={dirty} onClick={() => void migrate()}>Enable conference publication permissions</button>}{dirty && <p>Save changes or reload saved roles before enabling conference permissions.</p>}</div> : <p className="login-help">Speak includes microphone and screen audio. Camera and screen sharing restrict declared video sources, not the origin of pixels. Restrictions require the configured Tavern SFU extension. Restoring permissions may require a fresh join; devices never start automatically.</p>}
               </div></TabsContent>
-              <TabsContent value="members"><div className="role-settings-fields"><p>{role.id === 'everyone' ? 'Every joined server member receives this role automatically.' : 'Members assigned to this role. Use the assignment editor below to change their roles.'}</p><ul className="role-member-list">{room?.getJoinedMembers().filter(item => role.id === 'everyone' || policy.members[item.userId]?.includes(role.id)).map(item => <li key={item.userId}><strong>{item.name}</strong><small>{item.userId}</small>{assignableMembers.some(candidate => candidate.userId === item.userId) && <button type="button" className="secondary-button" onClick={() => setMember(item.userId)}>Edit member roles</button>}</li>)}</ul></div></TabsContent>
+              <TabsContent value="members" forceMount hidden={tab !== 'members'} inert={tab !== 'members'}><RoleMemberAssignments key={role.id} policy={policy} authority={authority} actor={me} role={role} room={room} current={current} onChange={setPolicy}/></TabsContent>
             </Tabs>
           </div>
         </div>
@@ -148,5 +147,6 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
       </fieldset>
       {error && <p role="alert" className="connect-error">{error}</p>}
     </form>
+    <AlertDialog open={!!removal} onOpenChange={open => { if (!open) setRemoval(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove {removalRole?.name || 'this role'}?</AlertDialogTitle><AlertDialogDescription>This removes the role from this draft, including {impact.members} member assignment{impact.members === 1 ? '' : 's'}, {impact.channels} channel override{impact.channels === 1 ? '' : 's'} and {impact.categories} category override{impact.categories === 1 ? '' : 's'}. Save roles and permissions afterward to apply the removal. Members keep their other roles.</AlertDialogDescription></AlertDialogHeader>{error && <p role="alert" className="connect-error">{error}</p>}<AlertDialogFooter><AlertDialogCancel>Keep role</AlertDialogCancel><AlertDialogAction onClick={event => { event.preventDefault(); if (!current() || !removal || !removalRole) return; try { if (policy !== removal.policy || !canEdit(removalRole)) throw new Error('This role or your authority changed. Close this review and check the role again.'); if (roleRemovalImpact(original || policy, removal.id).audiences) throw new Error('This role now controls a private-channel audience. Update that audience in channel settings first.'); setPolicy(removeRole(policy, removal.id)); setSelected('everyone'); setRemoval(null); setError(''); } catch (e) { setError((e as Error).message); } }}>Remove from draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>;
 }

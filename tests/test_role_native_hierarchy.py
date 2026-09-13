@@ -34,6 +34,16 @@ class NativeRoleHierarchyTests(unittest.IsolatedAsyncioTestCase):
         proposed['members']['@nativeadmin:local'] = ['mod']
         self.assertEqual(await self.write(state, proposed), (False, None))
 
+    async def test_bulk_assignment_rejects_every_change_if_one_target_is_a_native_peer(self):
+        state = self.managed_state()
+        proposed = copy.deepcopy(self.policy)
+        proposed['members'].update({'@member:local': ['tag'], '@second:local': ['tag']})
+        self.assertEqual(await self.write(state, proposed), (True, None))
+        proposed['members']['@nativepeer:local'] = ['tag']
+        before = copy.deepcopy(self.policy)
+        self.assertEqual(await self.write(state, proposed), (False, None))
+        self.assertEqual(self.policy, before)
+
     async def test_room_creator_fallback_and_v12_creators_have_native_authority(self):
         state = self.managed_state(); del state[('m.room.power_levels', '')]
         proposed = copy.deepcopy(self.policy); proposed['members']['@member:local'] = ['tag']

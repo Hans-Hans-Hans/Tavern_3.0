@@ -74,14 +74,15 @@ async function freshRoles(owner: ReturnType<typeof roleWriteOwner>, serverId: st
   try { raw = await owner.client.getStateEvent(serverId, rolesEvent as any, ''); } catch (error) { if ((error as any).errcode !== 'M_NOT_FOUND') throw error; }
   owner.assertCurrent();
   if (raw && !parseRolePolicy(raw)) throw new Error('The saved role policy is invalid.');
-  let revision: string | null = null;
-  if (raw?.callPublicationVersion === 1 || raw?.channelAdmissionVersion === 1) {
+  let revision: string | null = null, stateEvents: any[] = [];
+  if (raw) {
     const events = await owner.client.roomState(serverId); owner.assertCurrent();
+    stateEvents = events;
     const saved = events.filter(item => item.type === rolesEvent && item.state_key === '');
     if (saved.length !== 1 || typeof saved[0].event_id !== 'string' || stableRoleJson(raw) !== stableRoleJson(saved[0].content)) throw new Error('Server roles changed while loading. Reload and retry.');
     revision = saved[0].event_id;
   }
-  return { raw, policy: raw ? parseRolePolicy(raw)! : null, revision };
+  return { raw, policy: raw ? parseRolePolicy(raw)! : null, revision, stateEvents };
 }
 /** Scope a channel editor to a current joined reciprocal child. This reads
  * native state without changing membership or giving the child new powers. */
@@ -124,8 +125,20 @@ export async function saveRolePolicy(serverId: string, policy: RolePolicy, previ
   const ids = new Set(policy.roles.map(role => role.id)), categoryOverrides = Object.fromEntries(Object.entries(fresh.policy?.categoryOverrides || policy.categoryOverrides || {}).map(([id, targets]) => [id, { ...targets, roles: Object.fromEntries(Object.entries(targets.roles || {}).filter(([role]) => ids.has(role))) }]));
   const next = { ...policy, categoryOverrides };
   if (!parseRolePolicy(next)) throw new Error('The role policy is invalid. Check role positions and assigned members.');
+  // A multi-member draft must recheck native targets against the same fresh
+  // state used for its revision. Deleting a role only cleans up its old IDs.
+  const changedMembers = [...new Set([...Object.keys(fresh.policy?.members || {}), ...Object.keys(next.members)])].filter(user =>
+    stableRoleJson([...(fresh.policy?.members[user] || [])].filter(id => ids.has(id)).sort()) !== stableRoleJson([...(next.members[user] || [])].sort()));
+  if (fresh.policy && changedMembers.length) {
+    const event = (type: string, key = '') => fresh.stateEvents.find(item => item.type === type && item.state_key === key);
+    const native = { currentState: { getStateEvents: (type: string, key = '') => { const value = event(type, key); return value ? { getContent: () => value.content, getSender: () => value.sender } : null; } } };
+    for (const user of changedMembers) {
+      if (event('m.room.member', user)?.content?.membership !== 'join') throw new Error('A selected member is no longer joined. Reload saved roles and review the assignments.');
+      if (user === owner.user || nativeMemberPower(native, user) >= nativeMemberPower(native, owner.user)) throw new Error('A selected member now has equal or higher server authority. Reload saved roles and review the assignments.');
+    }
+  }
   if (channelId) await checkChannelRoleScope(serverId, channelId, assertScope, fresh.policy);
-  owner.assertCurrent(); assertScope(); await owner.client.sendStateEvent(serverId, rolesEvent as any, { ...next, ...(fresh.revision ? { 'io.tavern.previous_event': fresh.revision } : {}) }, '');
+  owner.assertCurrent(); assertScope(); await owner.client.sendStateEvent(serverId, rolesEvent as any, { ...next, 'io.tavern.previous_event': fresh.revision }, '');
   owner.assertCurrent(); assertScope(); return next;
 }
 export async function enableConferencePublication(serverId: string) {
