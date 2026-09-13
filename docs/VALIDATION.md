@@ -40,6 +40,14 @@ conference report, so the native probe now emits its finite stage and validated
 failure categories before cleanup. This run does not establish acceptance of
 the new voice-channel joining or microphone-mode workflow.
 
+A real-browser regression reproduces a missed handshake when the native observer
+is installed after click-to-join. The probe now requests a fresh challenge from
+the exact owned child document after attaching its listeners. It continues to
+reject telemetry from unobserved challenges and changed devices. The focused
+browser regression and all 13 conference/Games model checks pass; the subsequent
+native rerun is still required. This observer repair alone does not establish
+the cause of a deployed LiveKit `InternalError`.
+
 ## Role artwork checkpoint
 
 Roles can use uploaded server emoji beside chat/member names and on profile

@@ -158,6 +158,20 @@ export function installConferenceObserver({ nonce, roomId, owner, owners, failur
   return true;
 }
 
+// Evaluated in the actual owned child document. A click-to-join call may have
+// completed its telemetry handshake before the CI listeners were installed.
+// Request another real parent challenge; never adopt an unobserved challenge.
+export function requestConferenceObserverBinding(_body, { roomId, owner }) {
+  const url = new URL(location.href), params = new URLSearchParams(url.hash.slice(2));
+  if (parent === window || url.origin !== 'https://chat.example.test' || url.pathname !== '/element-call/index.html'
+    || params.get('parentUrl') !== url.origin || params.get('baseUrl') !== url.origin || params.get('roomId') !== roomId
+    || params.get('userId') !== owner.userId || params.get('deviceId') !== owner.deviceId || params.get('perParticipantE2EE') !== 'true') return false;
+  const widgetId = params.get('widgetId'), session = params.get('tavernTelemetry');
+  if (![widgetId, session].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{20,80}$/.test(value))) return false;
+  parent.postMessage({ type: 'io.tavern.call.telemetry.ready', version: 1, widgetId, session, roomId }, url.origin);
+  return true;
+}
+
 export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, roomId, origin, api }, { docker = dockerRead, voiceFixture, onConnected } = {}) {
   const ownerValid = (value, id) => object(value) && value.userId === id && value.admin === false && typeof value.deviceId === 'string' && /^[A-Za-z0-9_-]{1,255}$/.test(value.deviceId);
   requireProof(process.env.TAVERN_CI_SMOKE === 'true' && process.env.TAVERN_CI_TLS === '/tmp/tavern-ci-tls' && origin === ORIGIN && isCiRoomId(roomId)
@@ -222,6 +236,7 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       if (!voiceFixture) await run(() => lobby.waitFor({ state: 'visible', timeout: 45000 }), 'widget-lobby', 45000);
       await scope(page);
       requireProof(await run(() => page.evaluate(installConferenceObserver, { nonce, roomId, owner: owners.get(page), owners: [...owners.values()].map(({ userId, deviceId }) => ({ userId, deviceId })), failureFields: conferenceFailureFields }), 'observer-binding'), 'Embedded conference iframe did not match its owning native device.');
+      if (voiceFixture) requireProof(await run(() => page.frameLocator(FRAME).locator('body').evaluate(requestConferenceObserverBinding, { roomId, owner: owners.get(page) }), 'observer-rebind'), 'The active voice document must request its own fresh telemetry binding.');
       if (!voiceFixture) await run(() => lobby.click({ timeout: 15000 }), 'join-widget');
     }
     await run(() => Promise.all([...owners.keys()].map(page => page.waitForFunction(nonce => {
