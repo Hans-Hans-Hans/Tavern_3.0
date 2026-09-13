@@ -11,7 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from api.server import APIError, COOKIE, Config, create_app
-from api.security import totp, totp_setup
+from api.security import network_list, totp, totp_setup
 
 ORIGIN = "https://tavern.example.com"
 
@@ -248,6 +248,55 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
     async def test_session_cookie_is_not_persistent_without_opt_in(self):
         _, _, response = await self.login()
         self.assertNotIn("Max-Age", response.headers["Set-Cookie"])
+
+    async def test_proxy_trust_failure_is_detected_before_passwords_and_recovers(self):
+        headers = {'Origin': ORIGIN, 'X-Forwarded-For': '203.0.113.9'}
+        before = self.device_count
+        config = await self.client.get('/api/auth/config', headers=headers)
+        self.assertEqual(config.status, 200)
+        issue = (await config.json())['signInError']
+        self.assertEqual(issue['code'], 'PROXY_TRUST_REQUIRED')
+        self.assertEqual(issue['status'], 503)
+        self.assertNotIn('203.0.113.9', json.dumps(issue))
+        denied = await self.client.post('/api/auth/login', headers=headers, json={
+            'username': 'alice', 'password': 'Correct password!'})
+        self.assertEqual(denied.status, 503)
+        self.assertEqual((await denied.json())['errcode'], issue['code'])
+        self.assertNotIn('Set-Cookie', denied.headers)
+        self.assertEqual(self.device_count, before)
+        # Simulate reloading an explicit trust configuration for this test's
+        # observed loopback proxy; the external forwarded address stays untrusted.
+        self.service.trusted = network_list('127.0.0.1/32,::1/128')
+        config = await self.client.get('/api/auth/config', headers=headers)
+        self.assertNotIn('signInError', await config.json())
+        accepted = await self.client.post('/api/auth/login', headers=headers, json={
+            'username': 'alice', 'password': 'Correct password!'})
+        self.assertEqual(accepted.status, 200, await accepted.text())
+        self.assertIn('Set-Cookie', accepted.headers)
+        self.assertEqual(self.device_count, before + 1)
+        rate = self.service.store.db.execute("SELECT * FROM rate_limits WHERE key=?", (self.service.store.digest('login:203.0.113.9'),)).fetchone()
+        self.assertIsNotNone(rate)
+
+    async def test_malformed_forwarded_chain_cannot_mint_a_login_session(self):
+        self.service.trusted = network_list('127.0.0.1/32,::1/128')
+        headers = {'Origin': ORIGIN, 'X-Forwarded-For': 'private-header-marker'}
+        config = await self.client.get('/api/auth/config', headers=headers)
+        self.assertEqual((await config.json())['signInError']['code'], 'INVALID_PROXY_CHAIN')
+        denied = await self.client.post('/api/auth/login', headers=headers, json={
+            'username': 'alice', 'password': 'Correct password!'})
+        self.assertEqual(denied.status, 400)
+        data = await denied.json()
+        self.assertEqual(data['errcode'], 'INVALID_PROXY_CHAIN')
+        self.assertNotIn('private-header-marker', json.dumps(data))
+        self.assertNotIn('Set-Cookie', denied.headers)
+        self.assertEqual(self.device_count, 0)
+
+    async def test_invalid_login_input_does_not_blame_proxy_configuration(self):
+        response = await self.request('POST', '/api/auth/login', {'username': ['alice'], 'password': 'unused'})
+        self.assertEqual(response.status, 400)
+        data = await response.json()
+        self.assertEqual(data['errcode'], 'INVALID_INPUT')
+        self.assertNotIn('proxy', data['error'])
 
     async def test_friend_code_rotation_requires_same_origin_and_keeps_code_out_of_audit(self):
         cookie, _, _ = await self.login()

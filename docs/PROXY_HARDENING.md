@@ -51,6 +51,55 @@ Set the confirmed CIDRs in Dockhand's private stack environment or the existing
 `.env`, then **recreate** `tavern-api` and `tavern-web`. Restart alone does not
 apply changed container environment variables.
 
+### Recover a sign-in blocked after an update
+
+An empty or outdated trust setting can leave the web page and containers healthy
+while login fails. Current V3 reports `PROXY_TRUST_REQUIRED` (503) and checks this
+connection before showing the password form. Older builds return `INVALID_INPUT`
+(400) with “Check the values and trusted proxy configuration”. Other invalid
+values can also produce that older message; inspect the running configuration.
+
+On an updated API image, run this from any directory on the Docker host:
+
+```sh
+sudo docker exec tavern-tavern-api-1 python /app/proxy_diagnostics.py
+```
+
+It prints only canonical trusted networks and the currently resolved gateway
+addresses. It does not inspect credentials, modify trust, or verify NPM's full
+forwarding chain. On an older image without that script, use:
+
+```sh
+sudo docker exec tavern-tavern-api-1 python -c 'import os,socket; print("TRUSTED_PROXY_CIDRS=" + os.getenv("TRUSTED_PROXY_CIDRS", "")); print("Gateway IPs: " + ", ".join(sorted({item[4][0] for item in socket.getaddrinfo("tavern-web", 8080)})))'
+```
+
+For immediate recovery, trust the verified gateway address with `/32` (IPv6:
+`/128`) in the **active deployment's** environment, and recreate **only
+`tavern-api`**. Keep the gateway running so its address remains unchanged. If
+Dockhand manages the stack, edit its stack environment and recreate that service
+there; an unrelated checkout's `.env` may not control the running stack. Do not
+delete volumes or clear browser encryption storage to resolve proxy trust.
+
+This address entry is temporary unless the address is reserved. Before the next
+whole-stack recreation, use the inspection commands above to configure the
+actual dedicated gateway/NPM subnets or reserve their addresses. Trusting only
+the gateway can restore login while all users share the NPM address for IP rate
+limiting. Correct NPM trust and forwarding are needed to distinguish clients;
+account-based login limits continue to apply in either case.
+
+For a Compose-managed installation, once its real deployment directory and
+Compose file are confirmed, apply an environment-only API change with:
+
+```sh
+sudo docker compose up -d --no-deps --force-recreate tavern-api
+```
+
+Use the same `-f`/`--env-file` options as its original deployment when applicable.
+That command does not rebuild the API image. To install the new diagnostics and
+welcome-screen behavior, follow the normal V3 build/update procedure after
+configuring trust that survives recreation. A successful DNS diagnostic does
+not replace testing sign-in through the public hostname.
+
 ## Cloudflare rules that preserve messaging and calls
 
 Use **Full (strict)** TLS with a valid origin certificate. Keep the TURN hostname

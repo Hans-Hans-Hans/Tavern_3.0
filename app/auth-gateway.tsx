@@ -16,7 +16,7 @@ import { invitationToken } from '@/lib/invitation-link';
 
 const Tavern = lazy(() => import('./tavern'));
 const AdminConsole = lazy(() => import('./admin-console'));
-type Config = { bootstrapRequired: boolean; smtpConfigured: boolean; registrationMode?:'admin'|'invite'|'open'|'disabled'; instance?: { name?: string; description?: string; maintenance?: boolean; icon?:string;logo?:string;background?:string;termsUrl?:string;privacyUrl?:string;contact?:string } };
+type Config = { bootstrapRequired: boolean; signInError?: { message: string; code: string; status: number }; smtpConfigured: boolean; registrationMode?:'admin'|'invite'|'open'|'disabled'; instance?: { name?: string; description?: string; maintenance?: boolean; icon?:string;logo?:string;background?:string;termsUrl?:string;privacyUrl?:string;contact?:string } };
 export function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="product-field"><span>{label}</span>{children}</label>; }
 export function AuthGateway() {
   const [config, setConfig] = useState<Config | null>(null), [session, setSession] = useState<AccountSession | null>(null);
@@ -55,7 +55,12 @@ export function AuthGateway() {
       if (typeof value.bootstrapRequired !== 'boolean') { if((await readInstanceConfig()).managedAuth)throw new Error('The account service returned invalid configuration.');setManagedAccount(false); setMode('legacy'); return; }
       setManagedAccount(true); setConfig(value);
       try { await openSession(await requestApi<AccountSession>('/auth/session')); }
-      catch (e: any) { if (e.status !== 401) throw e; setAccountDevice(''); setMode(value.bootstrapRequired ? 'bootstrap' : 'login'); }
+      catch (e: any) {
+        if (e.status !== 401) throw e;
+        setAccountDevice('');
+        if (value.signInError) throw Object.assign(new Error(value.signInError.message), { code: value.signInError.code, status: value.signInError.status });
+        setMode(value.bootstrapRequired ? 'bootstrap' : 'login');
+      }
     } catch (e: any) {
       // Older static deployments have no companion service; preserve their login.
       if (e.status === 404) { setManagedAccount(false); setMode('legacy'); }

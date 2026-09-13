@@ -58,6 +58,37 @@ test('account-service outage fails closed instead of showing legacy login',async
   await page.route('**/api/auth/config',route=>route.fulfill({status:502,json:{error:'Temporarily unavailable'}}));await page.goto('/');await expect(page.getByRole('heading',{name:'Unable to connect'})).toBeVisible();await expect(page.getByRole('button',{name:'Connect homeserver'})).toHaveCount(0);
 });
 
+test('proxy configuration failure is shown before credentials and can be retried after repair', async ({ page }) => {
+  let repaired = false, logins = 0;
+  await managed(page);
+  await page.route('**/api/auth/config', route => route.fulfill({ json: {
+    bootstrapRequired: false, smtpConfigured: true, instance: { name: 'Tavern Test' },
+    ...(!repaired ? { signInError: { code: 'PROXY_TRUST_REQUIRED', status: 503,
+      message: "This server's proxy configuration is blocking sign-in. Ask your administrator to check the trusted proxy settings." } } : {}),
+  } }));
+  await page.route('**/api/auth/login', route => {
+    logins++;
+    return route.fulfill({ status: 401, json: { error: 'The username or password is incorrect.' } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Unable to connect' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('proxy configuration');
+  await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Connect homeserver' })).toHaveCount(0);
+  expect(logins).toBe(0);
+  await page.getByText('Technical details', { exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('PROXY_TRUST_REQUIRED');
+  repaired = true;
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByLabel('Username or email').fill('alice');
+  await page.getByLabel('Password', { exact: true }).fill('not-a-real-password');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('username or password is incorrect');
+  expect(logins).toBe(1);
+});
+
 test('required password change retains MFA and prevents access to Matrix until completed',async({page})=>{
   let changed=false, submission:any, matrixRequests=0;
   await page.route('**/api/auth/config',r=>r.fulfill({json:{bootstrapRequired:false,smtpConfigured:true,instance:{name:'Test'}}}));
@@ -71,4 +102,17 @@ test('required password change retains MFA and prevents access to Matrix until c
   await page.goto('/admin');await expect(page.getByRole('heading',{name:'Choose a new password'})).toBeVisible();await expect(page.getByRole('button',{name:'Users',exact:true})).toHaveCount(0);expect(matrixRequests).toBe(0);
   await page.getByLabel('Current password',{exact:true}).fill('old-password-test');await page.getByLabel('New password',{exact:true}).fill('new-password-test');await page.getByLabel('Confirm new password',{exact:true}).fill('new-password-test');await page.getByLabel('Verification code',{exact:true}).fill('123456');await page.getByRole('button',{name:'Change password and continue'}).click();
   await expect(page.getByRole('heading',{name:'Overview',exact:true})).toBeVisible();expect(submission).toMatchObject({currentPassword:'old-password-test',newPassword:'new-password-test',confirmation:'new-password-test',method:'totp',code:'123456',logoutOtherDevices:true});expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('password-test');
+});
+
+test('proxy sign-in warning does not discard an existing authenticated session', async ({ page }) => {
+  await page.route('**/api/auth/config', route => route.fulfill({ json: {
+    bootstrapRequired: false, smtpConfigured: true,
+    signInError: { code: 'PROXY_TRUST_REQUIRED', status: 503, message: 'Proxy configuration needs attention.' },
+  } }));
+  await page.route('**/api/auth/session', route => route.fulfill({ json: {
+    userId: '@owner:local', deviceId: 'D1', admin: true, baseUrl: '/api/matrix', mfaEnrollmentRequired: true,
+  } }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Protect your account' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Unable to connect' })).toHaveCount(0);
 });

@@ -33,10 +33,10 @@ import yaml
 
 try:
     from .secret_files import smtp_password_file
-    from .security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
+    from .security import DEFAULT_SECURITY, ProxyAddressError, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 except ImportError:
     from secret_files import smtp_password_file
-    from security import DEFAULT_SECURITY, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
+    from security import DEFAULT_SECURITY, ProxyAddressError, client_address, email_address, network_list, password_error, totp_setup, verify_totp, uia_password_challenge
 
 LOG = logging.getLogger("tavern.api")
 COOKIE = "__Host-tavern-session"
@@ -233,7 +233,14 @@ class Service:
                 self.store.db.execute("DELETE FROM sessions WHERE id=?", (row["id"],))
 
     def ip(self, request) -> str:
-        return client_address(request.remote, request.headers.get("X-Forwarded-For"), self.trusted)
+        try:
+            return client_address(request.remote, request.headers.get("X-Forwarded-For"), self.trusted)
+        except ProxyAddressError as error:
+            if error.reason == "untrusted_peer":
+                raise APIError(503, "This server's proxy configuration is blocking sign-in. Ask your administrator to check the trusted proxy settings.", "PROXY_TRUST_REQUIRED") from None
+            if error.reason == "invalid_chain":
+                raise APIError(400, "The proxy sent an invalid client address chain. Ask your administrator to check the forwarding headers.", "INVALID_PROXY_CHAIN") from None
+            raise APIError(503, "The server could not identify this connection. Ask your administrator to check the proxy connection.", "CLIENT_ADDRESS_UNAVAILABLE") from None
 
     def security_policy(self):
         return {**DEFAULT_SECURITY, **self.store.get('security_policy', {})}
@@ -580,7 +587,15 @@ class Service:
         return result
 
     async def config_route(self, request):
-        return web.json_response({"bootstrapRequired": self.bootstrap_required(), "smtpConfigured": self.smtp()["enabled"], "instance": self.store.get("instance", {"name": "Tavern", "description": ""}), "registrationMode": self.store.get("policy", {"registrationMode": "admin"}).get("registrationMode", "admin")})
+        result = {"bootstrapRequired": self.bootstrap_required(), "smtpConfigured": self.smtp()["enabled"], "instance": self.store.get("instance", {"name": "Tavern", "description": ""}), "registrationMode": self.store.get("policy", {"registrationMode": "admin"}).get("registrationMode", "admin")}
+        # Check the same observed connection used by login throttling, before
+        # asking for credentials. Existing sessions may still open settings.
+        # Never expose proxy addresses, headers or environment values here.
+        try:
+            self.ip(request)
+        except APIError as error:
+            result["signInError"] = {"message": error.message, "code": error.code, "status": error.status}
+        return web.json_response(result)
 
     async def login_route(self, request):
         data = await body_json(request)
@@ -1206,7 +1221,7 @@ async def boundary(request, handler):
                 pass
         return web.json_response({"error": error.message, "errcode": error.code, **error.details}, status=error.status)
     except ValueError:
-        return web.json_response({"error": "Check the values and trusted proxy configuration, then try again.", "errcode": "INVALID_INPUT"}, status=400)
+        return web.json_response({"error": "Check the entered values and try again.", "errcode": "INVALID_INPUT"}, status=400)
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return web.json_response({"error": "The homeserver is temporarily unavailable. Try again.", "errcode": "UPSTREAM_UNAVAILABLE"}, status=502)
     except web.HTTPException:

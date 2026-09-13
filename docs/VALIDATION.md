@@ -2,7 +2,38 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Proxy sign-in recovery checkpoint
+
+A running installation returned the old generic `INVALID_INPUT` login error.
+Read-only inspection confirmed empty proxy trust; the operator restored sign-in
+by explicitly trusting the running gateway address and recreating only the API.
+The [proxy guide](PROXY_HARDENING.md) distinguishes that immediate recovery from
+a configuration that survives gateway recreation.
+
+V3 now distinguishes untrusted peers, malformed forwarding chains and ordinary
+invalid input. The welcome screen checks the observed proxy connection before
+requesting credentials, retains existing authenticated sessions and supports
+retry after repair. A read-only container diagnostic reports canonical gateway
+addresses/trust without opening account storage or changing configuration.
+
+Local validation: TypeScript/Vite production build; all 822 Python cases
+(805 passed, 17 platform/environment skips); nine browser authentication cases.
+API cases prove rejection before device/session creation, successful recovery,
+continued IP throttling and omission of raw forwarding data from errors.
+These local results do not establish the subsequent pushed workflow result.
+
 ## Roles and member management checkpoint
+
+The complete workflow on **8d9fe8d** subsequently passed:
+[CI run 34729834934](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34729834934).
+Both jobs succeeded, including 724 model tests, 513 browser cases and 811 Python
+cases (807 passed, four skipped). The real role editor created a styled role,
+assigned two joined members in one revision-checked event, rejected an
+unauthorized owner assignment and removed the role while retaining other roles.
+Encrypted direct/conference audio, encrypted files, history recovery, native
+moderation, backup/restore and failed-update rollback also passed. This closes
+the phase 3 deployment gate described below; physical-device acceptance remains
+separate.
 
 Phase 3 of the [community roadmap](COMMUNITY_UX_ROADMAP.md) adds role-based bulk
 assignment, reviewed removal, hierarchy feedback and searchable access decisions.

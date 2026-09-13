@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 
-from api.security import client_address, email_address, network_list, password_error, totp, verify_totp, uia_password_challenge
+from api.security import ProxyAddressError, client_address, email_address, network_list, password_error, totp, verify_totp, uia_password_challenge
 from api.server import APIError, Config, Service, Store
 
 
@@ -36,6 +36,20 @@ class SecurityPrimitivesTests(unittest.TestCase):
         for address in ("no-at-sign", "alice@example.com\r\nBcc:other@example.com", None):
             with self.assertRaises(ValueError):
                 email_address(address)
+
+    def test_proxy_failures_are_classified_without_disclosing_header_values(self):
+        for peer, forwarded, trusted, reason in (
+            (None, None, '', 'peer_unavailable'),
+            ('172.24.0.7', '203.0.113.9', '', 'untrusted_peer'),
+            ('172.24.0.7', 'private-header-marker', '172.24.0.7/32', 'invalid_chain'),
+            ('172.24.0.7', ','.join(['203.0.113.9'] * 17), '172.24.0.7/32', 'invalid_chain'),
+        ):
+            with self.subTest(reason=reason, forwarded=forwarded):
+                with self.assertRaises(ProxyAddressError) as caught:
+                    client_address(peer, forwarded, network_list(trusted))
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertNotIn('private-header-marker', str(caught.exception))
+                self.assertNotIn('203.0.113.9', str(caught.exception))
 
     def test_uia_does_not_downgrade_mfa(self):
         self.assertTrue(uia_password_challenge({"session": "S", "flows": [{"stages": ["m.login.password"]}]}))

@@ -61,26 +61,37 @@ def network_list(value: str) -> list:
     return [ipaddress.ip_network(x.strip(), strict=False) for x in value.split(",") if x.strip()]
 
 
+class ProxyAddressError(ValueError):
+    """A classified forwarding failure; never include untrusted header text."""
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__({
+            "peer_unavailable": "The client network address is unavailable.",
+            "untrusted_peer": "Configure the trusted proxy networks before using forwarded client addresses.",
+            "invalid_chain": "Invalid proxy chain.",
+        }[reason])
+
+
 def client_address(peer: str | None, forwarded: str | None, trusted: list) -> str:
     """Strip trusted proxies right-to-left. Never use an untrusted sender's XFF."""
     try:
         current = ipaddress.ip_address(peer or "")
     except ValueError:
-        raise ValueError("The client network address is unavailable.") from None
+        raise ProxyAddressError("peer_unavailable") from None
     if not forwarded:
         return str(current)
     if not any(current in network for network in trusted):
-        raise ValueError("Configure the trusted proxy networks before using forwarded client addresses.")
+        raise ProxyAddressError("untrusted_peer")
     chain = forwarded.split(",")
     if len(chain) > 16:
-        raise ValueError("Invalid proxy chain.")
+        raise ProxyAddressError("invalid_chain")
     for item in reversed(chain):
         if not any(current in network for network in trusted):
             break
         try:
             current = ipaddress.ip_address(item.strip())
         except ValueError:
-            raise ValueError("Invalid proxy chain.") from None
+            raise ProxyAddressError("invalid_chain") from None
     return str(current)
 
 
