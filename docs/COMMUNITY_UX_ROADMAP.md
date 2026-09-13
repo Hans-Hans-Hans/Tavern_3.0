@@ -257,3 +257,20 @@ hierarchy or revision checks. Image loading uses authenticated media, a bounded
 account/device cache, stale-response checks and a text fallback on failure.
 Existing roles do not require conversion. Profile/status editing and broader
 role display styles remain next phase work.
+
+### Call experience checkpoint
+
+The requested call refinements bring part of phase 7 forward: explicit voice
+channel selection joins without a second lobby, starts with the camera off and
+allows optional cameras/screen sharing through the retained conference. Passive
+navigation restores the channel without starting a microphone. Visual media
+automatically reveals the existing frame, preserving the call and native role
+publication restrictions.
+
+Direct calls and conferences share browser-local microphone processing presets.
+Speech requests noise/echo suppression and gain; Music retains echo cancellation
+with the other processing off. Actual track settings determine the displayed
+result. On browsers that cannot change processing in place, the owning conference
+SDK replaces the microphone while preserving mute. See
+[microphone processing](MICROPHONE_AUDIO.md). Physical audio quality, broader
+reconnect/device acceptance and the rest of phases 4–8 remain separate work.

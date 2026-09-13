@@ -23,6 +23,7 @@ function setup(enabled = true) {
   const client = new EventEmitter(); Object.assign(client, { getMediaHandler: () => mediaHandler, getUserId: () => '@me:local', getDeviceId: () => 'DEVICE', getHomeserverUrl: () => 'https://local/api/matrix', checkTurnServers: async () => true, getTurnServersExpiry: () => Date.now() + 3600000, getTurnServers: () => [{ urls: ['turn:turn.local'], username: 'fixture', credential: 'fixture' }], getRoom: () => room, createCall: () => call });
   const relay = loadTs('../lib/call-relay.ts', { './turn-diagnostics': loadTs('../lib/turn-diagnostics.ts', {}) });
   const calls = loadTs('../lib/calls.ts', {
+    './audio-processing': loadTs('../lib/audio-processing.ts', {}),
     './media-session': ownership,
     'matrix-js-sdk': { CallEvent: { State: 'state', FeedsChanged: 'feeds', Hangup: 'hangup', Error: 'failure', Replaced: 'replaced', PeerConnectionCreated: 'peer-created' }, CallFeedEvent: { NewStream: 'stream', MuteStateChanged: 'mute' }, ClientEvent: { TurnServers: 'turn-servers', TurnServersError: 'turn-error' } },
     './api': { accountArtworkOwner: () => client }, './call-relay': relay, './call-dismissal': loadTs('../lib/call-dismissal.ts', {}),
@@ -89,6 +90,24 @@ test('changing volume preserves a held microphone while disabling push to talk m
   const { calls, track } = setup(); await calls.startCall('!dm:local', false); await calls.setCallMediaSettings({ pushToTalk: true }); await calls.setCallTalking(true);
   await calls.setCallMediaSettings({ outputVolume: 0.5 }); assert.equal(track.enabled, true);
   await calls.setCallMediaSettings({ pushToTalk: false }); assert.equal(track.enabled, false);
+});
+
+test('saved microphone processing is configured before direct call capture and a retired device update cannot commit', async () => {
+  const previous = globalThis.window, host = new EventTarget(), storage = new Map();
+  host.localStorage = { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) }; globalThis.window = host;
+  try {
+    const { calls, call, mediaHandler } = setup(), applied = [];
+    mediaHandler.setAudioSettings = async value => applied.push({ ...value });
+    await calls.setCallMediaSettings({ noiseSuppression: false, autoGainControl: false });
+    call.placeVoiceCall = async () => assert.deepEqual(applied.at(-1), { noiseSuppression: false, echoCancellation: true, autoGainControl: false });
+    await calls.startCall('!dm:local', false);
+    assert.deepEqual(JSON.parse(storage.get('tavern.audio-processing')), { noiseSuppression: false, echoCancellation: true, autoGainControl: false });
+    let release; mediaHandler.setMediaInputs = () => new Promise(resolve => release = resolve);
+    const pending = calls.setCallMediaSettings({ audioInput: 'retired-device' });
+    while (!release) await new Promise(resolve => setImmediate(resolve));
+    calls.resetCalls(); release(); await assert.rejects(pending, /account changed/);
+    assert.equal(calls.callSnapshot().media.audioInput, '');
+  } finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
 });
 
 test('conference media ownership blocks direct call capture', async () => {

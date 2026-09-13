@@ -6,8 +6,8 @@ async function fixture(page: Page) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=async()=>{throw new Error("Read-only voice fixture cannot write account data")};export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/calls.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const callSnapshot=()=>({call:null});export const callsConfigured=async()=>true;' }));
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices,options={}){
-    const f=window.voiceFixture;f.mounts.push({roomId,voiceOnly:options.voiceOnly});f.telemetry.push(options.onTelemetry);
-    frame.srcdoc='<button>Widget device controls</button>';onJoined();onDevices({audio_enabled:true,video_enabled:!options.voiceOnly});
+    const f=window.voiceFixture;f.mounts.push({roomId,voiceChannel:options.voiceChannel});f.telemetry.push(options.onTelemetry);
+    frame.srcdoc='<button>Widget device controls</button>';onJoined();onDevices({audio_enabled:true,video_enabled:!options.voiceChannel});
     const stop=async()=>{f.stops.push(roomId)};stop.setDevices=async value=>{f.deviceChanges??=[];f.deviceChanges.push(value);if(f.holdDevice)await new Promise(resolve=>f.releaseDevice=resolve);onDevices(value)};
     stop.setDeafened=async value=>{f.audioChanges??=[];f.audioChanges.push(value);if(f.holdAudio)await new Promise(resolve=>f.releaseAudio=resolve);options.onTelemetry({...f.sample(),deafened:value})};return stop;
   }` }));

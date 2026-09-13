@@ -97,7 +97,7 @@ export class TavernCallDriver extends WidgetDriver {
 
 export type ConferenceDevices = { audio_enabled?: boolean; video_enabled?: boolean };
 export type ConferenceControls = (() => Promise<void>) & { setDevices: (devices: ConferenceDevices) => Promise<void>; setDeafened: (deafened: boolean) => Promise<void> };
-export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void,options:{voiceOnly?:boolean;onTelemetry?:(value:ConferenceTelemetry|null)=>void}={}):Promise<ConferenceControls>{
+export async function mountConference(client:MatrixClient,roomId:string,iframe:HTMLIFrameElement,onClose:()=>void,signal?:AbortSignal,onJoined?:()=>void,managedSession=false,onDevices?:(devices:ConferenceDevices)=>void,options:{voiceChannel?:boolean;onTelemetry?:(value:ConferenceTelemetry|null)=>void}={}):Promise<ConferenceControls>{
   signal?.throwIfAborted();if(!managedSession)claimMedia('conference');
   try {
   const room=client.getRoom(roomId);if(!room||!await client.getCrypto()?.isEncryptionEnabledInRoom(roomId))throw new Error('Conferences require an encrypted room.');
@@ -105,7 +105,8 @@ export async function mountConference(client:MatrixClient,roomId:string,iframe:H
   if(!room.currentState.maySendStateEvent(EventType.GroupCallMemberPrefix,client.getUserId()!))throw new Error('A room administrator must enable conference membership in channel permissions.');
   const transports=await client._unstable_getRTCTransports();if(!transports.length)throw new Error('Configure the self-hosted MatrixRTC services before joining a conference.');
   signal?.throwIfAborted();
-  const homeserver=client.getHomeserverUrl(),widgetId=crypto.randomUUID(),telemetrySession=crypto.randomUUID(),actor=client.getUserId(),deviceId=client.getDeviceId(),params=new URLSearchParams({widgetId,tavernTelemetry:telemetrySession,parentUrl:location.origin,roomId,userId:actor!,deviceId:deviceId!,baseUrl:conferenceHomeserverUrl(homeserver,location.origin),intent:options.voiceOnly?'start_call_voice':'start_call',perParticipantE2EE:'true',allowIceFallback:'false',confineToRoom:'true',theme:'dark',background:'solid',showControls:'true'});
+  const homeserver=client.getHomeserverUrl(),widgetId=crypto.randomUUID(),telemetrySession=crypto.randomUUID(),actor=client.getUserId(),deviceId=client.getDeviceId(),params=new URLSearchParams({widgetId,tavernTelemetry:telemetrySession,parentUrl:location.origin,roomId,userId:actor!,deviceId:deviceId!,baseUrl:conferenceHomeserverUrl(homeserver,location.origin),intent:options.voiceChannel?'start_call_voice':'start_call',perParticipantE2EE:'true',allowIceFallback:'false',confineToRoom:'true',theme:'dark',background:'solid',showControls:'true'});
+  if(options.voiceChannel)params.set('skipLobby','true');
   const url=new URL('/element-call/index.html',location.origin);url.hash='?'+params;
   const driver=new TavernCallDriver(client,roomId),api=new ClientWidgetApi(new Widget({id:widgetId,creatorUserId:client.getUserId()!,type:'m.custom',name:'Tavern conference',url:url.href,waitForIframeLoad:false}),iframe,driver);api.setViewedRoomId(roomId);
   let stopped=false;

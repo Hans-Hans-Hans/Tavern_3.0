@@ -8,7 +8,7 @@ import { loadTs } from './load-ts.mjs';
 import { PINNED_CALL_ASSET, transformCallTelemetry } from '../scripts/transform-call-telemetry.mjs';
 
 const protocol = loadTs('../lib/conference-telemetry-protocol.ts', {});
-const { attachEmbeddedCallTelemetry } = loadTs('../lib/embedded-call-telemetry.ts', { './conference-telemetry-protocol.js': protocol, './conference-output.js': loadTs('../lib/conference-output.ts', {}) });
+const { attachEmbeddedCallTelemetry } = loadTs('../lib/embedded-call-telemetry.ts', { './audio-processing.js': loadTs('../lib/audio-processing.ts', {}), './conference-telemetry-protocol.js': protocol, './conference-output.js': loadTs('../lib/conference-output.ts', {}) });
 const nonce = 'abcdefgh-1234-4567-8901-abcdefgh1234', widget = 'widgetab-1234-4567-8901-abcdefgh1234', roomId = '!voice:local';
 class Behavior {
   listeners = new Set();
@@ -64,12 +64,36 @@ test('actual pinned audio voice intent disables initial video before media-devic
   const logger = { debug() {}, info() {} };
   const urls = evaluate(source('/UrlParams.ts'), { react: {}, 'react-router-dom': {}, 'matrix-js-sdk/lib/logger': { logger }, 'lodash-es': { pickBy: (object, predicate) => Object.fromEntries(Object.entries(object).filter(([, value]) => predicate(value))) }, './config/Config': {}, './e2ee/e2eeType': {}, './Platform': { platform: 'desktop' }, './utils/redact': { redact: x => x } });
   const initial = evaluate(source('/initialMuteState.ts'), { 'matrix-js-sdk/lib/logger': { logger } });
-  for (const intent of ['start_call_voice', 'join_existing_voice']) {
-    const params = urls.computeUrlParams('', '#?' + new URLSearchParams({ widgetId: widget, parentUrl: 'https://tavern.test', intent }));
-    assert.equal(params.callIntent, 'audio'); assert.equal(params.skipLobby, false);
+  for (const intent of ['start_call_voice', 'join_existing_voice']) for (const skipLobby of [false, true]) {
+    const params = urls.computeUrlParams('', '#?' + new URLSearchParams({ widgetId: widget, parentUrl: 'https://tavern.test', intent, skipLobby: String(skipLobby) }));
+    assert.equal(params.callIntent, 'audio'); assert.equal(params.skipLobby, skipLobby);
     assert.deepEqual(initial.calculateInitialMuteState(params.skipLobby, params.callIntent, true), { audioEnabled: true, videoEnabled: false });
   }
   assert.match(source('/MuteStates.ts'), /this\.mediaDevices\.videoInput,\s*this\.initialMuteState\.videoEnabled/);
+});
+
+test('embedded processing applies only to the attested local microphone and follows replacement tracks', async context => {
+  const f = fixture(context), audio = loadTs('../lib/audio-processing.ts', {}); let writes = 0;
+  const makeTrack = () => { let settings = {}; return { kind: 'audio', readyState: 'live', enabled: false, getConstraints: () => ({}), getSettings: () => settings, async applyConstraints(value) { writes++; settings = Object.fromEntries(audio.audioProcessingKeys.map(key => [key, value[key].ideal])); } }; };
+  const first = makeTrack(); f.track.mediaStreamTrack = first; f.participant.isLocal = true; f.member.userId = '@me:local'; f.member.membership$.value = { userId: '@me:local', deviceId: 'LOCAL', rtcBackendIdentity: f.participant.identity };
+  const publication = f.participant.getTrackPublication; f.participant.getTrackPublication = source => source === 'screen_share_audio' ? { track: { mediaStreamTrack: { ...makeTrack(), applyConstraints() { throw new Error('Shared audio must not be processed'); } } } } : publication(source);
+  f.view.localMatrixLivekitMember$.value = f.member; f.view.remoteMatrixLivekitMembers$.value = [];
+  f.host.navigator = { mediaDevices: { getSupportedConstraints: () => audio.speechProcessing } }; f.host.localStorage = { getItem: () => JSON.stringify(audio.musicProcessing) };
+  attachEmbeddedCallTelemetry(f.scope, f.room, f.view, f.host); await flush(); context.mock.timers.tick(200);
+  assert.deepEqual(f.messages.at(-1).body.microphoneProcessing, { state: 'applied', ...audio.musicProcessing }); assert.equal(first.enabled, false); assert.equal(writes, 1);
+  f.track.mediaStreamTrack = makeTrack(); f.participant.emit('localTrackPublished'); await flush(); context.mock.timers.tick(200); assert.equal(writes, 2);
+  // This browser accepts applyConstraints but retains its old processing.
+  const old = makeTrack(); old.applyConstraints = async () => {}; old.getSettings = () => ({ ...audio.speechProcessing, deviceId: 'private-input' });
+  f.track.mediaStreamTrack = old; let replacements = 0;
+  f.track.restartTrack = async options => { replacements++; assert.deepEqual(options.deviceId, { exact: 'private-input' }); old.readyState = 'ended'; f.track.mediaStreamTrack = { ...makeTrack(), getSettings: () => ({ ...audio.musicProcessing, deviceId: 'private-input' }) }; };
+  f.participant.emit('localTrackPublished'); await flush(); context.mock.timers.tick(200);
+  assert.equal(replacements, 1); assert.equal(old.readyState, 'ended'); assert.equal(f.track.mediaStreamTrack.enabled, false);
+  assert.deepEqual(f.messages.at(-1).body.microphoneProcessing, { state: 'applied', ...audio.musicProcessing });
+  const packet = f.messages.at(-1).body;
+  assert.equal(protocol.parseConferenceTelemetry({ ...packet, microphoneProcessing: { ...packet.microphoneProcessing, deviceId: 'private-input' } }), null);
+  assert.equal(protocol.parseConferenceTelemetry({ ...packet, microphoneProcessing: { ...packet.microphoneProcessing, noiseSuppression: 'true' } }), null);
+  assert.doesNotMatch(JSON.stringify(packet), /private-input/);
+  f.ends[0](); f.participant.emit('localTrackPublished'); await flush(); assert.equal(writes, 2);
 });
 
 test('bridge uses existing attested participants and actual numeric RTP samples without publishing raw report data', async context => {

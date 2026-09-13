@@ -4,10 +4,9 @@ import { MatrixRTCSessionEvent } from 'matrix-js-sdk/lib/matrixrtc/MatrixRTCSess
 import { toast } from 'sonner';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { accountArtworkOwner } from '@/lib/api';
-import { callsConfigured, callSnapshot } from '@/lib/calls';
-import { conferenceSnapshot, subscribeConference, openConference, minimizeConference } from '@/lib/conference-session';
+import { joinVoiceChannel } from '@/lib/voice-channel-join';
+import { conferenceSnapshot, subscribeConference, minimizeConference } from '@/lib/conference-session';
 import { attachVoiceChannelView } from '@/lib/voice-channel-view';
-import { readChannelPolicy } from '@/lib/channel-policy';
 import type { ConferenceTelemetry } from '@/lib/conference-telemetry';
 import { CommunityAvatar } from './community-settings';
 import './voice-channel.css';
@@ -64,16 +63,12 @@ export function VoiceChannel({ roomId, name, disabled, onProfile }: { roomId: st
     const current = () => joinOwner.current === identity && getMatrixClient() === client && accountArtworkOwner() === owner && client?.getUserId() === actor && client?.getDeviceId() === device && client?.getRoom(roomId) === room;
     joining.current = true; setBusy(true);
     try {
-      if (!await callsConfigured()) throw new Error('Voice calls are not configured. Ask your administrator to enable calls.');
-      if (!current() || client?.getRoom(roomId)?.getMyMembership() !== 'join' || readChannelPolicy(roomId).kind !== 'voice') return;
-      const direct = callSnapshot().call;
-      if (direct && direct.state !== 'ended') throw new Error('Finish the direct call before joining this voice channel.');
-      openConference(roomId);
+      await joinVoiceChannel(roomId, current);
     } catch (error) { if (current()) toast.error((error as Error).message); }
     finally { if (joinOwner.current === identity) { joining.current = false; setBusy(false); } }
   }
   return <div ref={root} className="voice-channel" aria-label={'Voice channel ' + name}>
-    <div className="voice-channel-welcome"><span className="voice-channel-symbol"><Headphones size={32}/></span><h2>{name}</h2><p>A place to talk. Join with your microphone; your camera stays off.</p>
+    <div className="voice-channel-welcome"><span className="voice-channel-symbol"><Headphones size={32}/></span><h2>{name}</h2><p>Join with your microphone. Turn on your camera or share your screen whenever you choose.</p>
       <button className="primary-button" disabled={disabled || busy} onClick={() => void join()}><Headphones size={18}/>{busy ? 'Checking voice access…' : session.roomId === roomId ? 'Return to voice' : 'Join voice'}</button>
       <small><LockKeyhole size={14}/>Voice uses the encrypted conference service.</small>
     </div>

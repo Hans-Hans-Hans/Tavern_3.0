@@ -108,8 +108,9 @@ test('embedded version discovery uses the public native URL while the authentica
 
 test('voice mount requests audio-only startup and stops accepting observations after native room replacement', async () => {
   const { conference, client, room, telemetry } = setup(), iframe = { src: '' };
-  const controls = await conference.mountConference(client, '!room:local', iframe, () => {}, undefined, undefined, true, undefined, { voiceOnly: true });
+  const controls = await conference.mountConference(client, '!room:local', iframe, () => {}, undefined, undefined, true, undefined, { voiceChannel: true });
   assert.equal(new URLSearchParams(new URL(iframe.src).hash.slice(2)).get('intent'), 'start_call_voice');
+  assert.equal(new URLSearchParams(new URL(iframe.src).hash.slice(2)).get('skipLobby'), 'true');
   assert.equal(telemetry().isCurrent(), true);
   client.getRoom = () => ({ ...room });
   assert.equal(telemetry().isCurrent(), false);

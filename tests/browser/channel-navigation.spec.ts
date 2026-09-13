@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { navigationDrop } from '../../scripts/smoke-navigation-drop.mjs';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
 async function setup(page: Page) {
   page.on('pageerror', error => console.error(error.message));
@@ -11,6 +13,23 @@ async function setup(page: Page) {
 }
 const channel = (page: Page, id: string) => page.locator(`[data-channel-id="!${id}:local"] .channel-navigation-row`);
 const category = (page: Page, id: string) => page.locator(`[data-category-id="${id}"]`);
+
+test('clicking a voice row invokes the actual workspace join handler once while initial navigation does not', async ({ page }) => {
+  const source = ts.createSourceFile('tavern.tsx', readFileSync('app/tavern.tsx', 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX); let handler = '';
+  const visit = (node: ts.Node) => { if (ts.isFunctionDeclaration(node) && node.name?.text === 'selectChannel') handler = node.getText(source); ts.forEachChild(node, visit); }; visit(source);
+  if (!handler) throw new Error('The workspace voice selection handler must be present.');
+  await page.route(url => url.pathname === '/lib/calls.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const callsConfigured=async()=>true;export const callSnapshot=()=>({call:null});' }));
+  await page.route(url => url.pathname === '/lib/conference-session.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const openConference=id=>(window.voiceSelections??=[]).push(id);' }));
+  const body = ts.transpileModule(`import {joinVoiceChannel} from '/lib/voice-channel-join.ts';import {readChannelPolicy} from '/lib/channel-policy.ts';const navigationGeneration={current:0},data={preview:false},select=id=>{navigationGeneration.current++;window.selected.push(id);},toast={error:message=>{throw Error(message);}};${handler};export {selectChannel};`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+  await page.route('**/voice-selection-boundary.js', route => route.fulfill({ contentType: 'text/javascript', body }));
+  await setup(page);
+  await page.evaluate(async () => { const path = '/voice-selection-boundary.js'; (window as any).selectChannel = (await import(/* @vite-ignore */ path)).selectChannel; });
+  expect(await page.evaluate(() => (window as any).voiceSelections || [])).toEqual([]);
+  await page.getByRole('button', { name: 'General', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).voiceSelections || [])).toEqual([]);
+  await page.getByRole('button', { name: 'Lounge', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).voiceSelections)).toEqual(['!voice:local']);
+});
 
 test('uncategorized children can be organized when native state returns them in a different order', async ({ page }) => {
   await setup(page);

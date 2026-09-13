@@ -8,10 +8,12 @@ import { CallErrorCode, CallState } from 'matrix-js-sdk/lib/webrtc/call';
 import { accountArtworkOwner } from './api';
 import { callRelayError, callCancelledError, currentCallRelay, refreshCallRelay, configureInitialCallRelay } from './call-relay';
 import { createCallDismissals } from './call-dismissal';
+import { readAudioProcessing, saveAudioProcessing, subscribeAudioProcessing, audioProcessingKeys, MicrophoneProcessingController, type AudioProcessingReport } from './audio-processing';
 let client: MatrixClient | null = null;
 let active: MatrixCall | null = null;
 let error = '';
 let busy = false;
+let processingReport: AudioProcessingReport | null = null;
 let mediaEpoch = 0;
 export type CallMediaSettings = { audioInput: string; videoInput: string; audioOutput: string; outputVolume: number; noiseSuppression: boolean; echoCancellation: boolean; autoGainControl: boolean; deafened: boolean; pushToTalk: boolean };
 let media: CallMediaSettings = { audioInput: '', videoInput: '', audioOutput: '', outputVolume: 1, noiseSuppression: true, echoCancellation: true, autoGainControl: true, deafened: false, pushToTalk: false };
@@ -33,17 +35,22 @@ function callOwner(c: MatrixClient, roomId: string) {
 }
 const hasEnded = (call: MatrixCall) => call.state === CallState.Ended;
 export function subscribeCalls(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; }
-export function callSnapshot() { return { call: active, error, busy, media, client }; }
+export function callSnapshot() { return { call: active, error, busy, media, client, processing: processingReport }; }
 function attach(call: MatrixCall) {
   claimMedia('direct',true);detach?.(); active = call; error = '';
   const handled = dismissed;
+  const owner = client ? identityOwner(client) : () => false;
+  const processor = new MicrophoneProcessingController(() => active === call && owner() && !hasEnded(call), () => navigator.mediaDevices?.getSupportedConstraints?.() || {}, value => { processingReport = value; changed(); });
+  const processMicrophone = () => processor.refresh(call.localUsermediaStream?.getAudioTracks()[0], readAudioProcessing());
+  const offProcessing = subscribeAudioProcessing(processMicrophone);
+  processingReport = null; processMicrophone();
   const stateChanged = () => { if ([CallState.Connecting, CallState.Connected, CallState.Ended].includes(call.state)) handled?.remember(call.callId); changed(); };
   const failure = (e: Error) => { error = e.message; changed(); };
   const replaced = (next: MatrixCall) => attach(next);
   const ended=()=>{handled?.remember(call.callId);if(active===call)releaseMedia('direct');changed();};
-  call.on(CallEvent.State, stateChanged); call.on(CallEvent.FeedsChanged, changed); call.on(CallEvent.Hangup, ended);
+  call.on(CallEvent.State, stateChanged); call.on(CallEvent.FeedsChanged, changed); call.on(CallEvent.FeedsChanged, processMicrophone); call.on(CallEvent.Hangup, ended);
   call.on(CallEvent.Error, failure); call.on(CallEvent.Replaced, replaced);
-  detach = () => { call.off(CallEvent.State, stateChanged); call.off(CallEvent.FeedsChanged, changed); call.off(CallEvent.Hangup, ended); call.off(CallEvent.Error, failure); call.off(CallEvent.Replaced, replaced); };
+  detach = () => { processor.dispose(); offProcessing(); call.off(CallEvent.FeedsChanged, processMicrophone); call.off(CallEvent.State, stateChanged); call.off(CallEvent.FeedsChanged, changed); call.off(CallEvent.Hangup, ended); call.off(CallEvent.Error, failure); call.off(CallEvent.Replaced, replaced); };
   changed();
 }
 function incoming(call: MatrixCall) {
@@ -87,6 +94,11 @@ async function requireRelay(roomId: string) {
   if (!await callsConfigured()) throw new Error('Your administrator must enable calls and configure TURN before you can connect.');
   if (!owned()) throw new Error(callCancelledError);
   const servers = await refreshCallRelay(current, owned);
+  const processing = readAudioProcessing();
+  if (!owned()) throw new Error(callCancelledError);
+  await current.getMediaHandler().setAudioSettings(processing);
+  if (!owned()) throw new Error(callCancelledError);
+  media = { ...media, ...processing };
   return { current, owned, servers };
 }
 export async function startCall(roomId: string, video: boolean) {
@@ -150,15 +162,20 @@ function gateMicrophone(call: MatrixCall, muted: boolean) {
 function muteTracks() { if (active) gateMicrophone(active, true); }
 let settingsChange: Promise<void> = Promise.resolve();
 export async function setCallMediaSettings(patch: Partial<CallMediaSettings>) {
+  const settingsClient = client, owned = settingsClient ? identityOwner(settingsClient) : () => client === null;
   if (patch.outputVolume !== undefined && (!Number.isFinite(patch.outputVolume) || patch.outputVolume < 0 || patch.outputVolume > 1)) throw new Error('Choose a volume from 0 to 100%.');
   // Privacy toggles take effect before any asynchronous device replacement.
   const talkModeChanged = patch.pushToTalk !== undefined && patch.pushToTalk !== media.pushToTalk;
   if (patch.deafened === true || talkModeChanged) { media = { ...media, ...(patch.deafened === true ? { deafened: true } : {}), ...(talkModeChanged ? { pushToTalk: patch.pushToTalk! } : {}) }; muteTracks(); changed(); }
   const apply = async () => {
+    if (!owned()) throw new Error('The call account changed. Open its device settings again.');
     const next = { ...media, ...patch }, handler = client?.getMediaHandler();
     const changedInputs = next.audioInput !== media.audioInput || next.videoInput !== media.videoInput, changedProcessing = next.noiseSuppression !== media.noiseSuppression || next.echoCancellation !== media.echoCancellation || next.autoGainControl !== media.autoGainControl;
     if (handler && changedInputs) await handler.setMediaInputs(next.audioInput, next.videoInput);
+    if (!owned()) throw new Error('The call account changed. Open its device settings again.');
     if (handler && changedProcessing) await handler.setAudioSettings({ noiseSuppression: next.noiseSuppression, echoCancellation: next.echoCancellation, autoGainControl: next.autoGainControl });
+    if (!owned()) throw new Error('The call account changed. Open its device settings again.');
+    if (audioProcessingKeys.some(key => patch[key] !== undefined)) saveAudioProcessing({ noiseSuppression: next.noiseSuppression, echoCancellation: next.echoCancellation, autoGainControl: next.autoGainControl });
     media = { ...media, ...patch };
     try { localStorage.setItem('tavern.call-devices', JSON.stringify({ audioInput: media.audioInput, videoInput: media.videoInput, audioOutput: media.audioOutput })); } catch { /* Continue with session preferences. */ }
     if (media.deafened || talkModeChanged || (media.pushToTalk && (changedInputs || changedProcessing))) { muteTracks(); await active?.sendMetadataUpdate(); }

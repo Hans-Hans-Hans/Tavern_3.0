@@ -212,16 +212,17 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
       const synthetic = await run(() => page.evaluate(inspectSyntheticDevices), 'synthetic-devices');
       devices = ['synthetic', 'missing', 'unlabeled', 'unexpected', 'unavailable'].includes(synthetic) ? synthetic : 'unavailable';
       requireProof(devices === 'synthetic', 'Embedded conference requires Chromium synthetic capture devices and origin-scoped permission.');
-      requireProof(await run(() => page.locator(FRAME).count(), 'initial-frame') === 0, 'Embedded conference must not replace another active call.');
+      if (voiceFixture) { await run(() => page.locator(FRAME).waitFor({ state: 'visible', timeout: 30000 }), 'voice-click-join', 30000); opened.add(page); }
+      requireProof(await run(() => page.locator(FRAME).count(), 'initial-frame') === (voiceFixture ? 1 : 0), 'Embedded conference must match the deliberate voice selection without replacing another call.');
     }
     for (const page of owners.keys()) {
       await scope(page); opened.add(page);
-      await run(() => page.getByRole('button', { name: voiceFixture ? 'Join voice' : 'Join conference', exact: true }).click({ timeout: 15000 }), 'open-widget');
+      if (!voiceFixture) await run(() => page.getByRole('button', { name: 'Join conference', exact: true }).click({ timeout: 15000 }), 'open-widget');
       const lobby = page.frameLocator(FRAME).getByTestId('lobby_joinCall');
-      await run(() => lobby.waitFor({ state: 'visible', timeout: 45000 }), 'widget-lobby', 45000);
+      if (!voiceFixture) await run(() => lobby.waitFor({ state: 'visible', timeout: 45000 }), 'widget-lobby', 45000);
       await scope(page);
       requireProof(await run(() => page.evaluate(installConferenceObserver, { nonce, roomId, owner: owners.get(page), owners: [...owners.values()].map(({ userId, deviceId }) => ({ userId, deviceId })), failureFields: conferenceFailureFields }), 'observer-binding'), 'Embedded conference iframe did not match its owning native device.');
-      await run(() => lobby.click({ timeout: 15000 }), 'join-widget');
+      if (!voiceFixture) await run(() => lobby.click({ timeout: 15000 }), 'join-widget');
     }
     await run(() => Promise.all([...owners.keys()].map(page => page.waitForFunction(nonce => {
       const probe = window.__tavernCiConferenceSmoke, value = probe?.nonce === nonce ? probe.read() : null;
@@ -235,6 +236,17 @@ export async function conferenceSmoke({ alice, bob, aliceSession, bobSession, ro
     }
     if (voiceFixture) {
       await scope(alice);
+      const microphoneSettings = alice.locator('.conference-microphone-settings');
+      await run(() => microphoneSettings.locator('summary').first().click(), 'voice-processing-settings');
+      for (const mode of ['music', 'speech']) {
+        await run(() => microphoneSettings.getByRole('combobox', { name: 'Microphone mode', exact: true }).selectOption(mode), 'voice-processing-' + mode);
+        await run(() => alice.waitForFunction(mode => {
+          const panel = document.querySelector('.conference-microphone-settings .audio-processing-settings');
+          return panel?.getAttribute('data-audio-mode') === mode && panel.getAttribute('data-audio-confirmed') === 'true';
+        }, mode, { timeout: 15000 }), 'voice-processing-confirmed-' + mode, 15000);
+        await scope(alice);
+      }
+      await run(() => microphoneSettings.locator('summary').first().click(), 'voice-processing-close');
       const receivers = () => alice.frameLocator(FRAME).locator('audio').evaluateAll(elements => elements.flatMap(element => element.srcObject instanceof MediaStream ? element.srcObject.getAudioTracks().filter(track => track.readyState === 'live').map(track => track.enabled) : []));
       const before = await run(receivers, 'voice-output-before');
       requireProof(before.length > 0 && before.every(Boolean), 'Native voice requires an existing playing remote receiver before testing deafen.');

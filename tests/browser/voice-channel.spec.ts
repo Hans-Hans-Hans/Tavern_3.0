@@ -6,8 +6,8 @@ async function fixture(page: Page) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const mutateMatrixAccountData=async()=>{throw new Error("Read-only voice fixture cannot write account data")};export const getMatrixClient=()=>window.voiceFixture?.client;export const onMatrixUpdate=fn=>{window.voiceFixture.listeners.add(fn);return()=>window.voiceFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/calls.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export const callSnapshot=()=>({call:window.voiceFixture.direct});export async function callsConfigured(){const f=window.voiceFixture;if(f.holdConfiguration)await new Promise(resolve=>f.releaseConfiguration=resolve);f.configurationReturns=(f.configurationReturns||0)+1;return f.configured;}` }));
   await page.route(url => url.pathname === '/lib/conference.ts', route => route.fulfill({ contentType: 'text/javascript', body: `export async function mountConference(client,roomId,frame,onLeave,signal,onJoined,managed,onDevices,options={}){
-    const f=window.voiceFixture;f.mounts.push({roomId,voiceOnly:options.voiceOnly});f.telemetry.push(options.onTelemetry);
-    frame.srcdoc='<button>Widget device controls</button>';onJoined();onDevices({audio_enabled:true,video_enabled:!options.voiceOnly});
+    const f=window.voiceFixture;f.mounts.push({roomId,voiceChannel:options.voiceChannel});f.telemetry.push(options.onTelemetry);
+    frame.srcdoc='<button>Widget device controls</button>';onJoined();onDevices({audio_enabled:true,video_enabled:!options.voiceChannel});
     const stop=async()=>{f.stops.push(roomId)};stop.setDevices=async value=>{f.deviceChanges??=[];f.deviceChanges.push(value);onDevices(value)};return stop;
   }` }));
   await page.route('**/voice-channel-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><meta charset='utf-8'></head><body><div id='root'></div><script type='module'>import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import('/tests/browser/fixtures/voice-channel.tsx')).mountFixture();</script></body></html>` }));
@@ -35,9 +35,9 @@ test('voice lobby uses current native membership, groups devices and never captu
 test('voice join retains the widget until telemetry arrives and exposes actual measured status and device controls', async ({ page }) => {
   await fixture(page); await join(page);
   const panel = page.getByRole('region', { name: 'Conference in Voice lounge' });
-  expect(await page.evaluate(() => (window as any).voiceFixture.mounts)).toEqual([{ roomId: '!voice:local', voiceOnly: true }]);
-  await expect(panel.getByRole('button', { name: /conference camera/ })).toHaveCount(0);
-  const frame = panel.locator('iframe'); await expect(frame).toHaveAttribute('allow', /camera 'none'.*display-capture 'none'/);
+  expect(await page.evaluate(() => (window as any).voiceFixture.mounts)).toEqual([{ roomId: '!voice:local', voiceChannel: true }]);
+  await expect(panel.getByRole('button', { name: 'Enable conference camera', exact: true })).toBeVisible();
+  const frame = panel.locator('iframe'); await expect(frame).toHaveAttribute('allow', 'camera; microphone; display-capture; autoplay; fullscreen');
   await expect(frame).not.toHaveClass(/voice-frame-hidden/); await expect(page.getByText('Voice connected', { exact: true })).toHaveCount(0);
   await page.evaluate(() => { const f = (window as any).voiceFixture; f.publish(f.sample()); });
   await expect(page.getByText('Voice connected', { exact: true })).toBeVisible(); await expect(page.getByText('Ping: 42 ms', { exact: true })).toBeVisible();
@@ -49,6 +49,36 @@ test('voice join retains the widget until telemetry arrives and exposes actual m
   await page.getByRole('button', { name: 'Call controls and devices', exact: true }).click(); await expect(frame).not.toHaveClass(/voice-frame-hidden/);
   await page.getByRole('button', { name: 'Show voice participants', exact: true }).click(); await expect(frame).toHaveClass(/voice-frame-hidden/);
   expect(await page.evaluate(() => (window as any).voiceFixture.captures)).toBe(0);
+});
+
+test('voice cameras and remote screen shares reveal the existing media view without restarting voice', async ({ page }) => {
+  await fixture(page); await join(page);
+  const panel = page.getByRole('region', { name: 'Conference in Voice lounge' }), frame = panel.locator('iframe');
+  await page.evaluate(() => { const f = (window as any).voiceFixture; f.publish(f.sample()); });
+  await expect(frame).toHaveClass(/voice-frame-hidden/);
+  await panel.getByRole('button', { name: 'Enable conference camera', exact: true }).click(); await expect(frame).not.toHaveClass(/voice-frame-hidden/);
+  await panel.getByRole('button', { name: 'Disable conference camera', exact: true }).click(); await expect(frame).toHaveClass(/voice-frame-hidden/);
+  await page.evaluate(() => { const f = (window as any).voiceFixture, value = f.sample(); value.participants[1].screenShareEnabled = true; f.publish(value); });
+  await expect(frame).not.toHaveClass(/voice-frame-hidden/);
+  await page.evaluate(() => { const f = (window as any).voiceFixture; f.publish(f.sample()); }); await expect(frame).toHaveClass(/voice-frame-hidden/);
+  await panel.getByRole('button', { name: 'Open screen sharing controls', exact: true }).click(); await expect(frame).not.toHaveClass(/voice-frame-hidden/);
+  expect(await page.evaluate(() => (window as any).voiceFixture.mounts.length)).toBe(1);
+  expect(await page.evaluate(() => (window as any).voiceFixture.deviceChanges)).toEqual([{ video_enabled: true }, { video_enabled: false }]);
+  expect(await page.evaluate(() => (window as any).voiceFixture.captures)).toBe(0);
+});
+
+test('conference microphone mode persists without requesting extra capture and reports unconfirmed processing honestly', async ({ page }) => {
+  await fixture(page); await join(page);
+  await page.getByText('Microphone audio', { exact: true }).click();
+  await page.getByRole('combobox', { name: 'Microphone mode', exact: true }).selectOption('music');
+  await page.getByText('Advanced microphone processing', { exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Echo cancellation', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Noise suppression', exact: true })).not.toBeChecked();
+  await page.evaluate(() => { const f = (window as any).voiceFixture, value = f.sample(); value.microphoneProcessing = { state: 'partial', noiseSuppression: null, echoCancellation: true, autoGainControl: null }; f.publish(value); });
+  await expect(page.getByText('This browser cannot confirm every processing setting.', { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).voiceFixture.captures)).toBe(0);
+  await page.reload(); await join(page); await page.getByText('Microphone audio', { exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Microphone mode', exact: true })).toHaveValue('music');
 });
 
 test('telemetry loss removes stale measurements and restores the existing widget, without remounting media', async ({ page }) => {
@@ -103,7 +133,7 @@ test('video conferences retain their camera controls and never adopt voice-only 
   const panel = page.getByRole('region', { name: 'Conference in Video meeting' }); await expect(panel).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Disable conference camera', exact: true })).toBeVisible();
   await expect(panel.locator('iframe')).toHaveAttribute('allow', 'camera; microphone; display-capture; autoplay; fullscreen');
-  expect(await page.evaluate(() => (window as any).voiceFixture.mounts)).toEqual([{ roomId: '!video:local', voiceOnly: false }]);
+  expect(await page.evaluate(() => (window as any).voiceFixture.mounts)).toEqual([{ roomId: '!video:local', voiceChannel: false }]);
 });
 
 test('active call failure exposes only safe copied details and does not leak into a replacement call', async ({ page, context }) => {

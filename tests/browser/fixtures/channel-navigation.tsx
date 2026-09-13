@@ -58,7 +58,7 @@ export function mountFixture() {
   function App() {
     const [, redraw] = useState(0); w.redraw = () => redraw(value => value + 1);
     const channels = Object.keys(names).map(id => ({ id, name: names[id], unread: id === '!general:local' ? 3 : id === '!rules:local' ? 100 : 0, mentions: id === '!general:local' ? 2 : 0 }));
-    return <div className='channel-sidebar' style={{ width: 340, height: 450, overflowY: 'auto', padding: 10 }}><ChannelNavigation serverId={w.serverId || '!server:local'} channels={channels} active='!general:local' createCategoryRequest={w.categoryRequest || 0} muted={['!rules:local']} focus={!!w.focusMode} onSelect={id => w.selected.push(id)} onCreateChannel={value => w.callbacks.push(['create', value])} onEditChannel={id => w.callbacks.push(['edit', id])} onInviteChannel={id => w.callbacks.push(['invite', id])} renderParticipants={id => <div data-testid='voice-participants'>Live roster for {id}</div>}/></div>;
+    return <div className='channel-sidebar' style={{ width: 340, height: 450, overflowY: 'auto', padding: 10 }}><ChannelNavigation serverId={w.serverId || '!server:local'} channels={channels} active='!general:local' createCategoryRequest={w.categoryRequest || 0} muted={['!rules:local']} focus={!!w.focusMode} onSelect={id => w.selectChannel ? w.selectChannel(id) : w.selected.push(id)} onCreateChannel={value => w.callbacks.push(['create', value])} onEditChannel={id => w.callbacks.push(['edit', id])} onInviteChannel={id => w.callbacks.push(['invite', id])} renderParticipants={id => <div data-testid='voice-participants'>Live roster for {id}</div>}/></div>;
   }
   createRoot(document.getElementById('root')!).render(<Profiler id='navigation' onRender={() => { w.navigationCommits++; }}><App/></Profiler>);
 }

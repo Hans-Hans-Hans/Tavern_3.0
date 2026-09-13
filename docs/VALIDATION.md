@@ -2,6 +2,36 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Voice joining and microphone processing checkpoint
+
+Explicit voice channel selection now joins with the camera off and skips the
+lobby. Restoring navigation does not capture media. Camera and screen sharing
+remain available in the same persistent conference; active visual media exposes
+the existing video interface instead of leaving it behind the voice roster.
+
+Direct and conference calls share browser-local Speech/Music presets and
+individual noise, echo and gain settings. The UI checks observed microphone
+settings before reporting success. Real Chromium capture exposed an important
+constraint limitation: accepted ideal changes retained the old processing, and
+required changes failed. The owning LiveKit SDK now replaces capture when needed,
+preserving the selected device and native mute while stopping old capture.
+
+Local validation passed the production TypeScript/Vite build, all **750 model
+tests** and the complete **529-case browser suite**. A final **14-case browser
+rerun** covers the final processing confirmation/device-selection refinements,
+voice joining and responsive controls. It includes actual Chromium synthetic
+capture with the bundled LiveKit 2.22.0 code, verifies changed browser settings,
+and proves that a muted microphone stays muted after replacement. The focused
+Python call/publication/configuration checks completed **16 cases** (13 passed,
+three environment skips). These checks cover stale account/device/navigation
+ownership, local microphone isolation and bounded telemetry without device IDs.
+
+The native Games voice acceptance now exercises click-to-join and changes from
+Music back to Speech during the encrypted call before the existing deafen/leave
+checks. That updated Docker workflow remains pending at this local checkpoint.
+Synthetic capture confirms track behavior; acoustic noise/echo quality still
+requires real microphones, speakers and phones.
+
 ## Role artwork checkpoint
 
 Roles can use uploaded server emoji beside chat/member names and on profile
@@ -24,6 +54,11 @@ again after the final checkbox alignment adjustment.
 Image transport in these browser cases is controlled. This does not replace
 native authenticated media acceptance or a check on the deployed homelab.
 No new dependency or database migration is introduced.
+
+The complete workflow on **f787b52** subsequently passed:
+[CI run 34756383205](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34756383205).
+Both the Linux channel-menu regression and build/container jobs succeeded.
+This verifies the role-artwork checkpoint before the voice/audio changes above.
 
 ## Server emoji and avatar actions checkpoint
 

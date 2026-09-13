@@ -1,5 +1,6 @@
 import { CALL_TELEMETRY_TYPE, CALL_TELEMETRY_BIND, CALL_TELEMETRY_READY, CALL_AUDIO_SET, CALL_AUDIO_ACK, TELEMETRY_LIMIT, conferenceFailure, emptyConferenceMetrics, parseConferenceTelemetry, telemetryNonce, telemetryString, type ConferenceFailure, type ConferenceMetrics, type ConferenceParticipant } from './conference-telemetry-protocol.js';
 import { createConferenceOutputGate } from './conference-output.js';
+import { MicrophoneProcessingController, readAudioProcessing, subscribeAudioProcessing, emptyAudioProcessingReport } from './audio-processing.js';
 
 // These objects belong to pinned Element Call. Only its existing attested
 // members, public LiveKit track APIs, and observable cleanup scope are observed.
@@ -37,6 +38,7 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
     const output = playback.gate;
     let audioSequence = 0;
     let audioAvailable = false;
+    let microphoneProcessing = emptyAudioProcessingReport();
     const nested = new Map<Native, () => void>(), trackCounters = new WeakMap<object, Map<string, { received: number; lost: number }>>(), statsReads = new WeakMap<object, Promise<Native>>();
     const value = (observable: Native) => observable?.value;
     const members = () => { const local = value(view.localMatrixLivekitMember$), remote = value(view.remoteMatrixLivekitMembers$); return [...(local ? [local] : []), ...(Array.isArray(remote) ? remote.slice(0, TELEMETRY_LIMIT) : [])]; };
@@ -87,11 +89,27 @@ export function attachEmbeddedCallTelemetry(scope: Native, matrixRoom: Native, v
       const remote = value(view.remoteMatrixLivekitMembers$), memberCount = (value(view.localMatrixLivekitMember$) ? 1 : 0) + (Array.isArray(remote) ? remote.length : 0);
       const body = parseConferenceTelemetry({ type: CALL_TELEMETRY_TYPE, version: 1, widgetId, session, roomId, document, sequence: ++sequence.value,
         connected: active, reconnecting: value(view.reconnecting$) === true, participants: list.map(p => p.data), complete: memberCount <= TELEMETRY_LIMIT,
-        e2eeEnabled: enabled, metrics: failure ? emptyConferenceMetrics() : metrics, failure, deafened: active && audioAvailable ? output.read() : null });
+        e2eeEnabled: enabled, metrics: failure ? emptyConferenceMetrics() : metrics, failure, deafened: active && audioAvailable ? output.read() : null, microphoneProcessing: active ? microphoneProcessing : null });
       if (body) host.parent.postMessage(body, url.origin);
     };
     const schedule = () => { if (!stopped && !scheduled) scheduled = setTimeout(() => { try { emit(); } catch { stop(); } }, 200); };
-    const participantChanged = () => { refreshOutput(); schedule(); };
+    const processor = new MicrophoneProcessingController(current, () => host.navigator?.mediaDevices?.getSupportedConstraints?.() || {}, report => { microphoneProcessing = report; schedule(); });
+    const refreshMicrophone = () => {
+      const local = entries().find(entry => entry.participant.isLocal === true);
+      const native = local?.participant.getTrackPublication('microphone')?.track;
+      const owned = () => current() && entries().some(entry => entry.participant === local?.participant && entry.participant.isLocal === true && entry.participant.getTrackPublication('microphone')?.track === native);
+      const restart = typeof native?.restartTrack === 'function' ? { owner: native, current: owned, run: async (settings: ReturnType<typeof readAudioProcessing>) => {
+        if (!owned() || native.mediaStreamTrack?.readyState !== 'live') return null;
+        const track = native.mediaStreamTrack, constraints = track.getConstraints(), device = track.getSettings().deviceId;
+        // LiveKit 2.22 requires a deviceId to retain audio options on restart.
+        // Its public restart stops old capture first and preserves native mute.
+        await native.restartTrack({ ...constraints, ...settings, deviceId: constraints.deviceId || (device ? { exact: device } : 'default') });
+        return owned() ? native.mediaStreamTrack : null;
+      } } : undefined;
+      processor.refresh(native?.mediaStreamTrack, readAudioProcessing(host), restart);
+    };
+    cleanups.push(() => processor.dispose(), subscribeAudioProcessing(refreshMicrophone, host));
+    const participantChanged = () => { refreshOutput(); refreshMicrophone(); schedule(); };
     const subscribe = (observable: Native, listener: () => void, into = cleanups) => {
       const subscription = observable?.subscribe?.({ next: listener, error: schedule });
       if (subscription) into.push(() => subscription.unsubscribe());

@@ -1,3 +1,4 @@
+import type { AudioProcessingReport } from './audio-processing.js';
 export const CALL_TELEMETRY_TYPE = 'io.tavern.call.telemetry';
 export const CALL_TELEMETRY_READY = 'io.tavern.call.telemetry.ready';
 export const CALL_TELEMETRY_BIND = 'io.tavern.call.telemetry.bind';
@@ -16,7 +17,7 @@ export type ConferenceParticipant = {
   e2eeEnabled: boolean | null; encrypted: boolean | null;
 };
 export type ConferenceMetrics = { rttMs: number | null; jitterMs: number | null; packetLossPercent: number | null; sampledTracks: number; totalTracks: number };
-export type ConferenceTelemetry = { connected: boolean; reconnecting: boolean; participants: ConferenceParticipant[]; complete: boolean; e2eeEnabled: boolean | null; metrics: ConferenceMetrics; failure?: ConferenceFailure | null; deafened?: boolean | null };
+export type ConferenceTelemetry = { connected: boolean; reconnecting: boolean; participants: ConferenceParticipant[]; complete: boolean; e2eeEnabled: boolean | null; metrics: ConferenceMetrics; failure?: ConferenceFailure | null; deafened?: boolean | null; microphoneProcessing?: AudioProcessingReport | null };
 export type ConferenceTelemetryMessage = ConferenceTelemetry & { type: typeof CALL_TELEMETRY_TYPE; version: 1; widgetId: string; session: string; roomId: string; document: string; sequence: number };
 export const emptyConferenceMetrics = (): ConferenceMetrics => ({ rttMs: null, jitterMs: null, packetLossPercent: null, sampledTracks: 0, totalTracks: 0 });
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -53,13 +54,15 @@ export function conferenceFailure(error: unknown): ConferenceFailure {
   return failure;
 }
 export function parseConferenceTelemetry(value: unknown): ConferenceTelemetryMessage | null {
-  if (!record(value) || !keys(value, ['type', 'version', 'widgetId', 'session', 'roomId', 'document', 'sequence', 'connected', 'reconnecting', 'participants', 'complete', 'e2eeEnabled', 'metrics', ...(Object.hasOwn(value, 'failure') ? ['failure'] : []), ...(Object.hasOwn(value, 'deafened') ? ['deafened'] : [])]) ||
+  if (!record(value) || !keys(value, ['type', 'version', 'widgetId', 'session', 'roomId', 'document', 'sequence', 'connected', 'reconnecting', 'participants', 'complete', 'e2eeEnabled', 'metrics', ...(Object.hasOwn(value, 'failure') ? ['failure'] : []), ...(Object.hasOwn(value, 'deafened') ? ['deafened'] : []), ...(Object.hasOwn(value, 'microphoneProcessing') ? ['microphoneProcessing'] : [])]) ||
       value.type !== CALL_TELEMETRY_TYPE || value.version !== 1 || !telemetryNonce(value.widgetId) || !telemetryNonce(value.session) || !telemetryNonce(value.document) ||
       !telemetryString(value.roomId, 255) || !value.roomId.startsWith('!') || !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1 ||
       typeof value.connected !== 'boolean' || typeof value.reconnecting !== 'boolean' || typeof value.complete !== 'boolean' || !boolOrNull(value.e2eeEnabled) ||
       !Array.isArray(value.participants) || value.participants.length > TELEMETRY_LIMIT || value.deafened !== undefined && !boolOrNull(value.deafened)) return null;
   const failure = value.failure === undefined || value.failure === null ? null : parseFailure(value.failure);
   if (value.failure !== undefined && value.failure !== null && !failure) return null;
+  const processing = value.microphoneProcessing;
+  if (processing !== undefined && processing !== null && (!record(processing) || !keys(processing, ['state', 'noiseSuppression', 'echoCancellation', 'autoGainControl']) || !['waiting', 'applying', 'applied', 'partial', 'failed'].includes(processing.state as string) || !['noiseSuppression', 'echoCancellation', 'autoGainControl'].every(key => boolOrNull(processing[key])))) return null;
   const identities = new Set<string>();
   for (const participant of value.participants) {
     if (!record(participant) || !keys(participant, ['identity', 'userId', 'deviceId', 'displayName', 'avatarMxc', 'local', 'speaking', 'microphoneEnabled', 'cameraEnabled', 'screenShareEnabled', 'e2eeEnabled', 'encrypted']) ||
@@ -75,5 +78,5 @@ export function parseConferenceTelemetry(value: unknown): ConferenceTelemetryMes
       !Number.isSafeInteger(m.sampledTracks) || (m.sampledTracks as number) < 0 || (m.sampledTracks as number) > 8 ||
       !Number.isSafeInteger(m.totalTracks) || (m.totalTracks as number) < (m.sampledTracks as number) || (m.totalTracks as number) > TELEMETRY_LIMIT) return null;
   // Detached primitive-only data; callers cannot retain the event's mutable object.
-  return { ...value, participants: value.participants.map(p => ({ ...p })), metrics: { ...m }, failure } as ConferenceTelemetryMessage;
+  return { ...value, participants: value.participants.map(p => ({ ...p })), metrics: { ...m }, failure, ...(processing !== undefined ? { microphoneProcessing: processing === null ? null : { ...processing as AudioProcessingReport } } : {}) } as ConferenceTelemetryMessage;
 }

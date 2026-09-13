@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { AudioProcessingSettings } from './audio-processing';
+import { audioProcessingConstraints, readAudioProcessing } from '@/lib/audio-processing';
 import type { CallFeed } from 'matrix-js-sdk/lib/webrtc/callFeed';
 import { CallState } from 'matrix-js-sdk/lib/webrtc/call';
 import { Expand, Headphones, Maximize2, Mic, MicOff, Minimize2, Phone, PhoneOff, PictureInPicture2, ScreenShare, Settings2, Shrink, Video, VideoOff } from 'lucide-react';
@@ -65,7 +67,7 @@ function MicrophoneTest({ device }: { device: string }) {
     let stream: MediaStream | null = null, context: AudioContext | null = null, source: MediaStreamAudioSourceNode | null = null, timer = 0;
     const release = () => { cancelAnimationFrame(timer); source?.disconnect(); source = null; stream?.getTracks().forEach(track => track.stop()); stream = null; if (context && context.state !== 'closed') void context.close(); context = null; if (cleanup.current === release) cleanup.current = null; };
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: device ? { deviceId: { exact: device } } : true, video: false });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { ...audioProcessingConstraints(readAudioProcessing()), ...(device ? { deviceId: { exact: device } } : {}) }, video: false });
       if (!alive.current || current !== attempt.current) { release(); return; }
       cleanup.current = release; context = new AudioContext(); const analyser = context.createAnalyser(); source = context.createMediaStreamSource(stream);
       analyser.fftSize = 512; source.connect(analyser); const values = new Uint8Array(analyser.fftSize);
@@ -95,9 +97,7 @@ function DeviceSettings({ media, run }: { media: CallMediaSettings; run: (task: 
     {!outputSupported && <p className="call-control-caption">This browser uses your system speaker selection.</p>}
     <label>Output volume · {Math.round(media.outputVolume * 100)}%<input className="call-volume" type="range" min="0" max="100" value={Math.round(media.outputVolume * 100)} onChange={event => void setCallMediaSettings({ outputVolume: Number(event.target.value) / 100 }).catch(error => toast.error(error.message))}/></label>
     <label className="call-check"><input type="checkbox" checked={media.pushToTalk} onChange={event => void run(() => setCallMediaSettings({ pushToTalk: event.target.checked }))}/>Push to talk</label>
-    <label className="call-check"><input type="checkbox" checked={media.noiseSuppression} onChange={event => void run(() => setCallMediaSettings({ noiseSuppression: event.target.checked }))}/>Noise suppression</label>
-    <label className="call-check"><input type="checkbox" checked={media.echoCancellation} onChange={event => void run(() => setCallMediaSettings({ echoCancellation: event.target.checked }))}/>Echo cancellation</label>
-    <label className="call-check"><input type="checkbox" checked={media.autoGainControl} onChange={event => void run(() => setCallMediaSettings({ autoGainControl: event.target.checked }))}/>Automatic microphone gain</label>
+    <AudioProcessingSettings report={callSnapshot().processing} onChange={settings => setCallMediaSettings(settings)}/>
     <MicrophoneTest device={media.audioInput}/>
   </div>;
 }

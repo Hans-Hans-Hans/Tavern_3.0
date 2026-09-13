@@ -38,6 +38,13 @@ recovery prompts, server templates, access explanations, notification presets,
 an admin overview, sticker packs, event RSVPs/time-zone comparison and personal
 server colors. Its deployment and physical-phone acceptance checklist is included.
 
+Voice channel rows now join directly with the camera off; optional cameras and
+screen sharing use the same persistent encrypted call. Incoming visual media
+reveals the existing call frame. Shared Speech/Music microphone presets persist
+in the browser and report observed processing, including native microphone
+replacement when a browser cannot change processing in place. See
+[voice channels](VOICE_CHANNELS.md) and [microphone audio](MICROPHONE_AUDIO.md).
+
 | Area | Implemented | Remaining or deliberately limited scope |
 |---|---|---|
 | Encrypted history recovery | Automatic copying of retained same-account browser message keys after login; visible recovery-key setup/unlock, full backup restoration, device verification and encrypted key-file import ([recovery guide](HISTORY_RECOVERY.md)); actual managed relogin and fresh-browser backup recovery passed CI | History requires keys retained in a browser, backup or export. Test the original browser profiles and hostname on the target deployment. |

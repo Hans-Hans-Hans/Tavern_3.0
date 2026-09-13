@@ -27,7 +27,8 @@ async function fixture(task) {
   client.getUserId = () => f.actor; client.getDeviceId = () => f.device; client.getHomeserverUrl = () => f.base; client.getRoom = () => f.room;
   client.turnServer = async () => { if (f.beforeTurn) await f.beforeTurn(); return fresh(); };
   client.getMediaHandler().restoreMediaSettings = () => {};
-  const calls = loadTs('../lib/calls.ts', { './media-session': loadTs('../lib/media-session.ts', {}), 'matrix-js-sdk': sdk,
+  const calls = loadTs('../lib/calls.ts', {
+    './audio-processing': loadTs('../lib/audio-processing.ts', {}), './media-session': loadTs('../lib/media-session.ts', {}), 'matrix-js-sdk': sdk,
     'matrix-js-sdk/lib/webrtc/callFeed': { CallFeed }, 'matrix-js-sdk/lib/webrtc/callEventTypes': { SDPStreamMetadataPurpose },
     'matrix-js-sdk/lib/webrtc/callEventHandler': { CallEventHandlerEvent }, 'matrix-js-sdk/lib/webrtc/call': nativeCall,
     './instance': { readInstanceConfig: async () => ({ callsEnabled: true }) }, './api': { accountArtworkOwner: () => f.account }, './call-relay': relay, './call-dismissal': loadTs('../lib/call-dismissal.ts', {}) });
