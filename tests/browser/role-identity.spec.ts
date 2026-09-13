@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 async function fixture(page: Page) {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.roleIdentityFixture?.client;export const onMatrixUpdate=fn=>{window.roleIdentityFixture.listeners.add(fn);return()=>window.roleIdentityFixture.listeners.delete(fn)};' }));
-  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const readMemberProfile=(_room,user)=>({name:window.roleIdentityFixture.members.find(m=>m.userId===user)?.name||user,avatar:"",bio:"",status:"",accent:""});export const readMemberProfileContext=()=>({mutualServers:[]});' }));
+  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const profileImageBlob=async()=>{const f=window.roleIdentityFixture;f.imageRequests=(f.imageRequests||0)+1;if(f.holdImages)await new Promise(resolve=>{(f.pendingImages||=[]).push(resolve)});if(f.rejectImages)throw Error(\"Image unavailable\");return new Blob([Uint8Array.from(atob(\"R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\"),v=>v.charCodeAt(0))],{type:\"image/gif\"})};export const readMemberProfile=(_room,user)=>({name:window.roleIdentityFixture.members.find(m=>m.userId===user)?.name||user,avatar:"",bio:"",status:"",accent:""});export const readMemberProfileContext=()=>({mutualServers:[]});' }));
   await page.route(url => url.pathname === '/app/community-settings.tsx', route => route.fulfill({ contentType: 'text/javascript', body: 'export const CommunityImage=()=>null;' }));
   await page.route('**/role-identity-test', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/role-identity.tsx")).mountFixture();</script></body></html>' }));
   await page.goto('/role-identity-test'); await expect(page.getByRole('region',{name:'Chat name'})).toBeVisible();
@@ -29,6 +29,36 @@ test('chat names support profile clicks and role actions through the composed co
   await name.click({button:'right'});await page.getByRole('menuitem',{name:'Assign roles',exact:true}).click();
   expect(await page.evaluate(()=>(window as any).roleIdentityFixture.assignmentOpened)).toBe(true);
 });
+test('role artwork shares an authenticated image across chat and profiles and rejects a late old-account image', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { const f = (window as any).roleIdentityFixture; f.holdImages = true; f.policy.roles.find((role: any) => role.id === 'color').iconMxc = 'mxc://local/artwork'; f.notify(); });
+  await expect.poll(() => page.evaluate(() => (window as any).roleIdentityFixture.pendingImages?.length || 0)).toBe(1);
+  await page.evaluate(async () => { const api = await import('/lib/api.ts' as string); api.setAccountDevice('replacement-device'); (window as any).roleIdentityFixture.notify(); });
+  await expect.poll(() => page.evaluate(() => (window as any).roleIdentityFixture.pendingImages?.length || 0)).toBe(2);
+  await page.evaluate(() => (window as any).roleIdentityFixture.pendingImages[0]());
+  const chat = page.getByRole('region', { name: 'Chat name' });
+  await expect(chat.locator('.server-role-name-icon img')).toHaveCount(0);
+  await page.evaluate(() => { const f = (window as any).roleIdentityFixture; f.holdImages = false; f.pendingImages[1](); });
+  await expect(chat.locator('.server-role-name-icon img')).toBeVisible();
+  await chat.getByRole('button').click();
+  await expect(page.locator('.quick-profile .server-role-badge img')).toHaveCount(1);
+  expect(await page.evaluate(() => (window as any).roleIdentityFixture.imageRequests)).toBe(2);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const f = (window as any).roleIdentityFixture; f.membership = 'leave'; f.notify(); });
+  await expect(page.locator('.server-role-name-icon img')).toHaveCount(0);
+});
+
+test('failed role artwork keeps its text fallback without changing name color', async ({ page }) => {
+  await fixture(page);
+  await page.evaluate(() => { const f = (window as any).roleIdentityFixture; f.holdImages = true; f.rejectImages = true; Object.assign(f.policy.roles.find((role: any) => role.id === 'color'), { iconMxc: 'mxc://local/missing', icon: '⭐' }); f.notify(); });
+  const chat = page.getByRole('region', { name: 'Chat name' });
+  await expect.poll(() => page.evaluate(() => (window as any).roleIdentityFixture.imageRequests || 0)).toBe(1);
+  await page.evaluate(() => (window as any).roleIdentityFixture.pendingImages[0]());
+  await expect(chat.getByRole('img', { name: 'Designers role', exact: true })).toHaveText('⭐');
+  await expect(chat.locator('.server-role-name-icon img')).toHaveCount(0);
+  await expect(chat.locator('.server-role-name-text')).toHaveCSS('color', 'rgb(180, 140, 242)');
+});
+
 test('chat avatars retain profile clicks and right-click role actions', async ({ page }) => {
   await fixture(page);
   const avatar = page.getByRole('region', { name: 'Chat avatar' }).getByRole('button');

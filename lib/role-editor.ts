@@ -19,7 +19,7 @@ export function roleCopy(policy: RolePolicy, rank: number, id: string, original?
   if (policy.roles.length >= 100 || position === null) throw new Error('No role position is available below your highest role.');
   if (original && original.position >= rank) throw new Error('You can duplicate only roles below your highest role.');
   return { id, name: original ? original.name.slice(0, 55) + ' copy' : 'New role', position,
-    color: original?.color || '#b78a56', icon: original?.icon || '', permissions: [...(original?.permissions || [])],
+    color: original?.color || '#b78a56', icon: original?.icon || '', ...(original?.iconMxc ? { iconMxc: original.iconMxc } : {}), permissions: [...(original?.permissions || [])],
     mentionable: false, separate: original?.separate || false };
 }
 export function removeRole(policy: RolePolicy, id: string): RolePolicy {

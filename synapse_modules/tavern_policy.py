@@ -172,6 +172,10 @@ def valid_policy(policy):
             return False
         if not isinstance(role.get("icon", ""), str) or len(role.get("icon", "")) > 16:
             return False
+        if "iconMxc" in role:
+            image = role["iconMxc"]
+            if not isinstance(image, str) or len(image) > 1024 or image and not re.fullmatch(r"mxc://[^\s/?#\x00-\x1f\x7f]+/[^\s/?#\x00-\x1f\x7f]+", image):
+                return False
         ids.add(rid)
         positions.add(rank)
     if "everyone" not in ids:

@@ -5,6 +5,8 @@ import { canManageServerRoles, enableConferencePublication, defaultRolePolicy, e
 import { isPublicationPermission } from '@/lib/conference-publication';
 import { moveRole, permissionGroups, removeRole, roleColors, roleCopy, roleIcons, roleRemovalImpact } from '@/lib/role-editor';
 import { serverChannelIds } from '@/lib/community';
+import { readServerEmoji } from '@/lib/server-emoji';
+import { RoleIcon } from './role-icon';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useRoleEditorOwner } from './role-editor-owner';
 import { RoleMemberAssignments } from './role-member-assignments';
@@ -39,6 +41,7 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
   const me = owner.user, room = owner.client?.getRoom(serverId), authority = original || defaultRolePolicy(me);
   const myRank = memberRoleRank(authority, me), grants = effectiveRolePermissions(authority, me);
   const ordered = [...policy.roles].sort((a, b) => b.position - a.position), role = policy.roles.find(item => item.id === selected) || policy.roles[0];
+  const artwork = readServerEmoji(serverId);
   const canEdit = (value: ServerRole) => value.position < myRank;
   const dirty = JSON.stringify(policy) !== JSON.stringify(previous || defaultRolePolicy(me));
   const current = () => scopeCurrent() && canManageServerRoles(serverId) && (!channelId || effectiveRolePermissions(readRolePolicy(serverId) || defaultRolePolicy(''), owner.user).has('manage_channels'));
@@ -96,19 +99,21 @@ function ServerRoleEditor({ serverId, channelId, enabled, onChanged }: Props) {
               draggable={item.id !== 'everyone' && canEdit(item)} onDragStart={event => { setSelected(item.id); event.dataTransfer.setData('text/tavern-role', item.id); }}
               onDragOver={event => { if (item.id !== 'everyone' && canEdit(item)) event.preventDefault(); }}
               onDrop={event => { event.preventDefault(); const from = policy.roles.find(candidate => candidate.id === event.dataTransfer.getData('text/tavern-role')); if (from) move(0, item.id, from.id); }}
-              onClick={() => setSelected(item.id)}><span className="role-nav-name"><span className="role-dot" style={{ background: item.color || 'var(--foreground)' }}/><span>{item.icon} {item.name}</span></span><small>{item.id === 'everyone' ? 'Everyone' : Object.values(policy.members).filter(ids => ids.includes(item.id)).length + ' assigned'}{!canEdit(item) ? ' · Read only' : ''}</small></button>)}</div>
+              onClick={() => setSelected(item.id)}><span className="role-nav-name"><span className="role-dot" style={{ background: item.color || 'var(--foreground)' }}/><span><RoleIcon role={item} decorative /> {item.name}</span></span><small>{item.id === 'everyone' ? 'Everyone' : Object.values(policy.members).filter(ids => ids.includes(item.id)).length + ' assigned'}{!canEdit(item) ? ' · Read only' : ''}</small></button>)}</div>
             {!ordered.some(item => item.name.toLowerCase().includes(query.toLowerCase().trim())) && <p>No matching roles.</p>}
             <button type="button" className="secondary-button" disabled={policy.roles.length >= 100} onClick={() => add()}><Plus size={16}/>Add role</button>
           </nav>
           <div className="role-detail">
-            <div className="role-preview" aria-label="Role preview"><span className="role-preview-avatar" aria-hidden="true">A</span><div><strong style={{ color: role.color || undefined }}>{role.icon} Avery</strong><span className="community-role" style={{ color: role.color || undefined }}>{role.icon} {role.name}</span><small>Color and icon are chosen independently from each member’s highest role that sets them</small></div></div>
+            <div className="role-preview" aria-label="Role preview"><span className="role-preview-avatar" aria-hidden="true">A</span><div><strong style={{ color: role.color || undefined }}>Avery <RoleIcon role={role} decorative /></strong><span className="community-role" style={{ color: role.color || undefined }}><RoleIcon role={role} decorative /> {role.name}</span><small>Color and icon are chosen independently from each member’s highest role that sets them</small></div></div>
             {!canEdit(role) && <p>This role is at or above your authority. Its settings are read only.</p>}
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList aria-label="Role settings"><TabsTrigger value="appearance">Display</TabsTrigger><TabsTrigger value="permissions">Permissions</TabsTrigger><TabsTrigger value="members">Manage members</TabsTrigger></TabsList>
               <TabsContent value="appearance"><fieldset disabled={!canEdit(role)} className="role-settings-fields">
                 <label>Role name<input aria-label="Role name" maxLength={60} required value={role.name} onChange={event => update({ name: event.target.value })}/></label>
                 <label>Role icon<input aria-label="Role icon" maxLength={16} value={role.icon} placeholder="Emoji or short symbol" onChange={event => update({ icon: event.target.value })}/></label>
-                <div className="role-icon-palette" aria-label="Suggested role icons">{roleIcons.map(icon => <button type="button" key={icon} aria-label={'Use role icon ' + icon} aria-pressed={role.icon === icon} onClick={() => update({ icon })}>{icon}</button>)}<button type="button" onClick={() => update({ icon: '' })}>Clear icon</button></div>
+                <label>Server emoji artwork<select aria-label="Server emoji artwork" value={role.iconMxc || ''} onChange={event => update({ iconMxc: event.target.value })}><option value="">Use the text icon</option>{role.iconMxc && !artwork.some(emoji => emoji.uri === role.iconMxc) && <option value={role.iconMxc}>Current image</option>}{artwork.map(emoji => <option key={emoji.name} value={emoji.uri}>:{emoji.name}:</option>)}</select></label>
+                <p className="login-help">Choose an image uploaded in Server settings → Emoji. The text icon is kept as a fallback if the image cannot load. Removing an emoji from the picker does not remove artwork already assigned to a role.</p>
+                <div className="role-icon-palette" aria-label="Suggested role icons">{roleIcons.map(icon => <button type="button" key={icon} aria-label={'Use role icon ' + icon} aria-pressed={role.icon === icon} onClick={() => update({ icon, iconMxc: '' })}>{icon}</button>)}<button type="button" onClick={() => update({ icon: '', iconMxc: '' })}>Clear icon</button></div>
                 <div className="role-color-controls"><label>Role color<input aria-label="Role color" type="color" value={role.color || '#b78a56'} onChange={event => update({ color: event.target.value })}/></label><button type="button" className="secondary-button" onClick={() => update({ color: '' })}>Use default color</button></div>
                 <div className="role-color-palette" aria-label="Suggested role colors">{roleColors.map(color => <button type="button" key={color} aria-label={'Use role color ' + color} aria-pressed={role.color === color} style={{ background: color }} onClick={() => update({ color })}/>)}</div>
                 <label className="check-label"><input type="checkbox" checked={role.mentionable} onChange={event => update({ mentionable: event.target.checked })}/>Allow members to mention this role</label>

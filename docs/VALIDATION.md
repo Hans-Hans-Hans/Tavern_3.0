@@ -2,6 +2,29 @@
 
 This records observed checks for the 0.4 development code and its `V3` test checkpoints. A passing stage is distinct from a completely passing workflow and from production acceptance. The [implementation checklist](IMPLEMENTATION_CHECKLIST.md) records remaining product work.
 
+## Role artwork checkpoint
+
+Roles can use uploaded server emoji beside chat/member names and on profile
+badges. The editor previews the saved artwork, retains a text fallback and can
+clear an image after its source emoji is removed. Role copying preserves artwork
+without copying assignments or enabling mentions. Both the client and native
+policy validator reject malformed or external image references; native role
+hierarchy and revision checks still control edits.
+
+Local validation passed the production TypeScript/Vite build, all **739 model
+tests**, **823 Python cases** (806 passed, 17 platform/environment skips) and
+the complete **525-case browser suite**. Browser cases cover account/device
+ownership, delayed image responses after account replacement, shared chat/profile
+image loading, failed-image fallback, saved native state and removable artwork.
+Fixture dependencies were corrected without weakening role authorization or
+recipient-selection assertions. Mobile/desktop screenshots use the production
+styles in both themes; all 30 server/channel role editor browser cases passed
+again after the final checkbox alignment adjustment.
+
+Image transport in these browser cases is controlled. This does not replace
+native authenticated media acceptance or a check on the deployed homelab.
+No new dependency or database migration is introduced.
+
 ## Server emoji and avatar actions checkpoint
 
 The first phase 4 change adds image previews, previous-name search, slot counts,
@@ -23,6 +46,11 @@ actions through the real shared components. Native media storage and cross-
 device Matrix state resolution remain separate from these controlled browser
 fixtures. No new dependency, database migration or permission is introduced.
 
+The complete workflow on **8d9148e** subsequently passed:
+[CI run 34754762037](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34754762037).
+Both the Linux channel-menu regression and build/container jobs succeeded.
+This verifies the emoji/avatar checkpoint before the role-artwork changes.
+
 ## Proxy sign-in recovery checkpoint
 
 A running installation returned the old generic `INVALID_INPUT` login error.
@@ -42,6 +70,15 @@ Local validation: TypeScript/Vite production build; all 822 Python cases
 API cases prove rejection before device/session creation, successful recovery,
 continued IP throttling and omission of raw forwarding data from errors.
 These local results do not establish the subsequent pushed workflow result.
+
+The complete workflow on **0717070** subsequently passed:
+[CI run 34753840067](https://github.com/Hans-Hans-Hans/Tavern_3.0/actions/runs/34753840067).
+Both jobs succeeded. Native acceptance included ordinary account login,
+encrypted direct/conference audio, encrypted file storage/download, authenticated
+profile thumbnails, same-browser/new-device/email history recovery, native role
+management and moderation, account deactivation, persistence, backup/restore
+and failed-update rollback. This verifies the login checkpoint independently of
+the later emoji and role-artwork changes.
 
 ## Roles and member management checkpoint
 

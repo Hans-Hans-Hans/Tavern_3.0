@@ -27,8 +27,11 @@ upload preview, previous-name search, slot counts, clear empty states and
 reviewed rename/removal dialogs. Rejected changes retain the draft. Uploads and
 queued changes stay bound to the account, device and open editor. Chat avatars
 also support the same profile-click and right-click role actions as chat names.
-Uploaded role artwork and the remaining profile/status refinements are still
-follow-on work.
+Role artwork can now reuse uploaded server emoji, appear beside names and in
+role badges, and fall back to a text icon. Image references are validated by
+the client and native policy module; image-only edits retain role hierarchy
+checks. The remaining profile/status refinements and broader role display
+styles are follow-on work.
 
 The [V3 usability update](UX_UPDATE.md) adds Home and conversation resume, quieter
 recovery prompts, server templates, access explanations, notification presets,

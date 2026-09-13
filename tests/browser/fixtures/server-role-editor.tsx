@@ -7,12 +7,15 @@ import { CategoryPermissions } from '../../../app/category-permissions';
 import { defaultRolePolicy, rolePermissions } from '../../../lib/roles';
 import { migratePublicationPolicy } from '../../../lib/conference-publication';
 import '../../../app/globals.css';
+import '../../../app/product.css';
+import '../../../app/community.css';
 
 export function mountFixture() {
   const w = window as any, params = new URLSearchParams(location.search);
   const server = '!server:test', channel = '!voice:test', owner = '@owner:test', mod = '@mod:test', target = '@member:test';
-  const f: any = { account: 0, actor: params.get('actor') === 'mod' ? mod : owner, device: 'ROLE_DEVICE', listeners: new Set(), writes: [], changed: 0, membership: 'join', holdRead: false, holdWrite: false, revision: 0, channel, parentLink: true, childLink: true, nativeChannelMembership: 'join' };
+  const f: any = { account: {}, actor: params.get('actor') === 'mod' ? mod : owner, device: 'ROLE_DEVICE', listeners: new Set(), writes: [], changed: 0, membership: 'join', holdRead: false, holdWrite: false, revision: 0, channel, parentLink: true, childLink: true, nativeChannelMembership: 'join' };
   f.policy = defaultRolePolicy(owner);
+  f.emoji = [{ name: 'garden', uri: 'mxc://local/garden', creator: owner }];
   f.policy.roles.push({ id: 'mod', name: 'Moderator', color: '#6699ff', icon: '🛡️', position: 50, permissions: ['manage_roles', 'manage_channels', 'pin_messages'], mentionable: false, separate: true });
   f.policy.roles.push({ id: 'helper', name: 'Helper', color: '#52b788', icon: '🌱', position: 10, permissions: ['pin_messages'], mentionable: false, separate: false });
   f.policy.members = { [mod]: ['mod'], [target]: ['helper'] };
@@ -32,7 +35,7 @@ export function mountFixture() {
       maySendStateEvent: () => true, getStateEvents: (kind: string, key?: string) => {
         if (kind === 'm.space.child') { const event = { getStateKey: () => key || channel, getContent: () => f.childLink ? ({ via: ['test'] }) : ({}) }; return key === undefined ? [event] : event; }
         return { getSender: () => owner, getId: () => '$roles-' + f.revision, getContent: () => kind === 'm.room.create' ? { type: 'm.space', room_version: '11', 'm.federate': false }
-          : kind === 'm.room.power_levels' ? f.powers : kind === 'io.tavern.roles' ? f.policy : f.layout };
+          : kind === 'm.room.power_levels' ? f.powers : kind === 'io.tavern.roles' ? f.policy : kind === 'io.tavern.emoji' ? { emoji: f.emoji } : f.layout };
       },
     } };
   const waitRead = async () => { if (f.holdRead) await new Promise<void>(resolve => { f.releaseRead = () => { f.holdRead = false; resolve(); }; }); };

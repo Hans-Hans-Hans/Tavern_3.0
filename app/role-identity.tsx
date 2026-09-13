@@ -3,6 +3,7 @@ import { Crown } from 'lucide-react';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { readRolePolicy } from '@/lib/roles';
 import { memberRolePresentation } from '@/lib/role-presentation';
+import { RoleIcon } from './role-icon';
 import './role-identity.css';
 
 function useIdentity(serverId: string | undefined, userId: string) {
@@ -16,7 +17,7 @@ function useIdentity(serverId: string | undefined, userId: string) {
 export function ServerRoleName({ serverId, userId, children, showOwner = false }: { serverId?: string; userId: string; children: ReactNode; showOwner?: boolean }) {
   const identity = useIdentity(serverId, userId);
   return <span className='server-role-name'><span className='server-role-name-text' style={{ color: identity.color || undefined }}>{children}</span>
-    {identity.iconRole && <span className='server-role-name-icon' role='img' aria-label={identity.iconRole.name + ' role'} title={identity.iconRole.name}>{identity.iconRole.icon}</span>}
+    {identity.iconRole && <RoleIcon role={identity.iconRole} />}
     {showOwner && identity.owner && <Crown size={13} role='img' aria-label='Server owner' className='server-role-owner'/>}
   </span>;
 }
@@ -26,6 +27,6 @@ export function ServerRoleBadges({ serverId, userId }: { serverId: string; userI
   if (!identity.badges.length && !identity.owner) return null;
   return <div className='server-role-badges' aria-label='Server roles'>
     {identity.owner && <span className='server-role-badge'><Crown size={13}/>Owner</span>}
-    {identity.badges.map(role => <span className='server-role-badge' key={role.id}><span className='server-role-badge-dot' style={{ backgroundColor: role.color || 'var(--muted-foreground)' }}/>{role.icon && <span aria-hidden='true'>{role.icon}</span>}{role.name}</span>)}
+    {identity.badges.map(role => <span className='server-role-badge' key={role.id}><span className='server-role-badge-dot' style={{ backgroundColor: role.color || 'var(--muted-foreground)' }}/><RoleIcon role={role} decorative />{role.name}</span>)}
   </div>;
 }

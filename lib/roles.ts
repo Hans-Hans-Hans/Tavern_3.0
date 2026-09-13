@@ -13,7 +13,7 @@ export function nativeMemberPower(room: any, user: string): number {
 export const rolesEvent = 'io.tavern.roles';
 export const rolePermissions = { send_messages: 'Send messages and encrypted content', create_private_threads: 'Create private discussions', add_reactions: 'Add reactions', pin_messages: 'Pin messages', manage_messages: 'Remove others’ messages', manage_reports: 'Review reports explicitly shared with room moderators', manage_webhooks: 'Manage channel webhooks', manage_nicknames: 'Manage server nicknames for lower members', join_calls: 'Join calls and conferences', speak: 'Publish conference audio (microphone and screen audio)', video: 'Publish camera video', screen_share: 'Publish screen sharing', mute_members: 'Server mute audio for lower members (requires SFU audio moderation)', deafen_members: 'Server deafen audio for lower members (requires SFU audio moderation)', invite: 'Invite people', kick: 'Remove members', ban: 'Ban members', timeout: 'Temporarily restrict members', manage_channels: 'Manage channels', manage_roles: 'Manage lower roles', manage_server: 'Manage server details' } as const;
 export type RolePermission = keyof typeof rolePermissions;
-export type ServerRole = { id: string; name: string; color: string; icon: string; position: number; permissions: RolePermission[]; mentionable: boolean; separate: boolean };
+export type ServerRole = { id: string; name: string; color: string; icon: string; iconMxc?: string; position: number; permissions: RolePermission[]; mentionable: boolean; separate: boolean };
 export type PermissionOverride = Partial<Record<RolePermission, -1 | 0 | 1>>;
 export type PermissionTargets = { roles: Record<string, PermissionOverride>; users: Record<string, PermissionOverride> };
 export type ChannelAudience = { roleIds: string[]; userIds: string[] };
@@ -36,6 +36,7 @@ export function parseRolePolicy(value: any): RolePolicy | null {
   const ids = new Set<string>(), positions = new Set<number>();
   for (const role of value.roles) {
     if (!role || typeof role.id !== 'string' || !/^[\w-]{1,80}$/.test(role.id) || ids.has(role.id) || typeof role.name !== 'string' || !role.name.trim() || role.name.length > 60 || !Number.isInteger(role.position) || role.position < 0 || role.position >= 1000 || positions.has(role.position) || (role.id === 'everyone') !== (role.position === 0) || !Array.isArray(role.permissions) || role.permissions.some((p: string) => !Object.hasOwn(rolePermissions, p)) || (role.color && !/^#[a-f\d]{6}$/i.test(role.color)) || typeof (role.icon || '') !== 'string' || (role.icon || '').length > 16) return null;
+    if (role.iconMxc !== undefined && (typeof role.iconMxc !== 'string' || role.iconMxc.length > 1024 || role.iconMxc && !/^mxc:\/\/[^\s/?#\x00-\x1f\x7f]+\/[^\s/?#\x00-\x1f\x7f]+$/.test(role.iconMxc))) return null;
     ids.add(role.id); positions.add(role.position);
   }
   if (!ids.has('everyone') || Object.keys(value.members).length > 1000 || Object.entries(value.members).some(([user, roles]) => !user.startsWith('@') || !Array.isArray(roles) || roles.length > 100 || roles.some(r => !ids.has(r)))) return null;

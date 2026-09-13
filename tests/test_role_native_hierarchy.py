@@ -25,6 +25,20 @@ class NativeRoleHierarchyTests(unittest.IsolatedAsyncioTestCase):
         proposed = copy.deepcopy(self.policy); proposed['members']['@member:local'] = ['tag']
         self.assertEqual(await self.write(state, proposed), (True, None))
 
+    async def test_image_only_role_edits_keep_native_hierarchy_and_validate_media_references(self):
+        state = self.managed_state()
+        proposed = copy.deepcopy(self.policy)
+        proposed['roles'][-1]['iconMxc'] = 'mxc://local/artwork'
+        self.assertEqual(await self.write(state, proposed), (True, None))
+        proposed = copy.deepcopy(self.policy)
+        next(role for role in proposed['roles'] if role['id'] == 'mod')['iconMxc'] = 'mxc://local/artwork'
+        self.assertEqual(await self.write(state, proposed), (False, None))
+        for invalid in (None, 3, {}, 'https://tracker/pixel', 'data:image/png;base64,AAA', 'mxc://local/a?token=private', 'mxc://local/a/b', 'mxc://local/a\x00', 'mxc://local/' + 'a' * 1024):
+            with self.subTest(invalid=invalid):
+                proposed = copy.deepcopy(self.policy)
+                proposed['roles'][-1]['iconMxc'] = invalid
+                self.assertEqual(await self.write(state, proposed, '@owner:local'), (False, None))
+
     async def test_removing_assignment_is_protected_but_deleted_role_cleanup_is_allowed(self):
         state = self.managed_state(); self.policy['members']['@nativeadmin:local'] = ['tag']
         proposed = copy.deepcopy(self.policy); proposed['members']['@nativeadmin:local'] = []

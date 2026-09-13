@@ -21,6 +21,21 @@ role's color or icon lets a lower role supply it. Role edits and removals update
 the displayed identity from current synced settings. Direct messages without a
 server context keep their normal names.
 
+For an image icon, upload the artwork under **Server settings → Emoji**, then
+choose it under **Roles → Display → Server emoji artwork**. The saved image is
+used beside chat/member names and in role badges. Its text icon remains the
+fallback while the image loads or if it is unavailable. Name color and icon are
+still independent hierarchy choices. **Clear icon** clears both the image and
+text; choosing a suggested text icon switches back to text.
+
+Images use authenticated Matrix media and an account/device-scoped cache. They
+are profile artwork, not encrypted message attachments. Removing the original
+server emoji does not remove an already assigned role image; its selector shows
+**Current image** until changed or cleared. Duplicating a role retains artwork
+without assigning members or enabling mentions. Existing roles without images
+continue to work. Image-only edits retain the same native role authority and
+revision checks as permission edits.
+
 Click a chat name, avatar or member to open their profile. Profiles show the complete
 assigned role list in hierarchy order, with icons and colored dots. Right-click
 a chat name or avatar for member actions, including **Assign roles** when authorized.

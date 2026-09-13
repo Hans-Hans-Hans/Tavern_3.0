@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 async function fixture(page: Page, query = '') {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.roleEditorFixture?.client;export const onMatrixUpdate=fn=>{window.roleEditorFixture.listeners.add(fn);return()=>window.roleEditorFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const accountArtworkOwner=()=>window.roleEditorFixture?.account;' }));
-  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const serverChannelIds=()=>["!voice:test"];export const readServerLayout=()=>window.roleEditorFixture.layout;' }));
+  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const cleanMxc=value=>typeof value===\"string\"&&value.startsWith(\"mxc://\")?value:\"\";export const cropProfileImage=()=>{};export const uploadProfileImage=()=>{};export const profileImageBlob=async()=>new Blob([Uint8Array.from(atob(\"R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==\"),v=>v.charCodeAt(0))],{type:\"image/gif\"});export const serverChannelIds=()=>["!voice:test"];export const readServerLayout=()=>window.roleEditorFixture.layout;' }));
   await page.route('**/server-role-editor-test*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/server-role-editor.tsx")).mountFixture();</script></body></html>' }));
   await page.goto('/server-role-editor-test' + query);
 }
@@ -26,6 +26,33 @@ test('create a recognizable role, choose grouped permissions and assign a member
   const role = saved.roles.find((item: any) => item.name === 'Night owls');
   expect(role).toMatchObject({ icon: '☕', color: '#b48cf2', permissions: ['pin_messages'], mentionable: false });
   expect(saved.members['@member:test'].sort()).toEqual(['helper', role.id].sort());
+});
+
+test('server emoji artwork previews, saves with role permissions and remains removable after emoji deletion', async ({ page }) => {
+  await fixture(page);
+  await page.getByRole('button', { name: 'Edit Helper (helper)', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Server emoji artwork' }).selectOption('mxc://local/garden');
+  await expect(page.getByLabel('Role preview').locator('img')).toHaveCount(2);
+  for (const width of [375, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await expect(page.getByLabel('Role preview').locator('img').first()).toHaveCSS('width', '16px');
+      await expect(page.getByRole('button', { name: 'Edit Helper (helper)', exact: true })).toHaveCSS('color', theme === 'dark' ? 'rgb(238, 232, 218)' : 'rgb(48, 56, 66)');
+      await page.screenshot({ path: 'work/role-artwork-' + width + '-' + theme + '.png', fullPage: true });
+    }
+  }
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click();
+  await expect(page.getByRole('status')).toContainText('No unsaved changes');
+  const saved = await page.evaluate(() => (window as any).roleEditorFixture.writes[0].value.roles.find((role: any) => role.id === 'helper'));
+  expect(saved).toMatchObject({ iconMxc: 'mxc://local/garden', icon: '🌱', permissions: ['pin_messages'] });
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.emoji = []; f.notify(); });
+  await expect(page.getByRole('combobox', { name: 'Server emoji artwork' }).locator('option:checked')).toHaveText('Current image');
+  await page.getByRole('button', { name: 'Clear icon', exact: true }).click();
+  await expect(page.getByLabel('Role preview').locator('img')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save roles and permissions' }).click();
+  expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.at(-1).value.roles.find((role: any) => role.id === 'helper').iconMxc)).toBe('');
 });
 
 test('conference migration cannot discard a local draft and preserves saved roles before showing new controls', async ({ page }) => {
@@ -77,7 +104,7 @@ test('account replacement during an acknowledged role save hides the editor and 
   await page.evaluate(() => { (window as any).roleEditorFixture.holdWrite = true; });
   await page.getByRole('button', { name: 'Save roles and permissions' }).click();
   await page.waitForFunction(() => typeof (window as any).roleEditorFixture.releaseWrite === 'function');
-  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account++; f.notify(); f.releaseWrite(); });
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account = {}; f.notify(); f.releaseWrite(); });
   await expect(page.getByRole('heading', { name: 'Server roles and permissions' })).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).roleEditorFixture.changed)).toBe(0);
   await expect(page.getByText('Server roles saved', { exact: true })).toHaveCount(0);
@@ -91,7 +118,7 @@ test('member assignment search keeps selections and closes on account change dur
   await page.evaluate(() => { (window as any).roleEditorFixture.holdWrite = true; });
   await page.getByRole('button', { name: 'Save member roles' }).click();
   await page.waitForFunction(() => typeof (window as any).roleEditorFixture.releaseWrite === 'function');
-  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account++; f.notify(); f.releaseWrite(); });
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account = {}; f.notify(); f.releaseWrite(); });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).roleEditorFixture.changed)).toBe(0);
   await expect(page.getByText('Member roles saved', { exact: true })).toHaveCount(0);
@@ -176,7 +203,7 @@ test('a stale bulk save retains the staged assignment and cannot overwrite newer
 test('bulk confirmation retires when the owning account changes', async ({ page }) => {
   await fixture(page); await page.getByRole('button', { name: 'Edit Helper (helper)' }).click(); await page.getByRole('tab', { name: 'Manage members', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Select Elliot (@second:test)' }).check(); await page.getByRole('button', { name: 'Review 1 assignment change' }).click();
-  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account++; f.notify(); });
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account = {}; f.notify(); });
   await expect(page.getByRole('alertdialog')).toHaveCount(0); expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
 });
 

@@ -241,5 +241,19 @@ clients still follow native Matrix state resolution. No permission or state
 format migration is introduced. Native Synapse authorization remains final.
 
 The shared chat-avatar context menu now forwards its trigger to a DOM element,
-preserving profile clicks and right-click role actions. Profile/status editing,
-uploaded role artwork and broader role display styles remain next phase work.
+preserving profile clicks and right-click role actions.
+
+### Phase 4 follow-up: role artwork
+
+Roles can reuse images already uploaded to the server emoji collection. Display
+settings retain a text fallback, show the image preview and preserve an assigned
+image even if its source emoji is later removed. The image participates in the
+existing highest-icon hierarchy, separately from name color, and appears in
+chat, member identities and role badges. Duplicating a role copies its artwork.
+
+Optional Matrix media references are validated in both the TypeScript role
+parser and native Synapse policy module. Image-only edits cannot bypass role
+hierarchy or revision checks. Image loading uses authenticated media, a bounded
+account/device cache, stale-response checks and a text fallback on failure.
+Existing roles do not require conversion. Profile/status editing and broader
+role display styles remain next phase work.

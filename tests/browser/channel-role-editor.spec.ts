@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 async function fixture(page: Page, extra = '') {
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const getMatrixClient=()=>window.roleEditorFixture?.client;export const onMatrixUpdate=fn=>{window.roleEditorFixture.listeners.add(fn);return()=>window.roleEditorFixture.listeners.delete(fn)};' }));
   await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const accountArtworkOwner=()=>window.roleEditorFixture?.account;' }));
-  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const serverChannelIds=()=>["!voice:test"];export const readServerLayout=()=>window.roleEditorFixture.layout;' }));
+  await page.route(url => url.pathname === '/lib/community.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'export const cleanMxc=value=>typeof value===\"string\"&&value.startsWith(\"mxc://\")?value:\"\";export const cropProfileImage=()=>{throw Error(\"Unexpected emoji crop\")};export const uploadProfileImage=()=>{throw Error(\"Unexpected emoji upload\")};export const serverChannelIds=()=>["!voice:test"];export const readServerLayout=()=>window.roleEditorFixture.layout;' }));
   await page.route('**/channel-role-editor-test*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/server-role-editor.tsx")).mountFixture();</script></body></html>' }));
   await page.goto('/channel-role-editor-test?mode=channel&marked' + extra);
   await expect(page.getByRole('heading', { name: 'Channel role permissions', exact: true })).toBeVisible();
@@ -62,7 +62,7 @@ test('retired account and detached canonical parent do not leave actionable old 
   await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.parentLink = false; f.notify(); });
   await expect(page.getByRole('button', { name: 'Save channel role permissions' })).toHaveCount(0);
   await expect(page.getByRole('status')).toContainText('unavailable');
-  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account++; f.parentLink = true; f.notify(); });
+  await page.evaluate(() => { const f = (window as any).roleEditorFixture; f.account = {}; f.parentLink = true; f.notify(); });
   await expect(page.getByRole('heading', { name: 'Channel role permissions' })).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).roleEditorFixture.writes.length)).toBe(0);
 });
