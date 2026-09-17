@@ -26,6 +26,7 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         self.device_count = 0
         self.uia_extra = False
         self.media_usage = {}
+        self.media_items = {}
         self.media_status = 200
         self.media_page_size = 100
         self.rooms = {"!room:test": {"name": "Test room", "members": {"@alice:test": "join", "@owner:test": "join"}, "powers": {"users": {"@alice:test": 50, "@owner:test": 100}, "users_default": 0, "invite": 50}}}
@@ -70,6 +71,23 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
                 if offset + self.media_page_size < len(rows):
                     result["next_token"] = offset + self.media_page_size
                 return web.json_response(result)
+            if path.startswith("/_synapse/admin/v1/users/") and path.endswith("/media"):
+                target = path.removeprefix("/_synapse/admin/v1/users/").removesuffix("/media").rstrip("/")
+                offset, limit = int(request.query.get("from", "0")), int(request.query.get("limit", "50"))
+                items = self.media_items.get(target, [])
+                result = {"media": items[offset:offset + limit], "total": len(items)}
+                if offset + limit < len(items):
+                    result["next_token"] = offset + limit
+                return web.json_response(result)
+            if path.startswith("/_synapse/admin/v1/media/") and method == "DELETE":
+                _, _, identity = path.removeprefix("/_synapse/admin/v1/media/").partition("/")
+                for target, items in self.media_items.items():
+                    found = next((item for item in items if item.get("media_id") == identity), None)
+                    if found:
+                        items.remove(found)
+                        self.media_usage[target] = max(0, self.media_usage.get(target, 0) - found.get("media_length", 0))
+                        return web.json_response({})
+                return web.json_response({"errcode": "M_NOT_FOUND"}, status=404)
             if path.startswith("/_matrix/media/") and path.endswith("/upload"):
                 if self.media_status != 200:
                     return web.json_response({"errcode": "M_FORBIDDEN"}, status=self.media_status)
@@ -230,6 +248,35 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         response = await self.request("POST", "/api/auth/login", {"username": user, "password": "Correct password!", "remember": remember})
         self.assertEqual(response.status, 200, await response.text())
         return response.cookies[COOKIE].value, await response.json(), response
+
+    async def test_storage_diagnostics_lists_mounted_data_and_deletes_confirmed_local_media(self):
+        owner, _, _ = await self.login("owner")
+        self.media_usage = {"@alice:test": 4096, "@owner:test": 1024}
+        self.media_items["@alice:test"] = [{"media_id": "report-1", "media_length": 4096, "upload_name": "report.pdf", "media_type": "application/pdf", "created_ts": 1700000000000}]
+        (self.config.data_dir / "upload-buffer").mkdir(exist_ok=True)
+        (self.config.data_dir / "upload-buffer" / "partial").write_bytes(b"x" * 128)
+
+        response = await self.request("GET", "/api/admin/storage/inventory", cookie=owner)
+        self.assertEqual(response.status, 200, await response.text())
+        inventory = await response.json()
+        self.assertEqual(inventory["totalUploadedBytes"], 5120)
+        self.assertEqual(inventory["uploaders"][0], {"userId": "@alice:test", "bytes": 4096})
+        self.assertTrue(any(root["label"] == "Tavern account data" for root in inventory["mounted"]))
+        self.assertNotIn("secrets.key", json.dumps(inventory))
+
+        response = await self.request("GET", "/api/admin/storage/users/%40alice%3Atest/media", cookie=owner)
+        self.assertEqual(response.status, 200, await response.text())
+        media = await response.json()
+        self.assertEqual(media["items"][0]["name"], "report.pdf")
+        self.assertIsInstance(media["inventoryId"], str)
+        denied = await self.request("DELETE", "/api/admin/storage/media", {"userId": "@alice:test", "mediaId": "report-1", "confirmation": "DELETE", "inventoryId": media["inventoryId"]}, owner)
+        self.assertEqual(denied.status, 400)
+        deleted = await self.request("DELETE", "/api/admin/storage/media", {"userId": "@alice:test", "mediaId": "report-1", "confirmation": "DELETE report-1", "inventoryId": media["inventoryId"]}, owner)
+        self.assertEqual(deleted.status, 200, await deleted.text())
+        self.assertTrue((await deleted.json())["usageRefreshed"])
+        self.assertEqual(self.media_items["@alice:test"], [])
+        self.assertEqual(self.service.store.db.execute("SELECT bytes FROM upload_usage WHERE user_id='*'").fetchone()[0], 1024)
+        self.assertTrue(any(action == "storage_media_deleted" and target == "report-1" for action, target in self.service.store.db.execute("SELECT action,target FROM audit")))
 
     async def test_cookie_session_hides_tokens_and_csrf_rejects_cross_site(self):
         cookie, data, response = await self.login(remember=True)

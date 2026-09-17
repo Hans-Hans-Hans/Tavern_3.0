@@ -2,10 +2,13 @@
 import asyncio
 import errno
 import json
+import os
+from pathlib import Path
+import re
 import secrets
 import tempfile
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiohttp import web, ClientTimeout
 
@@ -18,6 +21,8 @@ except ImportError:
 
 DEFAULT_LIMITS = {"maxUploadBytes": 10 * 1024 * 1024, "userQuotaBytes": 1024 ** 3, "globalQuotaBytes": 10 * 1024 ** 3}
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+MEDIA_PAGE_SIZE = 50
+MEDIA_INVENTORY_LIMIT = 100
 
 
 def room_identity(request):
@@ -89,6 +94,81 @@ def validate_limits(value):
     return result
 
 
+def admin_user(value):
+    if not isinstance(value, str) or not value.startswith("@") or len(value) > 255 or any(ord(char) < 33 for char in value):
+        raise APIError(400, "Choose a valid account.")
+    return value
+
+
+def media_identity(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._=-]{1,255}", value):
+        raise APIError(400, "Choose a valid local media item.")
+    return value
+
+
+def directory_size(path: Path):
+    """Return a bounded metadata-only directory measurement without following links."""
+    total, files = 0, 0
+    try:
+        stat = path.lstat()
+    except OSError:
+        return total, files
+    if not path.is_dir() or path.is_symlink():
+        return max(0, stat.st_size), 1
+    for directory, _, names in os.walk(path, followlinks=False, onerror=lambda _error: None):
+        for name in names:
+            try:
+                child = Path(directory, name)
+                if not child.is_symlink():
+                    total += max(0, child.stat().st_size)
+                    files += 1
+            except OSError:
+                pass
+    return total, files
+
+
+def mounted_storage(service):
+    """Report only explicitly mounted Tavern paths; never accept a browser path."""
+    roots = (("Tavern account data", service.config.data_dir), ("Synapse data", service.config.synapse_config.parent))
+    reported, seen = [], set()
+    for label, root in roots:
+        try:
+            resolved = root.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved in seen or not resolved.is_dir():
+            continue
+        seen.add(resolved)
+        entries = []
+        try:
+            children = list(resolved.iterdir())
+        except OSError:
+            children = []
+        for child in children:
+            size, files = directory_size(child)
+            entries.append({"name": child.name, "bytes": size, "files": files})
+        entries.sort(key=lambda value: (-value["bytes"], value["name"]))
+        total, files = directory_size(resolved)
+        reported.append({"label": label, "bytes": total, "files": files, "entries": entries[:20]})
+    return reported
+
+
+def media_view(value):
+    if not isinstance(value, dict):
+        return None
+    identity, size = value.get("media_id"), value.get("media_length")
+    if not isinstance(identity, str) or not re.fullmatch(r"[A-Za-z0-9._=-]{1,255}", identity) or type(size) is not int or size < 0:
+        return None
+    result = {"id": identity, "bytes": size}
+    for source, target in (("upload_name", "name"), ("media_type", "type"), ("created_ts", "createdAt")):
+        item = value.get(source)
+        if isinstance(item, str) and len(item) <= 512:
+            result[target] = item
+        elif source == "created_ts" and type(item) is int and item >= 0:
+            result[target] = item
+    return result
+
+
 class UploadQuota:
     def __init__(self, service):
         self.service = service
@@ -116,6 +196,22 @@ class UploadQuota:
 
     async def import_usage(self):
         service = self.service
+        usage = await self.media_usage()
+        db = service.store.db
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("DELETE FROM upload_usage")
+            db.executemany("INSERT INTO upload_usage VALUES(?,?)", list(usage.items()) + [("*", sum(usage.values()))])
+            db.execute("DELETE FROM upload_reservations")
+            service.store.set("upload_usage_initialized", True)
+            service.store.set("upload_usage_reconciled", int(time.time() * 1000))
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+
+    async def media_usage(self):
+        service = self.service
         usage, offset, seen = {}, "0", set()
         token = await service.service_token()
         while True:
@@ -133,18 +229,7 @@ class UploadQuota:
             if next_token is None:
                 break
             offset = str(next_token)
-        db = service.store.db
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            db.execute("DELETE FROM upload_usage")
-            db.executemany("INSERT INTO upload_usage VALUES(?,?)", list(usage.items()) + [("*", sum(usage.values()))])
-            db.execute("DELETE FROM upload_reservations")
-            service.store.set("upload_usage_initialized", True)
-            service.store.set("upload_usage_reconciled", int(time.time() * 1000))
-            db.execute("COMMIT")
-        except Exception:
-            db.execute("ROLLBACK")
-            raise
+        return usage
 
     def reserve(self, user_id, size):
         service, db = self.service, self.service.store.db
@@ -292,6 +377,72 @@ async def reconcile(request):
     return web.json_response(service.uploads.view())
 
 
+async def storage_inventory(request):
+    service = request.app["service"]
+    session = await service.require_admin(request)
+    service.store.rate("storage-inventory:" + session["user_id"], 20, 3600)
+    usage, disk = await asyncio.gather(service.uploads.media_usage(), asyncio.to_thread(mounted_storage, service))
+    await current_admin(service, request, session)
+    uploaders = [{"userId": user_id, "bytes": size} for user_id, size in usage.items() if size > 0]
+    uploaders.sort(key=lambda value: (-value["bytes"], value["userId"]))
+    return web.json_response({"measuredAt": int(time.time() * 1000), "mounted": disk, "uploaders": uploaders[:MEDIA_INVENTORY_LIMIT],
+                              "totalUploadedBytes": sum(usage.values()), "scope": "Mounted Tavern and Synapse data are measured directly. Uploaders are measured from Synapse local original media. PostgreSQL, Docker images, container logs, remote media cache, and backups are outside this panel."}, headers={"Cache-Control": "no-store"})
+
+
+async def user_media(request):
+    service = request.app["service"]
+    session = await service.require_admin(request)
+    target = admin_user(request.match_info["user_id"])
+    if set(request.query) - {"from"}:
+        raise APIError(400, "Unknown media inventory filter.")
+    try:
+        offset = max(0, int(request.query.get("from", "0")))
+    except ValueError:
+        raise APIError(400, "Choose a valid media page.") from None
+    if offset > 1000000:
+        raise APIError(400, "Choose a valid media page.")
+    status, result = await service.matrix("GET", "/_synapse/admin/v1/users/" + quote(target, safe="") + "/media?limit=" + str(MEDIA_PAGE_SIZE) + "&from=" + str(offset), token=await service.service_token(), expected=False)
+    if status == 404:
+        raise APIError(404, "This account has no local media inventory.", "MEDIA_NOT_FOUND")
+    if status < 200 or status >= 300 or not isinstance(result.get("media"), list):
+        raise APIError(502, "The homeserver could not provide this media inventory.", "MEDIA_INVENTORY_UNAVAILABLE")
+    await current_admin(service, request, session)
+    items = [item for item in (media_view(value) for value in result["media"]) if item is not None]
+    inventory_id = service.store.challenge("storage-media", {"userId": target, "mediaIds": [item["id"] for item in items]}, user_id=session["user_id"], duration=600)
+    return web.json_response({"userId": target, "inventoryId": inventory_id, "items": items, "total": result.get("total") if type(result.get("total")) is int else None,
+                              "next": result.get("next_token") if isinstance(result.get("next_token"), (str, int)) else None}, headers={"Cache-Control": "no-store"})
+
+
+async def delete_media(request):
+    service = request.app["service"]
+    session = await service.require_admin(request)
+    service.store.rate("storage-delete:" + session["user_id"], 60, 3600)
+    data = await body_json(request)
+    target, identity = admin_user(data.get("userId")), media_identity(data.get("mediaId"))
+    if data.get("confirmation") != "DELETE " + identity:
+        raise APIError(400, "Type the requested deletion confirmation.")
+    inventory = service.store.read_challenge(data.get("inventoryId", ""), "storage-media", session["user_id"])
+    if inventory["payload"].get("userId") != target or identity not in inventory["payload"].get("mediaIds", []):
+        raise APIError(400, "Reload this account's media inventory before deleting a file.")
+    hostname = urlsplit(service.config.public_url).hostname
+    if not hostname:
+        raise APIError(503, "The local media host is unavailable.")
+    await current_admin(service, request, session)
+    await service.matrix("DELETE", "/_synapse/admin/v1/media/" + quote(hostname, safe="") + "/" + quote(identity, safe=""), token=await service.service_token())
+    service.store.consume(inventory["id"])
+    refreshed = True
+    try:
+        async with service.uploads.reconciliation:
+            async with service.uploads.slots:
+                async with service.uploads.slots:
+                    async with service.uploads.initialization:
+                        await service.uploads.import_usage()
+    except APIError:
+        refreshed = False
+    service.audit(session["user_id"], "storage_media_deleted", identity, "uploader:" + target)
+    return web.json_response({"deleted": True, "usageRefreshed": refreshed})
+
+
 def register_routes(app):
     try:
         from .admin_hierarchy import register_routes as register_hierarchy
@@ -301,4 +452,5 @@ def register_routes(app):
     service = app["service"]
     service.uploads = UploadQuota(service)
     app.add_routes([web.get("/api/admin/rooms", rooms), web.get("/api/admin/rooms/{room_id}", room_detail), web.put("/api/admin/rooms/{room_id}/block", room_block),
-                    web.get("/api/admin/storage", storage), web.put("/api/admin/storage", storage), web.post("/api/admin/storage/reconcile", reconcile), web.get("/api/account/storage", own_storage)])
+                    web.get("/api/admin/storage", storage), web.put("/api/admin/storage", storage), web.post("/api/admin/storage/reconcile", reconcile), web.get("/api/admin/storage/inventory", storage_inventory),
+                    web.get("/api/admin/storage/users/{user_id}/media", user_media), web.delete("/api/admin/storage/media", delete_media), web.get("/api/account/storage", own_storage)])

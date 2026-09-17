@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { accountArtworkOwner, requestApi, type AccountSession } from '@/lib/api';
 import { Field } from './auth-gateway';
 import { OperationsPanel } from './operations-panel';
-import { AdminRooms, StoragePolicy } from './admin-resources';
+import { AdminRooms, StorageDiagnostics, StoragePolicy } from './admin-resources';
 import { InstancePolicy } from './instance-status';
 import { ReportReview } from './report-review';
 import { AdminAudit } from './admin-audit';
@@ -48,6 +48,7 @@ export default function AdminConsole({ session }: { session: AccountSession }) {
     {section === 'Logs' && <AdminLogs key={refreshKey}/>}
     {section === 'Diagnostics' && data && <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Component</th><th>Status</th><th>Details</th><th>Latency</th></tr></thead><tbody>{data.checks?.map((c: any) => <tr key={c.component}><td>{c.component}</td><td>{c.status}</td><td>{c.detail}</td><td>{typeof c.latencyMs === 'number' ? Math.round(c.latencyMs) + ' ms' : '—'}</td></tr>)}</tbody></table><p>Checked {formatTime(data.checkedAt)}</p></div>}
     {section === 'Diagnostics' && <TurnDiagnostics session={session}/>}
+    {section === 'Diagnostics' && <StorageDiagnostics/>}
     {section === 'Updates' && data && <div className="product-section"><h3>{data.updateAvailable ? 'An update is available' : data.latestStable ? 'Current stable release checked' : 'Release information unavailable'}</h3><p>Installed: {typeof data.current === 'string' ? data.current : data.current?.version}<br/>Latest stable: {data.latestStable?.version || data.latestStable?.tag_name || data.latestStable || 'No published release'}<br/>Latest prerelease: {data.latestPrerelease?.version || data.latestPrerelease?.tag_name || data.latestPrerelease || 'No published prerelease'}</p>{data.reason && <p>{data.reason}</p>}</div>}
     {section === 'Updates' && <OperationsPanel key='updates' mode='updates' releases={data}/>}
     {section === 'Backups' && <OperationsPanel key='backups' mode='backups'/>}
