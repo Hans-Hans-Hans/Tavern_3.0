@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { accountArtworkOwner, isManagedAccount } from '@/lib/api';
 import { getMatrixClient } from '@/lib/matrix';
-import { emailHistoryStatus, enableEmailHistory, recoverEmailHistory, startEmailHistory, autoStartEmailHistory, autoEnableEmailHistory, hasHistoryLogin, protectCurrentHistory, type EmailHistoryStatus } from '@/lib/email-history';
+import { emailHistoryStatus, enableEmailHistory, recoverEmailHistory, startEmailHistory, autoStartEmailHistory, hasHistoryLogin, protectCurrentHistory, type EmailHistoryStatus } from '@/lib/email-history';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { historyPreferencesChanged } from '@/lib/history-preferences-events';
 const promptedAccounts = new WeakSet<object>();
 
 export function EmailHistoryRecovery({ known, ready, automatic = false, onConfigured, onChecked, backupVersion }: { known: boolean; ready: boolean; automatic?: boolean; onConfigured?: (value:boolean)=>void; onChecked?: (value:boolean)=>void; backupVersion?: string|null }) {
   const [status,setStatus]=useState<EmailHistoryStatus|null>(null),[open,setOpen]=useState(false),[challenge,setChallenge]=useState('');
-  const [protect,setProtect]=useState(false);
+  const [protect,setProtect]=useState(false),[preferenceVersion,setPreferenceVersion]=useState(0);
+  useEffect(()=>{const refresh=()=>setPreferenceVersion(value=>value+1);window.addEventListener(historyPreferencesChanged,refresh);return()=>window.removeEventListener(historyPreferencesChanged,refresh);},[]);
   const [password,setPassword]=useState(''),[code,setCode]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
   const client=getMatrixClient(),account=accountArtworkOwner();
   const current=()=>getMatrixClient()===client&&accountArtworkOwner()===account;
@@ -16,11 +18,9 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
     let active=true;
     const valid=()=>active&&getMatrixClient()===client&&accountArtworkOwner()===account;
     void emailHistoryStatus().then(async value=>{
-      if(!valid())return;setStatus(value);onConfigured?.(value.configured);onChecked?.(true);
-      if(!automatic||!value.emailReady)return;
-      if(known&&hasHistoryLogin()&&(!value.configured||value.passwordChanged||(backupVersion&&value.backupVersion!==backupVersion))){
-        await autoEnableEmailHistory();if(valid()){const refreshed=await emailHistoryStatus();if(!valid())return;setStatus(refreshed);onConfigured?.(refreshed.configured);setMessage('Email history recovery is enabled.');}
-      } else if(!known&&value.configured&&!promptedAccounts.has(account)){
+      if(!valid())return;setStatus(value);onConfigured?.(value.mode==='off'||value.mode==='passphrase'||value.configured);onChecked?.(true);
+      if(!automatic||!value.emailReady||(value.mode&&value.mode!=='email'))return;
+      if(!known&&value.configured&&!promptedAccounts.has(account)){
         promptedAccounts.add(account);
         setOpen(true);setBusy(true);
         try {const id=await autoStartEmailHistory();if(valid())setChallenge(id);}
@@ -28,9 +28,9 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
       }
     }).catch(e=>{if(valid()){setError(e.message);onChecked?.(true);}});
     return()=>{active=false;};
-  },[ready,known,automatic,client,account,onConfigured,onChecked,backupVersion]);
+  },[ready,known,automatic,client,account,onConfigured,onChecked,backupVersion,preferenceVersion]);
   useEffect(()=>{if(automatic&&known){setOpen(false);setCode('');setPassword('');}},[automatic,known]);
-  if(!isManagedAccount())return null;
+  if(!isManagedAccount()||status?.mode==='off'||status?.mode==='passphrase')return null;
   async function send() {
     setBusy(true);setError('');
     try {const id=await startEmailHistory();if(current()){setChallenge(id);setCode('');setOpen(true);}}

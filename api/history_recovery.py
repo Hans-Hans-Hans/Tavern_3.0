@@ -1,4 +1,8 @@
-"""Email gates access to a client-encrypted history key, never a plaintext key."""
+"""Account-wide opt-in recovery of client-encrypted history keys.
+
+Email packages require a device-bound code. Passphrase packages are released
+only to their signed-in owner and decrypted entirely on the client.
+"""
 import re
 import secrets
 import time
@@ -27,6 +31,65 @@ class HistoryRecovery:
         self.store.db.execute("""CREATE TABLE IF NOT EXISTS history_recovery(
             user_id TEXT PRIMARY KEY REFERENCES accounts(user_id) ON DELETE CASCADE,
             revision TEXT NOT NULL, package TEXT NOT NULL, credential_epoch REAL NOT NULL, updated REAL NOT NULL)""")
+        self.store.db.execute("""CREATE TABLE IF NOT EXISTS history_passphrase(
+            user_id TEXT PRIMARY KEY REFERENCES accounts(user_id) ON DELETE CASCADE,
+            revision TEXT NOT NULL, package TEXT NOT NULL, updated REAL NOT NULL)""")
+
+    def preferences(self, user):
+        return self.store.get('history-preferences:' + user,
+                              {'mode': 'email' if self.row(user) else 'off', 'setupRequired': False})
+
+    def phrase_row(self, user):
+        row = self.store.db.execute('SELECT * FROM history_passphrase WHERE user_id=?', (user,)).fetchone()
+        return dict(row) if row else None
+
+    async def options(self, request):
+        session = self.service.require_session(request)
+        data = await body_json(request, 1024)
+        mode = data.get('mode')
+        if mode not in ('off', 'passphrase', 'email'):
+            raise APIError(400, 'Choose off, passphrase, or email history recovery.')
+        if mode == 'email' and not self.service.smtp()['enabled']:
+            raise APIError(409, 'Email delivery is disabled. Choose passphrase recovery instead.', 'EMAIL_DISABLED')
+        configured = self.phrase_row(session['user_id']) if mode == 'passphrase' else self.row(session['user_id'])
+        self.store.set('history-preferences:' + session['user_id'],
+                       {'mode': mode, 'setupRequired': mode != 'off' and not bool(configured)})
+        self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='history-recovery'", (session['user_id'],))
+        self.service.audit(session['user_id'], 'history_recovery_preference', session['user_id'], mode)
+        return await self.status(request)
+
+    async def passphrase(self, request):
+        session = self.service.require_session(request)
+        user = session['user_id']
+        row = self.phrase_row(user)
+        if request.method == 'GET':
+            if self.preferences(user)['mode'] != 'passphrase' or not row:
+                raise APIError(409, 'Passphrase recovery is not enabled.', 'RECOVERY_NOT_CONFIGURED')
+            self.store.rate('history-passphrase:' + user, 20, 300)
+            value = envelope(self.store.open(row['package']))
+            await self.native(session, value)
+            self.service.require_session(request)
+            if self.preferences(user)['mode'] != 'passphrase' or self.phrase_row(user)['revision'] != row['revision']:
+                raise APIError(409, 'Recovery settings changed. Start again.', 'RECOVERY_CHANGED')
+            return web.json_response({'package': value})
+        data = await body_json(request, 4096)
+        self.store.rate('history-passphrase-save:' + user, 8, 300)
+        value = envelope(data.get('package'))
+        if data.get('revision') != (row['revision'] if row else None):
+            raise APIError(409, 'Recovery settings changed. Reload before saving.', 'RECOVERY_CHANGED')
+        await self.native(session, value)
+        self.service.require_session(request)
+        latest = self.phrase_row(user)
+        if (latest['revision'] if latest else None) != (row['revision'] if row else None):
+            raise APIError(409, 'Recovery settings changed. Reload before saving.', 'RECOVERY_CHANGED')
+        revision = secrets.token_urlsafe(24)
+        self.store.db.execute('''INSERT INTO history_passphrase VALUES(?,?,?,?) ON CONFLICT(user_id)
+            DO UPDATE SET revision=excluded.revision,package=excluded.package,updated=excluded.updated''',
+            (user, revision, self.store.seal(value), time.time()))
+        self.store.set('history-preferences:' + user, {'mode': 'passphrase', 'setupRequired': False})
+        self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='history-recovery'", (user,))
+        self.service.audit(user, 'history_passphrase_enabled', user)
+        return web.json_response({'revision': revision})
 
     def owner(self, request):
         session = self.service.require_session(request)
@@ -60,7 +123,13 @@ class HistoryRecovery:
     async def status(self, request):
         session = self.service.require_session(request)
         account, row = self.store.account(session['user_id']), self.row(session['user_id'])
-        return web.json_response({'configured': bool(row), 'revision': row['revision'] if row else None,
+        phrase = self.phrase_row(session['user_id'])
+        preferences = self.preferences(session['user_id'])
+        preferences = {**preferences, 'setupRequired': bool(preferences.get('setupRequired') and
+            session['created'] >= preferences.get('promptAfter', 0))}
+        return web.json_response({**preferences,
+            'passphraseConfigured': bool(phrase), 'passphraseRevision': phrase['revision'] if phrase else None,
+            'configured': bool(row), 'revision': row['revision'] if row else None,
             'emailReady': bool(account.get('verified') and account.get('email') and self.service.smtp()['enabled']),
             'credentialEpoch': account.get('credential_epoch', 0),
             'passwordChanged': bool(row and row['credential_epoch'] != account.get('credential_epoch', 0)),
@@ -68,6 +137,8 @@ class HistoryRecovery:
 
     async def save(self, request):
         session, account = self.owner(request)
+        if not self.service.smtp()['enabled']:
+            raise APIError(409, 'Email delivery is disabled. Choose passphrase recovery instead.', 'EMAIL_DISABLED')
         data = await body_json(request, 4096)
         value = envelope(data.get('package'))
         self.store.rate('history-save:' + session['user_id'], 8, 300)
@@ -83,10 +154,13 @@ class HistoryRecovery:
             (session['user_id'], revision, self.store.seal(value), account.get('credential_epoch', 0), time.time()))
         self.store.db.execute("DELETE FROM challenges WHERE user_id=? AND kind='history-recovery'", (session['user_id'],))
         self.service.audit(session['user_id'], 'email_history_enabled', session['user_id'])
+        self.store.set('history-preferences:' + session['user_id'], {'mode': 'email', 'setupRequired': False})
         return web.json_response({'revision': revision})
 
     async def start(self, request):
         session, account = self.owner(request)
+        if self.preferences(session['user_id'])['mode'] != 'email' or not self.service.smtp()['enabled']:
+            raise APIError(409, 'Email history recovery is disabled.', 'EMAIL_DISABLED')
         row = self.row(session['user_id'])
         if not row:
             raise APIError(409, 'Enable email history recovery on a device with your history keys first.', 'RECOVERY_NOT_CONFIGURED')
@@ -108,6 +182,8 @@ class HistoryRecovery:
 
     async def complete(self, request):
         session, account = self.owner(request)
+        if self.preferences(session['user_id'])['mode'] != 'email' or not self.service.smtp()['enabled']:
+            raise APIError(409, 'Email history recovery is disabled.', 'EMAIL_DISABLED')
         data = await body_json(request, 2048)
         challenge = self.store.read_challenge(data.get('challengeId', ''), 'history-recovery', session['user_id'])
         payload, row = challenge['payload'], self.row(session['user_id'])
@@ -125,6 +201,9 @@ class HistoryRecovery:
 def register_routes(app):
     recovery = HistoryRecovery(app['service'])
     app.router.add_get('/api/account/history', recovery.status)
+    app.router.add_post('/api/account/history/options', recovery.options)
+    app.router.add_get('/api/account/history/passphrase', recovery.passphrase)
+    app.router.add_post('/api/account/history/passphrase', recovery.passphrase)
     app.router.add_post('/api/account/history', recovery.save)
     app.router.add_post('/api/account/history/password', recovery.password)
     app.router.add_post('/api/account/history/start', recovery.start)

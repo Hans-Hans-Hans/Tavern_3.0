@@ -9,13 +9,17 @@ const envelope=loadTs('../lib/history-envelope.ts',{});
 globalThis.location={origin:'https://tavern.test'};
 globalThis.localStorage={values:new Map(),getItem(k){return this.values.get(k)||null;},setItem(k,v){this.values.set(k,v);},removeItem(k){this.values.delete(k);}};
 function fixture(){
- const f={account:{},active:null,backup:null,cache:null,version:null,package:null,revision:null,posts:0,restores:0,busy:false,uncertain:false};
+ const f={account:{},active:null,backup:null,cache:null,version:null,package:null,revision:null,posts:0,restores:0,busy:false,uncertain:false,phrase:null,phraseRevision:null,mode:'off',emailReady:true,requests:[]};
  const user='@alice:test';
  const crypto={getSessionBackupPrivateKey:async()=>f.cache?new Uint8Array(f.cache):null,storeSessionBackupPrivateKey:async(bytes,version)=>{f.cache=new Uint8Array(bytes);f.version=version;},isKeyBackupTrusted:async backup=>{if(!f.cache)return{matchesDecryptionKey:false};const key=wasm.BackupDecryptionKey.fromBase64(encodeBase64(f.cache)),pub=key.megolmV1PublicKey;try{return{matchesDecryptionKey:pub.publicKeyBase64===backup.auth_data.public_key};}finally{pub.free();key.free();}},checkKeyBackupAndEnable:async()=>{},restoreKeyBackup:async()=>{f.restores++;}};
  const client={getCrypto:()=>crypto,getUserId:()=>user,getDeviceId:()=> 'D1',getHomeserverUrl:()=>location.origin+'/api/matrix',http:{authedRequest:async(method,path,query,body)=>{assert.equal(method,Method.Post);assert.equal(path,'/room_keys/version');f.posts++;if(f.uncertain)throw Error('Fixture request failed before acceptance');f.backup={version:String(f.posts),...body};return{version:f.backup.version};}}};f.active=client;
  const api={accountArtworkOwner:()=>f.account,isManagedAccount:()=>true,requestApi:async(path,body)=>{
+ f.requests.push({path,body});
+ if(path==='/account/history/passphrase'&&!body)return{package:f.phrase};
+ if(path==='/account/history/passphrase'){f.phrase=body.package;f.phraseRevision='phrase-revision';f.mode='passphrase';return{revision:f.phraseRevision};}
+ if(path==='/account/history/options'){f.mode=body.mode;return{mode:f.mode};}
  if(path==='/account/history/password'){assert.equal(body.password,'Correct password!');return{credentialEpoch:0};}
- if(path==='/account/history'&&!body)return{configured:!!f.package,revision:f.revision,emailReady:true,credentialEpoch:0,passwordChanged:false,backupVersion:f.backup?.version||null};
+ if(path==='/account/history'&&!body)return{mode:f.mode,passphraseRevision:f.phraseRevision,configured:!!f.package,revision:f.revision,emailReady:f.emailReady,credentialEpoch:0,passwordChanged:false,backupVersion:f.backup?.version||null};
  if(path==='/account/history'){f.package=body.package;f.revision='new';return{revision:'new'};}
  if(path==='/account/history/complete'){assert.equal(body.code,'123456');return{package:f.package};}
  throw Error('Unexpected API route '+path);
@@ -46,4 +50,39 @@ test('wrong password, backup rotation and account replacement never import a rel
 test('a login-derived key expires with account replacement and does not enroll for another account generation',async()=>{
  const t=fixture();t.login.rememberHistoryLogin({userId:'@alice:test',credentialEpoch:0},await envelope.historyPasswordKey('Correct password!'));
  assert.equal(t.hasHistoryLogin(),true);t.f.account={};assert.equal(t.hasHistoryLogin(),false);await assert.rejects(t.enableEmailHistory(),/Enter your account password/);t.login.forgetHistoryLogin();
+});
+
+test('account passphrase restores the same backup on a new device without SMTP or the login password',async()=>{
+ const t=fixture();t.f.emailReady=false;
+ await t.prepareCurrentHistoryBackup();
+ const original=new Uint8Array(t.f.cache);
+ const passphrase='Separate history secret 123!';
+ await t.enablePassphraseHistory(passphrase);
+ assert.equal(t.f.mode,'passphrase');assert.ok(t.f.phrase);
+ assert.ok(!JSON.stringify(t.f.requests).includes(passphrase));
+ assert.ok(!t.f.requests.some(r=>/password|\/start|\/complete/.test(r.path)));
+ assert.equal(t.f.package,null);
+ // Another browser has a different account generation and no cached keys.
+ t.f.cache=null;t.f.account={};
+ await t.recoverPassphraseHistory(passphrase);
+ assert.deepEqual(t.f.cache,original);assert.equal(t.f.restores,1);
+});
+
+test('incorrect passphrase, changed account and rotated backup never import a key',async()=>{
+ const t=fixture();await t.prepareCurrentHistoryBackup();await t.enablePassphraseHistory('Separate history secret 123!');
+ t.f.cache=null;
+ await assert.rejects(t.recoverPassphraseHistory('wrong passphrase'));assert.equal(t.f.cache,null);
+ t.f.backup.version='rotated';
+ await assert.rejects(t.recoverPassphraseHistory('Separate history secret 123!'),/backup changed/);assert.equal(t.f.cache,null);
+ t.f.backup.version=t.f.phrase.backupVersion;
+ const pending=t.recoverPassphraseHistory('Separate history secret 123!');t.f.account={};
+ await assert.rejects(pending,/device changed/);assert.equal(t.f.cache,null);
+});
+
+test('short passphrases fail before writing a package and off retains encrypted recovery data',async()=>{
+ const t=fixture();await assert.rejects(t.enablePassphraseHistory('short'),/12 to 1024/);
+ assert.equal(t.f.phrase,null);
+ await t.prepareCurrentHistoryBackup();await t.enablePassphraseHistory('Separate history secret 123!');
+ const saved=t.f.phrase;await t.setHistoryRecoveryMode('off');
+ assert.equal(t.f.mode,'off');assert.equal(t.f.phrase,saved);
 });

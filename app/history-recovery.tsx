@@ -1,3 +1,4 @@
+import { HistoryPreferences } from './history-preferences';
 import { EmailHistoryRecovery } from './email-history-recovery';
 import { useEffect, useState } from 'react';
 import type { MatrixClient } from 'matrix-js-sdk';
@@ -56,6 +57,7 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
     try { localStorage.setItem(reminderKey, reminderVersion); } catch { /* Dismiss for this mounted view. */ }
   };
   return <>
+    <HistoryPreferences automatic known={status?.canRestoreBackup===true} ready={!!status&&history.checked&&!history.busy}/>
     <EmailHistoryRecovery automatic onConfigured={setEmailConfigured} onChecked={setEmailChecked} backupVersion={status?.serverBackupVersion} known={status?.canRestoreBackup===true} ready={!!status&&history.checked&&!history.busy}/>
     {needsAttention && <aside className='history-recovery-banner' aria-label='Encrypted history recovery'>
       <div><strong>{history.local?.keys ? 'Keep history available on your other devices' : status?.serverBackupVersion ? 'Older messages may need recovery' : 'Keep a backup of your messages'}</strong>

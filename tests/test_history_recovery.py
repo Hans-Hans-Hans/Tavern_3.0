@@ -97,3 +97,80 @@ class EmailHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.backup['auth_data']['public_key']='b'*43
         self.assertEqual((await self.request('POST','/api/account/history/start',{},cookie)).status,409)
         self.service.send_email.assert_not_called()
+
+    async def test_passphrase_package_follows_account_without_verified_email_or_smtp(self):
+        cookie, _, _ = await self.login()
+        self.service.store.set('smtp', {'enabled': False})
+        self.service.store.db.execute("UPDATE accounts SET verified=0 WHERE user_id='@alice:test'")
+        saved = await self.request('POST', '/api/account/history/passphrase', {'package': PACKAGE, 'revision': None}, cookie)
+        self.assertEqual(saved.status, 200, await saved.text())
+        # A different login/device retrieves the same encrypted account package.
+        other, _, _ = await self.login()
+        status = await (await self.request('GET', '/api/account/history', cookie=other)).json()
+        self.assertEqual(status['mode'], 'passphrase')
+        self.assertTrue(status['passphraseConfigured'])
+        self.assertFalse(status['setupRequired'])
+        self.assertNotIn('package', status)
+        restored = await self.request('GET', '/api/account/history/passphrase', cookie=other)
+        self.assertEqual(restored.status, 200, await restored.text())
+        self.assertEqual((await restored.json())['package'], PACKAGE)
+        owner, _, _ = await self.login('owner')
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=owner)).status, 409)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase')).status, 401)
+        self.service.send_email.assert_not_called()
+
+    async def test_off_is_account_wide_and_preserves_packages_but_blocks_release(self):
+        cookie, _ = await self.enrolled()
+        code = await self.code(cookie)
+        await self.request('POST', '/api/account/history/passphrase', {'package': PACKAGE, 'revision': None}, cookie)
+        disabled = await self.request('POST', '/api/account/history/options', {'mode': 'off'}, cookie)
+        self.assertEqual(disabled.status, 200)
+        other, _, _ = await self.login()
+        status = await (await self.request('GET', '/api/account/history', cookie=other)).json()
+        self.assertEqual(status['mode'], 'off')
+        self.assertTrue(status['configured'])
+        self.assertTrue(status['passphraseConfigured'])
+        self.assertEqual((await self.request('POST', '/api/account/history/complete', code, cookie)).status, 409)
+        self.assertEqual((await self.request('POST', '/api/account/history/start', {}, other)).status, 409)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=other)).status, 409)
+        await self.request('POST', '/api/account/history/options', {'mode': 'passphrase'}, other)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=other)).status, 200)
+
+    async def test_passphrase_save_checks_revision_backup_session_and_origin(self):
+        cookie, _, _ = await self.login()
+        body = {'package': PACKAGE, 'revision': None}
+        first = await self.request('POST', '/api/account/history/passphrase', body, cookie)
+        self.assertEqual(first.status, 200)
+        revision = (await first.json())['revision']
+        self.assertEqual((await self.request('POST', '/api/account/history/passphrase', body, cookie)).status, 409)
+        body['revision'] = revision
+        self.assertEqual((await self.request('POST', '/api/account/history/passphrase', body, cookie, origin='https://evil.test')).status, 403)
+        self.backup['version'] = '2'
+        self.assertEqual((await self.request('POST', '/api/account/history/passphrase', body, cookie)).status, 409)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=cookie)).status, 409)
+
+    async def test_operator_prompt_waits_for_next_login_and_does_not_change_other_accounts(self):
+        from api.configure_history import configure
+        cookie, _ = await self.enrolled()
+        configure(self.service.store, 'alice', disable_email=True)
+        current = await (await self.request('GET', '/api/account/history', cookie=cookie)).json()
+        self.assertEqual(current['mode'], 'off')
+        self.assertFalse(current['setupRequired'])
+        other, _, _ = await self.login()
+        status = await (await self.request('GET', '/api/account/history', cookie=other)).json()
+        self.assertTrue(status['setupRequired'])
+        self.assertFalse(status['emailReady'])
+        self.assertTrue(status['configured'])
+        self.assertFalse(self.service.smtp()['enabled'])
+        with self.assertRaises(ValueError):
+            configure(self.service.store, 'missing')
+        await self.request('POST', '/api/account/history/passphrase', {'package': PACKAGE, 'revision': None}, other)
+        self.assertFalse((await (await self.request('GET', '/api/account/history', cookie=other)).json())['setupRequired'])
+
+    async def test_disabled_email_cannot_enroll_or_send_but_can_select_passphrase(self):
+        cookie, _ = await self.enrolled()
+        self.service.store.set('smtp', {'enabled': False})
+        self.assertEqual((await self.request('POST', '/api/account/history/options', {'mode': 'email'}, cookie)).status, 409)
+        self.assertEqual((await self.request('POST', '/api/account/history/options', {'mode': 'passphrase'}, cookie)).status, 200)
+        self.assertEqual((await self.request('POST', '/api/account/history/start', {}, cookie)).status, 409)
+        self.service.send_email.assert_not_called()
