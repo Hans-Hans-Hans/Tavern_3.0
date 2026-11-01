@@ -24,7 +24,7 @@ def inspect_proxy_trust(environ=None, resolver=None):
     # Canonical IP networks only; never echo arbitrary environment text.
     result = {'trustedProxyCidrs': [str(network) for network in trusted]}
     try:
-        records = resolver('tavern-web', 8080, type=socket.SOCK_STREAM)
+        records = resolver('tavern-auth-gateway', 8080, type=socket.SOCK_STREAM)
         addresses = sorted({str(ipaddress.ip_address(record[4][0])) for record in records})
     except (OSError, ValueError, IndexError, TypeError):
         return {**result, 'status': 'fail', 'category': 'gateway_dns_unavailable'}

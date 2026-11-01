@@ -67,7 +67,6 @@ services:
     environment:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       TAVERN_MANAGED_AUTH: 'true'
       TAVERN_ROLE_POLICY: 'true'
     read_only: true
@@ -76,8 +75,12 @@ services:
     ports:
     - ${TAVERN_BIND_IP:-127.0.0.1}:${TAVERN_HTTP_PORT:-8080}:8080
     networks:
-    - private
-    - proxy
+      private: {}
+      proxy: {}
+      api_gateway:
+        ipv4_address: ${TAVERN_GATEWAY_IP:-172.30.240.2}
+        aliases:
+        - tavern-auth-gateway
     depends_on:
       synapse:
         condition: service_healthy
@@ -117,7 +120,7 @@ services:
       SFU_AUDIO_MODERATION_ENABLED: ${SFU_AUDIO_MODERATION_ENABLED:-false}
       RTC_AUTH_IMAGE: ${RTC_AUTH_IMAGE:-ghcr.io/element-hq/lk-jwt-service:0.6.0}
       TAVERN_BOOTSTRAP_MARKER: /synapse/tavern-bootstrap-allowed
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      TRUSTED_PROXY_CIDRS: ${TAVERN_GATEWAY_IP:-172.30.240.2}/32,${TRUSTED_PROXY_CIDRS:-}
       BOOTSTRAP_ALLOWED_CIDRS: ${BOOTSTRAP_ALLOWED_CIDRS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128}
       SMTP_ENABLED: ${SMTP_ENABLED:-false}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
@@ -147,8 +150,11 @@ services:
     tmpfs:
     - /tmp:size=32m,mode=1777
     networks:
-    - private
-    - egress
+      private: {}
+      egress: {}
+      api_gateway:
+        aliases:
+        - tavern-auth-api
     depends_on:
       init:
         condition: service_completed_successfully
@@ -418,6 +424,12 @@ services:
       timeout: 5s
       retries: 3
 networks:
+  api_gateway:
+    internal: true
+    ipam:
+      config:
+      - subnet: ${TAVERN_GATEWAY_SUBNET:-172.30.240.0/29}
+        ip_range: ${TAVERN_GATEWAY_POOL:-172.30.240.4/30}
   private:
     internal: true
   proxy:

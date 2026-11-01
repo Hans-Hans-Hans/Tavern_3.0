@@ -122,7 +122,7 @@ def main():
             network=network.name, read_only=True, cap_drop=['ALL'], security_opt=['no-new-privileges:true'])
         containers.append(fixture)
         network.disconnect(fixture)
-        network.connect(fixture, aliases=['tavern-api', 'livekit', 'rtc-auth', 'synapse'])
+        network.connect(fixture, aliases=['tavern-api', 'tavern-auth-api', 'livekit', 'rtc-auth', 'synapse'])
         fixture.start()
         gateway = engine.containers.run('tavern:check', name=identity + '-web', labels=owned, detach=True,
             environment={'TAVERN_DOMAIN': 'chat.example.test', 'TAVERN_MANAGED_AUTH': 'true'},

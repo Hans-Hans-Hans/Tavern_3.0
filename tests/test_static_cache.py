@@ -61,7 +61,7 @@ class StaticCacheTests(unittest.TestCase):
             for name, path in includes.items():
                 source = source.replace('/etc/nginx/' + name, (ROOT / path).as_posix())
             source = source.replace('/dev/null', (root / 'muted.log').as_posix())
-            for address in ('tavern-api:8090', 'synapse:8008', 'integrations:8080', 'livekit:7880'):
+            for address in ('tavern-auth-api:8090', 'synapse:8008', 'integrations:8080', 'livekit:7880'):
                 source = source.replace(address, f'127.0.0.1:{upstream.server_port}')
             cache = (ROOT / 'docker/cache-control.conf').read_text() if gateway else ''
             config = root / 'nginx.conf'

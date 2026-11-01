@@ -164,7 +164,7 @@ checks; a healthy container alone does not prove external media connectivity.
 
 ## Required hardening settings for existing V3
 
-Configure actual gateway/NPM `TRUSTED_PROXY_CIDRS` before deploying. If operations
+Check the dedicated gateway subnet for conflicts and remove obsolete proxy trust entries before deploying; see [proxy migration](PROXY_HARDENING.md). If operations
 is enabled, explicitly set `ALLOW_DOCKER_SOCKET_ACCESS=true` after reviewing its
 host-root risk. Prefer `SMTP_PASSWORD_FILE` with `TAVERN_SMTP_SECRET_DIR` over
 legacy SMTP environment secrets. See the [full settings and safe redeploy](V3_HARDENING.md),

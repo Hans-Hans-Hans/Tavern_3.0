@@ -6,7 +6,7 @@ server {
     client_max_body_size 12m;
     include /etc/nginx/tavern-headers.conf;
     set $matrix_upstream http://synapse:8008;
-    set $tavern_api http://tavern-api:8090;
+    set $tavern_api http://tavern-auth-api:8090;
     set $managed_auth ${TAVERN_MANAGED_AUTH};
     proxy_http_version 1.1;
     proxy_read_timeout 90s;

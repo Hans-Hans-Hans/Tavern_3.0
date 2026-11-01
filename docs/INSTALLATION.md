@@ -126,11 +126,12 @@ NPM handles public HTTPS; Tavern listens for **HTTP** inside Docker. Selecting
 HTTPS for the upstream causes `SSL_do_handshake ... wrong version number` and a
 502 error. A `*.home.example.com` certificate does not cover `chat.example.com`.
 
-Set `TRUSTED_PROXY_CIDRS` to the actual trusted NPM/gateway Docker subnets using [these inspection commands](PROXY_HARDENING.md). Its default is empty; forwarded requests fail closed until you configure it. Do not
-trust arbitrary public networks. The gateway sanitizes forwarded client
-addresses before bootstrap and account rate limits use them. Bootstrap should
-be completed directly on the LAN, using local DNS if public access traverses
-Cloudflare.
+Compose reserves and trusts Web on a dedicated internal API forwarding network.
+Check for subnet conflicts before deployment. `TRUSTED_PROXY_CIDRS` is optional
+additional trust for a reserved NPM address; leave it empty to group IP rate
+limits at NPM. Follow [proxy configuration and Dockhand migration](PROXY_HARDENING.md).
+Bootstrap should be completed directly on the LAN using local DNS if public
+access traverses Cloudflare.
 
 The gateway also binds `127.0.0.1:8080` for host-local diagnostics. Change
 `TAVERN_BIND_IP` only when a proxy on another machine must reach the host; use a

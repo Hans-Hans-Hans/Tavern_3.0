@@ -204,7 +204,7 @@ def main():
         # Refuse to adopt or clean up a preexisting project, volume or network.
         if (engine.containers.list(all=True, filters={'label': 'com.docker.compose.project=' + PROJECT})
                 or engine.volumes.list(filters={'label': 'com.docker.compose.project=' + PROJECT})
-                or engine.networks.list(names=[PROXY_NETWORK, PROJECT + '_private', PROJECT + '_egress'])
+                or engine.networks.list(names=[PROXY_NETWORK, PROJECT + '_api_gateway', PROJECT + '_private', PROJECT + '_egress'])
                 or any(volume.name.startswith(PROJECT + '_') for volume in engine.volumes.list())):
             raise RuntimeError('The rollback project must not already exist.')
         nonce = uuid.uuid4().hex
@@ -237,13 +237,14 @@ def main():
             'TAVERN_INIT_IMAGE': source['init'].attrs['Image'], 'TAVERN_OPERATIONS_IMAGE': source['operations'].attrs['Image'],
             'SYNAPSE_IMAGE': source['synapse'].attrs['Image'], 'POSTGRES_IMAGE': source['postgres'].attrs['Image'],
             'TAVERN_DATA_DIR': '', 'TAVERN_INTEGRATIONS_CONFIG': 'integrations_config', 'TAVERN_INTEGRATIONS_DATA': 'integrations_data',
+            'TAVERN_GATEWAY_SUBNET': '172.30.241.0/29', 'TAVERN_GATEWAY_POOL': '172.30.241.4/30', 'TAVERN_GATEWAY_IP': '172.30.241.2',
             'NPM_PROXY_EXTERNAL': 'false', 'NPM_PROXY_NETWORK': PROXY_NETWORK, 'CALLS_ENABLED': 'false', 'SFU_AUDIO_MODERATION_ENABLED': 'false', 'INTEGRATIONS_ENABLED': 'false', 'SMTP_ENABLED': 'false'}
         # Inspect the fully resolved model before creating project resources.
         model = json.loads(subprocess.check_output(compose + ['config', '--format', 'json'], cwd=ROOT, env=environment))
         assert model['name'] == PROJECT
         assert not model['services']['tavern-web'].get('ports')
         assert all(item.get('name', '').startswith(PROJECT + '_') for item in model['volumes'].values())
-        assert all(item.get('name', '') in (PROXY_NETWORK, PROJECT + '_private', PROJECT + '_egress', PROJECT + '_media') for item in model['networks'].values())
+        assert all(item.get('name', '') in (PROXY_NETWORK, PROJECT + '_api_gateway', PROJECT + '_private', PROJECT + '_egress', PROJECT + '_media') for item in model['networks'].values())
         started = True
         subprocess.run(compose + ['up', '-d', '--no-build', '--wait', '--wait-timeout', '240'], cwd=ROOT, env=environment, check=True)
         initial = containers(engine, PROJECT)

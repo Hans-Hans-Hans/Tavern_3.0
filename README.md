@@ -34,7 +34,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Set `TAVERN_DOMAIN`, actual `TRUSTED_PROXY_CIDRS` and SMTP settings before setup. Proxy trust defaults to empty and forwarded requests fail closed until configured. The initializer generates and preserves credentials in private Docker volumes. PostgreSQL, Synapse, the account API, and the web gateway start from the same Compose file. The successful initializer exits; this is expected.
+Set `TAVERN_DOMAIN` and SMTP settings before setup. Compose reserves and trusts Web on a dedicated API forwarding network; check for subnet conflicts and see [proxy configuration](docs/PROXY_HARDENING.md) for optional NPM trust. The initializer generates and preserves credentials in private Docker volumes. PostgreSQL, Synapse, the account API, and the web gateway start from the same Compose file. The successful initializer exits; this is expected.
 
 **Existing installations:** follow [the migration procedure](docs/INSTALLATION.md#existing-tavern-installations) before switching. Preserve your hostname, Compose project, database volume, `.env`, and data directory. Do not run `docker compose down -v` during an update.
 

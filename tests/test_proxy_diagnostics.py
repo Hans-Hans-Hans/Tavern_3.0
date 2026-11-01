@@ -17,7 +17,7 @@ class ProxyDiagnosticsTests(unittest.TestCase):
         result = inspect_proxy_trust({'SMTP_PASSWORD': 'private-marker'}, lookup)
         self.assertEqual(result, {'status': 'fail', 'category': 'gateway_trust_missing',
                                  'trustedProxyCidrs': [], 'gateways': [{'address': '172.24.0.7', 'trusted': False}]})
-        lookup.assert_called_once_with('tavern-web', 8080, type=socket.SOCK_STREAM)
+        lookup.assert_called_once_with('tavern-auth-gateway', 8080, type=socket.SOCK_STREAM)
         self.assertNotIn('private-marker', json.dumps(result))
 
     def test_explicit_ipv4_and_ipv6_networks_accept_only_matching_gateways(self):

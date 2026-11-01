@@ -28,7 +28,7 @@ authorization, TURN peer ACLs and existing container hardening are retained.
 
 | Variable | Set it to |
 |---|---|
-| `TRUSTED_PROXY_CIDRS` | Actual dedicated gateway/NPM subnets or stable address CIDRs, obtained with the [read-only inspection commands](PROXY_HARDENING.md). No universal safe value can be inferred from your LAN IP. |
+| `TRUSTED_PROXY_CIDRS` | Optional additional reserved NPM /32 hops. Compose separately trusts its reserved Web /32 on the dedicated api_gateway network. Check subnet conflicts and follow the [migration instructions](PROXY_HARDENING.md). |
 | `ALLOW_DOCKER_SOCKET_ACCESS` | `true` only if the operations profile is intentionally enabled and you accept host-root Docker access; otherwise leave false. |
 | `SMTP_PASSWORD_FILE` | Optional preferred container path, e.g. `/run/tavern-smtp/password`. |
 | `TAVERN_SMTP_SECRET_DIR` | With that example, the existing Docker-host secret directory, e.g. `/opt/tavern-smtp`. See [permissions and precedence](INSTALLATION.md#administrator-setup-and-smtpgmail). |

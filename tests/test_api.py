@@ -338,6 +338,27 @@ class AccountAPITests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Set-Cookie', denied.headers)
         self.assertEqual(self.device_count, 0)
 
+    async def test_proxy_headers_cannot_override_public_https_origin_or_cookie(self):
+        self.service.trusted = network_list('127.0.0.1/32,::1/128')
+        headers = {'Origin': ORIGIN, 'X-Forwarded-For': '203.0.113.9',
+                   'Host': 'evil.example', 'X-Forwarded-Host': 'evil.example',
+                   'X-Forwarded-Proto': 'http', 'X-Real-IP': '127.0.0.1',
+                   'Forwarded': 'for=127.0.0.1;proto=http;host=evil.example'}
+        response = await self.client.post('/api/auth/login', headers=headers, json={
+            'username': 'alice', 'password': 'Correct password!'})
+        self.assertEqual(response.status, 200, await response.text())
+        cookie = response.headers['Set-Cookie']
+        self.assertIn('Secure', cookie)
+        self.assertIn('HttpOnly', cookie)
+        self.assertNotIn('Domain=', cookie)
+        rate = self.service.store.db.execute('SELECT * FROM rate_limits WHERE key=?',
+                    (self.service.store.digest('login:203.0.113.9'),)).fetchone()
+        self.assertIsNotNone(rate)
+        headers['Origin'] = 'https://evil.example'
+        denied = await self.client.post('/api/auth/login', headers=headers, json={
+            'username': 'alice', 'password': 'Correct password!'})
+        self.assertEqual(denied.status, 403)
+
     async def test_invalid_login_input_does_not_blame_proxy_configuration(self):
         response = await self.request('POST', '/api/auth/login', {'username': ['alice'], 'password': 'unused'})
         self.assertEqual(response.status, 400)

@@ -179,6 +179,24 @@ class ProvisionTests(unittest.TestCase):
 
 
 class ComposeStructure(unittest.TestCase):
+    def test_gateway_trust_is_reserved_and_route_is_unambiguous(self):
+        import ipaddress
+        config = yaml.safe_load((ROOT / 'compose.yaml').read_text())
+        services = config['services']
+        network = config['networks']['api_gateway']
+        self.assertTrue(network['internal'])
+        self.assertEqual({name for name, service in services.items()
+                          if 'api_gateway' in service.get('networks', {})},
+                         {'tavern-web', 'tavern-api'})
+        web = services['tavern-web']
+        self.assertNotIn('TRUSTED_PROXY_CIDRS', web['environment'])
+        self.assertEqual(web['networks']['api_gateway']['ipv4_address'], '${TAVERN_GATEWAY_IP:-172.30.240.2}')
+        self.assertNotIn(ipaddress.ip_address('172.30.240.2'), ipaddress.ip_network('172.30.240.4/30'))
+        self.assertEqual(services['tavern-api']['networks']['api_gateway']['aliases'], ['tavern-auth-api'])
+        template = (ROOT / 'docker/npm/server.conf.template').read_text()
+        self.assertIn('http://tavern-auth-api:8090', template)
+        self.assertNotIn('http://tavern-api:8090', template)
+
     def test_single_file_contains_stack_and_preserves_existing_volume_name(self):
         config = yaml.safe_load((ROOT / 'compose.yaml').read_text())
         services = config['services']
@@ -193,7 +211,7 @@ class ComposeStructure(unittest.TestCase):
         self.assertEqual(socket_services, ['operations'])
         self.assertEqual(services['operations']['profiles'], ['operations'])
         self.assertIn('991', services['tavern-api']['group_add'])
-        self.assertEqual(services['tavern-api']['environment']['TRUSTED_PROXY_CIDRS'], '${TRUSTED_PROXY_CIDRS:-}')
+        self.assertEqual(services['tavern-api']['environment']['TRUSTED_PROXY_CIDRS'], '${TAVERN_GATEWAY_IP:-172.30.240.2}/32,${TRUSTED_PROXY_CIDRS:-}')
         self.assertEqual(services['operations']['environment']['ALLOW_DOCKER_SOCKET_ACCESS'], '${ALLOW_DOCKER_SOCKET_ACCESS:-false}')
         self.assertEqual(services['rtc-auth']['environment']['LIVEKIT_URL'], '${RTC_AUTH_LIVEKIT_URL:-http://livekit:7880}')
         for name in ('livekit', 'rtc-auth', 'tavern-api'):
