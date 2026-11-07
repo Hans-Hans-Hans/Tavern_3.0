@@ -27,7 +27,17 @@ recovery-key, key-file and device tools. A blocked setup does not display an
 account-password field with an unusable authenticator button: the password
 cannot recreate the missing backup key. After recovery, setup continues in the
 same dialog, without waiting for the outer security-status refresh. The key is
-preserved; no new backup is created to bypass this step.
+preserved when recovering that backup.
+
+If the old history passphrase does not work, choose **Set up authenticator app
+without the old history passphrase**. Confirm protection of available keys and
+future messages, enter the current account password, and verify a fresh
+authenticator code. This explicitly selects authenticator-only recovery, keeping
+other recovery packages in storage without prompting for them. If the current
+backup cannot be opened, a new backup version protects available keys and future
+messages; existing backup versions are not deleted. Older locked history still
+requires its original keys. After setup, other devices use the authenticator
+code to recover this new backup, without the old passphrase.
 
 Selections and recovery packages belong to the account, not the browser.
 Unchecking one method blocks its recovery endpoint while retaining its package;

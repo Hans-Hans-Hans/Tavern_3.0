@@ -93,6 +93,33 @@ test('blocked authenticator setup exposes existing legacy email recovery and res
   expect(state.restores).toBe(1);
 });
 
+test('authenticator-only setup does not require the failing old history passphrase',async({page,browser})=>{
+  const state=account();state.mode='totp';state.methods=['totp','passphrase','email'];state.setupRequired=true;state.passphraseConfigured=true;
+  await fixture(page,state,'?automatic');
+  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
+  const factor=dialog.getByRole('region',{name:'Authenticator app history recovery'});
+  await factor.getByRole('button',{name:'Set up authenticator app without the old history passphrase'}).click();
+  await factor.getByLabel('Current account password').fill('Account password');
+  await factor.getByRole('checkbox',{name:/Protect available keys/}).check();
+  await factor.getByRole('button',{name:'Use authenticator code'}).click();
+  await factor.getByLabel('Authenticator app verification code').fill('123456');
+  await factor.getByRole('button',{name:'Save authenticator app recovery'}).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.restores).toBe(0);expect(state.saves).toBe(0);
+  expect(state.factorSaves).toEqual(['totp']);expect(state.methods).toEqual(['totp']);expect(state.passphraseConfigured).toBe(true);
+  const context=await browser.newContext();
+  try{
+    const second=await context.newPage();await fixture(second,state,'?automatic');
+    await expect(second.getByRole('dialog')).toBeVisible();
+    await expect(second.getByLabel('History passphrase',{exact:true})).toHaveCount(0);
+    await second.getByRole('button',{name:'Use authenticator code'}).click();
+    await second.getByLabel('Authenticator app verification code').fill('123456');
+    await second.getByRole('button',{name:'Unlock history with authenticator app'}).click();
+    await expect(second.getByRole('dialog')).toHaveCount(0);
+    expect(state.factorRestores).toEqual(['totp']);
+  }finally{await context.close();}
+});
+
 test('off is a saved account preference, not a browser-only dismissal', async ({ page, browser }) => {
   const state = account(); state.mode = 'passphrase'; state.methods=['passphrase']; state.passphraseConfigured = true;
   await fixture(page, state, '?known');

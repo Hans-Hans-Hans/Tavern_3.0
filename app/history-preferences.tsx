@@ -111,8 +111,8 @@ export function HistoryPreferences({ automatic = false, ready, known }: { automa
       {setup && !canRestore && !recoverFirst && <label className='check-label'><input type='checkbox' checked={protect} disabled={busy} onChange={e => setProtect(e.target.checked)}/> Protect keys available on this device and future messages. Older locked messages still need their original keys. Existing backups will be kept.</label>}
       <button className='primary-button' disabled={busy || recoverFirst || setup && !canRestore && !protect}>{busy ? 'Working…' : setup ? 'Save history passphrase' : 'Unlock history'}</button>
     </form>}
-    {status && methods.includes('totp') && <FactorHistoryRecovery method='totp' status={status} known={canRestore} onUnlocked={historyUnlocked} onSaved={() => { if (automatic && pendingFactors.every(method => method === 'totp')) setOpen(false); }}/>}
-    {status && methods.includes('email') && <FactorHistoryRecovery method='email' status={status} known={canRestore} onUnlocked={historyUnlocked} onSaved={() => { if (automatic && pendingFactors.every(method => method === 'email')) setOpen(false); }}/>}
+    {status && methods.includes('totp') && <FactorHistoryRecovery method='totp' status={status} known={canRestore} onUnlocked={historyUnlocked} onSaved={onlyMethod => { if (automatic && (onlyMethod || pendingFactors.every(method => method === 'totp'))) setOpen(false); }}/>}
+    {status && methods.includes('email') && <FactorHistoryRecovery method='email' status={status} known={canRestore} onUnlocked={historyUnlocked} onSaved={onlyMethod => { if (automatic && (onlyMethod || pendingFactors.every(method => method === 'email'))) setOpen(false); }}/>}
     {needsExistingRecovery && status?.configured && methods.includes('email') && !status.factorConfigured?.email && <EmailHistoryRecovery known={false} ready onUnlocked={historyUnlocked}/>}
     {!methods.length && !status?.setupRequired && <p>History recovery prompts are off for this account. Keep this browser’s data or export your keys before changing devices.</p>}
     {message && <p role='status'>{message}</p>}{error && <p role='alert'>{error}</p>}

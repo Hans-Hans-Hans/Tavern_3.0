@@ -20,7 +20,7 @@ function fixture(){
  if(path==='/account/history/factor/complete'){assert.equal(body.code,'123456');return{...f.factors[body.method]};}
  if(path==='/account/history/passphrase'&&!body)return{package:f.phrase};
  if(path==='/account/history/passphrase'){f.phrase=body.package;f.phraseRevision='phrase-revision';f.mode='passphrase';return{revision:f.phraseRevision};}
- if(path==='/account/history/options'){f.mode=body.mode;return{mode:f.mode};}
+ if(path==='/account/history/options'){f.mode=body.mode??body.methods?.[0]??'off';return{mode:f.mode};}
  if(path==='/account/history/password'){assert.equal(body.password,'Correct password!');return{credentialEpoch:0};}
  if(path==='/account/history'&&!body)return{mode:f.mode,passphraseRevision:f.phraseRevision,configured:!!f.package,revision:f.revision,emailReady:f.emailReady,credentialEpoch:0,passwordChanged:false,backupVersion:f.backup?.version||null};
  if(path==='/account/history'){f.package=body.package;f.revision='new';return{revision:'new'};}
@@ -115,4 +115,20 @@ test('a mismatched factor package cannot replace native history keys',async()=>{
  t.f.factors.totp.wrappingSecret='A'.repeat(43)+'=';
  await assert.rejects(t.recoverFactorHistory('totp','challenge','123456'),/cannot unlock/);
  assert.deepEqual(t.f.cache,before);assert.equal(t.f.restores,0);
+});
+
+test('authenticator can protect a new backup without unlocking or deleting the old passphrase package',async()=>{
+ const t=fixture();await t.prepareCurrentHistoryBackup();
+ await t.enablePassphraseHistory('Old history passphrase');
+ const originalPackage=t.f.phrase, originalKey=new Uint8Array(t.f.cache);
+ t.f.cache=null;
+ await t.prepareCurrentHistoryBackup();
+ const newKey=new Uint8Array(t.f.cache);
+ assert.notDeepEqual(newKey,originalKey);assert.equal(t.f.backup.version,'2');
+ await t.enableFactorHistory('totp','challenge','123456','Current account password');
+ await t.setHistoryRecoveryMethods(['totp']);
+ assert.equal(t.f.mode,'totp');assert.equal(t.f.phrase,originalPackage);
+ assert.equal(originalPackage.backupVersion,'1');assert.equal(t.f.factors.totp.package.backupVersion,'2');
+ t.f.cache=null;await t.recoverFactorHistory('totp','challenge','123456');
+ assert.deepEqual(t.f.cache,newKey);assert.equal(t.f.restores,1);
 });
