@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { MatrixClient } from 'matrix-js-sdk';
 import { getMatrixClient, onMatrixUpdate } from '@/lib/matrix';
 import { isManagedAccount } from '@/lib/api';
+import { openHistoryRecovery } from '@/lib/history-preferences-events';
 import { historyRecoverySnapshot, securityStatus, subscribeSecurity } from '@/lib/security';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SecurityCenter } from './security-center';
@@ -23,6 +24,11 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const reminderKey = 'tavern.history-reminder.v1:' + JSON.stringify([client.getHomeserverUrl(), client.getUserId()]);
   const reminderVersion = status ? JSON.stringify([status.serverBackupVersion, status.recoveryConfigured]) : null;
+  useEffect(() => {
+    const show = () => { if (getMatrixClient() === client) setOpen(true); };
+    window.addEventListener(openHistoryRecovery, show);
+    return () => window.removeEventListener(openHistoryRecovery, show);
+  }, [client]);
   useEffect(() => {
     let active = true, pending = false, again = false;
     setStatus(null); setError(''); setOpen(false); setDismissed(null);setEmailConfigured(false);setEmailChecked(false);

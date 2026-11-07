@@ -20,6 +20,15 @@ An OTP used for sign-in cannot be reused for recovery: wait for the next code.
 After unlocking with any method, a forgotten history passphrase can be replaced
 from this device without changing the other recovery methods.
 
+If authenticator recovery is selected before its history key has been saved,
+the unlock dialog offers existing recovery methods even if they were unchecked.
+Selecting one explicitly re-enables it for the account. The dialog also links to
+recovery-key, key-file and device tools. A blocked setup does not display an
+account-password field with an unusable authenticator button: the password
+cannot recreate the missing backup key. After recovery, setup continues in the
+same dialog, without waiting for the outer security-status refresh. The key is
+preserved; no new backup is created to bypass this step.
+
 Selections and recovery packages belong to the account, not the browser.
 Unchecking one method blocks its recovery endpoint while retaining its package;
 other selected methods continue working. Unchecking all stops automatic recovery
@@ -67,3 +76,7 @@ tests, 21 browser tests, TypeScript checking and the production Vite build.
 An initial module-wide Python invocation also collected the existing storage
 inventory test, which fails on Windows because it lists `secrets.key`; that
 unrelated storage code is unchanged by this feature.
+
+The blocked-setup follow-up passed 15 recovery browser tests and TypeScript/Vite
+production checks, including passphrase and legacy email recovery followed by
+authenticator enrollment, and opening recovery tools after dismissing a reminder.

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 
-function account() { return { mode: 'off', methods: [] as string[], setupRequired: false, passphraseConfigured: false, emailReady: false, authenticatorReady: true, factorConfigured: {totp:false,email:false}, factorSaves: [] as string[], factorRestores: [] as string[], saves: 0, restores: 0 }; }
+function account() { return { mode: 'off', methods: [] as string[], configured: false, setupRequired: false, passphraseConfigured: false, emailReady: false, authenticatorReady: true, factorConfigured: {totp:false,email:false}, factorSaves: [] as string[], factorRestores: [] as string[], saves: 0, restores: 0 }; }
 async function fixture(page: Page, state: ReturnType<typeof account>, query = '') {
   await page.route(url => url.pathname === '/lib/api.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'const account={};export const accountArtworkOwner=()=>account;export const isManagedAccount=()=>true;' }));
   await page.route(url => url.pathname === '/lib/matrix.ts', route => route.fulfill({ contentType: 'text/javascript', body: 'const client={};export const getMatrixClient=()=>client;' }));
@@ -20,6 +20,12 @@ async function fixture(page: Page, state: ReturnType<typeof account>, query = ''
     export const setHistoryRecoveryMode=mode=>update({mode});
     export const setHistoryRecoveryMethods=methods=>update({methods});
     export const startFactorHistory=async()=> 'challenge';
+    export const hasHistoryLogin=()=>false;
+    export const startEmailHistory=async()=> 'email-challenge';
+    export const autoStartEmailHistory=startEmailHistory;
+    export const enableEmailHistory=async()=>{};
+    export const protectCurrentHistory=async()=>{};
+    export const recoverEmailHistory=(challenge,code)=>{if(code!=='123456')throw Error('Invalid code');return update({restore:true});};
     export const enableFactorHistory=(method,challenge,code)=>{if(code!=='123456')throw Error('Invalid code');return update({factorSave:method});};
     export const recoverFactorHistory=(method,challenge,code)=>{if(code!=='123456')throw Error('Invalid code');return update({factorRestore:method});};
     export const prepareCurrentHistoryBackup=async()=>{};
@@ -50,6 +56,41 @@ test('account setup needs matching passphrases, works without email, and follows
     await second.getByRole('button', { name: 'Unlock history', exact: true }).click();
     await expect(second.getByRole('dialog')).toHaveCount(0); expect(state.restores).toBe(1);
   } finally { await context.close(); }
+});
+
+test('authenticator setup offers a disabled existing passphrase and continues setup after recovery', async ({page})=>{
+  const state=account();state.mode='totp';state.methods=['totp'];state.setupRequired=true;state.passphraseConfigured=true;
+  await fixture(page,state,'?automatic');
+  const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
+  const factor=dialog.getByRole('region',{name:'Authenticator app history recovery'});
+  await expect(factor.getByLabel('Current account password')).toHaveCount(0);
+  await dialog.getByRole('button',{name:'Use existing history passphrase',exact:true}).click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('History passphrase',{exact:true}).fill('Original history passphrase');
+  await dialog.getByRole('button',{name:'Unlock history',exact:true}).click();
+  await expect(factor.getByLabel('Current account password')).toBeVisible();
+  await factor.getByLabel('Current account password').fill('Account password');
+  await factor.getByRole('button',{name:'Use authenticator code'}).click();
+  await factor.getByLabel('Authenticator app verification code').fill('123456');
+  await factor.getByRole('button',{name:'Save authenticator app recovery'}).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.restores).toBe(1);expect(state.factorSaves).toEqual(['totp']);
+  expect(state.methods).toEqual(['totp','passphrase']);
+});
+
+test('blocked authenticator setup exposes existing legacy email recovery and resumes after its code', async ({page})=>{
+  const state=account();state.mode='totp';state.methods=['totp'];state.setupRequired=true;state.configured=true;state.emailReady=true;
+  await fixture(page,state,'?automatic');
+  await page.getByRole('button',{name:'Use existing email recovery',exact:true}).click();
+  await page.getByRole('button',{name:'Unlock with email code',exact:true}).click();
+  const email=page.getByRole('dialog').last();
+  await email.getByLabel('Password used to protect history').fill('Original account password');
+  await email.getByLabel('Email verification code').fill('123456');
+  await email.getByRole('button',{name:'Unlock history',exact:true}).click();
+  const factor=page.getByRole('region',{name:'Authenticator app history recovery'});
+  await expect(factor.getByLabel('Current account password')).toBeVisible();
+  await expect(factor.getByRole('button',{name:'Use authenticator code'})).toBeEnabled();
+  expect(state.restores).toBe(1);
 });
 
 test('off is a saved account preference, not a browser-only dismissal', async ({ page, browser }) => {

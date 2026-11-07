@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { historyPreferencesChanged } from '@/lib/history-preferences-events';
 const promptedAccounts = new WeakSet<object>();
 
-export function EmailHistoryRecovery({ known, ready, automatic = false, onConfigured, onChecked, backupVersion }: { known: boolean; ready: boolean; automatic?: boolean; onConfigured?: (value:boolean)=>void; onChecked?: (value:boolean)=>void; backupVersion?: string|null }) {
+export function EmailHistoryRecovery({ known, ready, automatic = false, onConfigured, onChecked, onUnlocked, backupVersion }: { known: boolean; ready: boolean; automatic?: boolean; onConfigured?: (value:boolean)=>void; onChecked?: (value:boolean)=>void; onUnlocked?: () => void; backupVersion?: string|null }) {
   const [status,setStatus]=useState<EmailHistoryStatus|null>(null),[open,setOpen]=useState(false),[challenge,setChallenge]=useState('');
   const [protect,setProtect]=useState(false),[preferenceVersion,setPreferenceVersion]=useState(0);
   useEffect(()=>{const refresh=()=>setPreferenceVersion(value=>value+1);window.addEventListener(historyPreferencesChanged,refresh);return()=>window.removeEventListener(historyPreferencesChanged,refresh);},[]);
@@ -57,7 +57,7 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
       {message&&<p role='status'>{message}</p>}{error&&<p role='alert'>{error}</p>}
     </section>}
     <Dialog open={open} onOpenChange={value=>{if(!busy){setOpen(value);if(!value){setCode('');setPassword('');}}}}><DialogContent className='tavern-dialog'><DialogHeader><DialogTitle>Unlock your message history</DialogTitle><DialogDescription>Enter the code sent to your verified email. This browser will remember your history keys so you can sign in here again without another recovery code.</DialogDescription></DialogHeader>
-      <form className='dialog-form' onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');try{await recoverEmailHistory(challenge,code,password);if(current()){setPassword('');setCode('');setOpen(false);setMessage('Message history unlocked on this browser.');}}catch(e){if(current())setError((e as Error).message);}finally{if(current())setBusy(false);}}}>
+      <form className='dialog-form' onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');try{await recoverEmailHistory(challenge,code,password);if(current()){setPassword('');setCode('');setOpen(false);setMessage('Message history unlocked on this browser.');onUnlocked?.();}}catch(e){if(current())setError((e as Error).message);}finally{if(current())setBusy(false);}}}>
         {(!hasHistoryLogin()||status?.passwordChanged||error.includes('password'))&&<label>Password used to protect history<input type='password' autoComplete='current-password' value={password} onChange={e=>setPassword(e.target.value)} required/></label>}
         <label>Email verification code<input autoComplete='one-time-code' inputMode='numeric' pattern='[0-9]{6}' maxLength={6} value={code} onChange={e=>setCode(e.target.value)} required/></label>
         <button className='primary-button' disabled={busy||!challenge}>{busy?'Unlocking...':'Unlock history'}</button>

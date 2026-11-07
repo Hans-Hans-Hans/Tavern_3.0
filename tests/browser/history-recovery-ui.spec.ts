@@ -69,6 +69,15 @@ test('dismissed reminders survive reload while a changed backup is offered again
   const stored=await page.evaluate(()=>JSON.stringify({...localStorage}));
   expect(stored).not.toMatch(/fixture-key|privateKey|password/);
 });
+
+test('a blocked setup can open recovery tools after its reminder was dismissed',async({page})=>{
+  await fixture(page,true,false);
+  await page.getByRole('button',{name:'Dismiss reminder'}).click();
+  await page.evaluate(()=>window.dispatchEvent(new Event('tavern:open-history-recovery')));
+  const dialog=page.getByRole('dialog',{name:'Recover and protect your messages'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Existing recovery key')).toBeVisible();
+});
 test('first-time recovery requires saving the generated key and clears entered secrets on session change',async({page})=>{
   await fixture(page,false);
   const dialog=page.getByRole('dialog');
