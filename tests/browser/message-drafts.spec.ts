@@ -12,7 +12,7 @@ async function fixture(page: Page, forum = false) {
 const source = (page: Page) => page.getByRole('textbox', { name: 'Message Source', exact: true });
 const dm = (page: Page) => page.getByRole('textbox', { name: 'Message Guest', exact: true });
 const selectDm = async (page: Page) => { await page.getByRole('button',{name:'Direct messages',exact:true}).click(); await page.locator('.dm-section .dm-link').filter({ hasText: 'Guest' }).click(); };
-const selectSource = async (page: Page) => { await page.getByRole('button',{name:'All channels',exact:true}).click(); await page.locator('.channel-nav-row button').filter({ hasText: 'Source' }).click(); };
+const selectSource = async (page: Page) => { await page.getByRole('button',{name:'Server',exact:true}).click(); await page.locator('.channel-nav-row button').filter({ hasText: 'Source' }).click(); };
 const sheet = (page: Page) => page.locator('.thread-sheet');
 
 test('channel, DM and duplicate favorite indicators update immediately and drafts survive navigation', async ({ page }) => {

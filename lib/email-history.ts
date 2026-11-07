@@ -6,8 +6,11 @@ import { discoverBackup } from './backup';
 import { historyPasswordKey, wrapHistoryKey, unwrapHistoryKey, type HistoryEnvelope } from './history-envelope';
 import { historyKeyOperation } from './security';
 import { encodeBase64 } from 'matrix-js-sdk/lib/base64';
-export type HistoryRecoveryMode = 'off' | 'passphrase' | 'email';
-export type EmailHistoryStatus = { mode?: HistoryRecoveryMode; setupRequired?: boolean; passphraseConfigured?: boolean; passphraseRevision?: string | null; configured: boolean; revision: string | null; emailReady: boolean; credentialEpoch: number; passwordChanged: boolean; backupVersion: string | null };
+export type HistoryRecoveryMethod = 'passphrase' | 'email' | 'totp';
+export type HistoryRecoveryMode = 'off' | HistoryRecoveryMethod;
+export type HistoryFactor = 'totp' | 'email';
+export type EmailHistoryStatus = { mode?: HistoryRecoveryMode; methods?: HistoryRecoveryMethod[]; authenticatorReady?: boolean; factorConfigured?: Partial<Record<HistoryFactor, boolean>>; factorRevisions?: Partial<Record<HistoryFactor, string | null>>; setupRequired?: boolean; passphraseConfigured?: boolean; passphraseRevision?: string | null; configured: boolean; revision: string | null; emailReady: boolean; credentialEpoch: number; passwordChanged: boolean; backupVersion: string | null };
+export function historyMethods(status: EmailHistoryStatus): HistoryRecoveryMethod[] { return status.methods ?? (status.mode && status.mode !== 'off' ? [status.mode] : []); }
 function owner() {
   const client = getMatrixClient(), account = accountArtworkOwner();
   if (!client?.getCrypto() || !isManagedAccount()) throw new Error('Sign in to Tavern before recovering history.');
@@ -129,6 +132,41 @@ export async function prepareCurrentHistoryBackup() {
 export async function setHistoryRecoveryMode(mode: HistoryRecoveryMode): Promise<EmailHistoryStatus> {
  const own=owner();
  const value=await requestApi<EmailHistoryStatus>('/account/history/options',{mode});own.check();return value;
+}
+export async function setHistoryRecoveryMethods(methods: HistoryRecoveryMethod[]): Promise<EmailHistoryStatus> {
+ const own=owner();
+ const value=await requestApi<EmailHistoryStatus>('/account/history/options',{methods});own.check();return value;
+}
+export async function startFactorHistory(method: HistoryFactor, purpose: 'save' | 'recover') {
+ const own=owner();
+ const value=await requestApi<{challengeId:string}>('/account/history/factor/start',{method,purpose});own.check();return value.challengeId;
+}
+/** Server-assisted recovery is explicit: Tavern seals both the package and its
+ * random wrapping secret. A code authorizes release; it is never an AES key. */
+export async function enableFactorHistory(method: HistoryFactor, challengeId: string, code: string, password: string) {
+ return historyKeyOperation(async()=>{
+  const own=owner(), status=await emailHistoryStatus();own.check();
+  const backup=await discoverBackup(own.client);own.check();
+  if(!backup||backup.algorithm!=='m.megolm_backup.v1.curve25519-aes-sha2'||!(await own.crypto.isKeyBackupTrusted(backup)).matchesDecryptionKey)throw new Error('Recover your existing history or protect the keys on this device first.');
+  own.check();const bytes=await own.crypto.getSessionBackupPrivateKey();
+  const random=crypto.getRandomValues(new Uint8Array(32));
+  try {
+   own.check();if(!bytes)throw new Error('This device does not have your history backup key.');
+   const wrappingSecret=encodeBase64(random), key=await historyPasswordKey(wrappingSecret);own.check();
+   const copy=new Uint8Array(bytes);let value:HistoryEnvelope;
+   try{value=await wrapHistoryKey(key,own.user,location.origin,{version:backup.version,publicKey:backup.auth_data.public_key},copy);}finally{copy.fill(0);}
+   own.check();
+   await requestApi('/account/history/factor/save',{method,challengeId,code,password,package:value,wrappingSecret,revision:status.factorRevisions?.[method]??null});own.check();
+  } finally {bytes?.fill(0);random.fill(0);}
+ });
+}
+export async function recoverFactorHistory(method: HistoryFactor, challengeId: string, code: string) {
+ return historyKeyOperation(async()=>{
+  const own=owner();
+  const value=await requestApi<{package:HistoryEnvelope;wrappingSecret:string}>('/account/history/factor/complete',{method,challengeId,code});own.check();
+  const key=await historyPasswordKey(value.wrappingSecret);value.wrappingSecret='';own.check();
+  await restoreHistoryPackage(own,key,value.package);
+ });
 }
 export async function enablePassphraseHistory(passphrase: string) {
  if(passphrase.length<12||passphrase.length>1024)throw new Error('Use a history passphrase of 12 to 1024 characters.');

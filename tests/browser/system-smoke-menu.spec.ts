@@ -62,7 +62,7 @@ test('the live helper waits for the closing layer and opens the actual v12 creat
     return f.state.maySendStateEvent('io.tavern.server.layout', f.actor);
   })).toBe(true);
   await page.locator('.workspace-select').click();
-  await page.getByRole('menuitem', { name: 'All channels', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Direct messages', exact: true }).click();
   await expect(page.locator('.workspace-menu')).toHaveAttribute('data-state', 'closed');
   await openSystemMessageSettings(page, 'CI system notices test server');
   await expect(page.getByRole('tab', { name: 'Server & channels', exact: true })).toHaveAttribute('aria-selected', 'true');

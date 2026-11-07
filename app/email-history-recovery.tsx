@@ -18,8 +18,8 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
     let active=true;
     const valid=()=>active&&getMatrixClient()===client&&accountArtworkOwner()===account;
     void emailHistoryStatus().then(async value=>{
-      if(!valid())return;setStatus(value);onConfigured?.(value.mode==='off'||value.mode==='passphrase'||value.configured);onChecked?.(true);
-      if(!automatic||!value.emailReady||(value.mode&&value.mode!=='email'))return;
+      if(!valid())return;setStatus(value);onConfigured?.(value.mode==='off'||value.mode==='passphrase'||value.mode==='totp'||value.configured||!!value.factorConfigured?.email);onChecked?.(true);
+      if(!automatic||!value.emailReady||value.factorConfigured?.email||value.methods?.includes('passphrase')||(value.mode&&value.mode!=='email'))return;
       if(!known&&value.configured&&!promptedAccounts.has(account)){
         promptedAccounts.add(account);
         setOpen(true);setBusy(true);
@@ -30,7 +30,7 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
     return()=>{active=false;};
   },[ready,known,automatic,client,account,onConfigured,onChecked,backupVersion,preferenceVersion]);
   useEffect(()=>{if(automatic&&known){setOpen(false);setCode('');setPassword('');}},[automatic,known]);
-  if(!isManagedAccount()||status?.mode==='off'||status?.mode==='passphrase')return null;
+  if(!isManagedAccount()||status?.factorConfigured?.email||status?.methods&&!status.configured||(status?.methods ? !status.methods.includes('email') : status?.mode==='off'||status?.mode==='passphrase'||status?.mode==='totp'))return null;
   async function send() {
     setBusy(true);setError('');
     try {const id=await startEmailHistory();if(current()){setChallenge(id);setCode('');setOpen(true);}}
@@ -38,7 +38,7 @@ export function EmailHistoryRecovery({ known, ready, automatic = false, onConfig
     finally{if(current())setBusy(false);}
   }
   return <>
-    {!automatic&&<section className='settings-section'><h3>Email history recovery</h3>
+    {!automatic&&<section className='settings-section'><h3>Previous password-based email recovery</h3>
       <p>Known browsers reuse their saved message keys. On a new device, sign in with your password and verify an email code to unlock your saved history.</p>
       {status?.configured&&<p role='status'>{status.passwordChanged?'Your password changed. Update the saved package from a device with your history keys.':'Your password-protected history key is saved.'}</p>}
       {!status?.emailReady&&<p>A verified account email and working server email delivery are required.</p>}

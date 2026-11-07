@@ -2,6 +2,21 @@ import { test, expect } from '@playwright/test';
 import { workspaceFixture } from './support/workspace-fixture';
 import { mkdirSync } from 'node:fs';
 
+test('startup opens a real server without a synthetic Tavern or All channels destination',async({page})=>{
+  await workspaceFixture(page,true,'?management=1');
+  await expect(page.locator('.workspace-select strong')).toHaveText('Games server');
+  await expect(page.locator('.workspace-rail').getByRole('button',{name:'All channels',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Games server',exact:true})).toHaveAttribute('aria-current','page');
+  await page.locator('.workspace-select').click();
+  await expect(page.getByRole('menuitem',{name:'All channels',exact:true})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{const f=(window as any).dmFixture;f.add('!standalone:local',{name:'Standalone room',membership:'join',direct:false});f.emit();});
+  await page.getByRole('button',{name:'Tavern home',exact:true}).click();
+  await page.getByRole('region',{name:'Other conversations'}).getByRole('button',{name:'Standalone room',exact:true}).click();
+  await expect(page.locator('.channel-heading')).toContainText('Standalone room');
+  await expect(page.locator('.channel-navigation').getByRole('button',{name:'Lobby',exact:true})).toHaveCount(0);
+});
+
 test('workspace refinement screenshots', async ({ page }) => {
   test.setTimeout(120000);
   mkdirSync('work/ui-refinement', { recursive: true });
@@ -88,7 +103,8 @@ test('security reads SDK room state and device verification independently',async
     const f=(window as any).dmFixture;
     f.add('!plain:local',{plain:true,name:'Plain room',membership:'join',direct:false});f.emit();
   });
-  await page.getByRole('button',{name:'Plain room',exact:true}).click();
+  await page.getByRole('button',{name:'Tavern home',exact:true}).click();
+  await page.getByRole('region',{name:'Other conversations'}).getByRole('button',{name:'Plain room',exact:true}).click();
   await expect(page.getByRole('button',{name:'Room security: Not encrypted',exact:true})).toBeVisible();
 });
 

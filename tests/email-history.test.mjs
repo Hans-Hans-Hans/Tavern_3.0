@@ -9,12 +9,15 @@ const envelope=loadTs('../lib/history-envelope.ts',{});
 globalThis.location={origin:'https://tavern.test'};
 globalThis.localStorage={values:new Map(),getItem(k){return this.values.get(k)||null;},setItem(k,v){this.values.set(k,v);},removeItem(k){this.values.delete(k);}};
 function fixture(){
- const f={account:{},active:null,backup:null,cache:null,version:null,package:null,revision:null,posts:0,restores:0,busy:false,uncertain:false,phrase:null,phraseRevision:null,mode:'off',emailReady:true,requests:[]};
+ const f={account:{},active:null,backup:null,cache:null,version:null,package:null,revision:null,posts:0,restores:0,busy:false,uncertain:false,phrase:null,phraseRevision:null,mode:'off',emailReady:true,requests:[],factors:{}};
  const user='@alice:test';
  const crypto={getSessionBackupPrivateKey:async()=>f.cache?new Uint8Array(f.cache):null,storeSessionBackupPrivateKey:async(bytes,version)=>{f.cache=new Uint8Array(bytes);f.version=version;},isKeyBackupTrusted:async backup=>{if(!f.cache)return{matchesDecryptionKey:false};const key=wasm.BackupDecryptionKey.fromBase64(encodeBase64(f.cache)),pub=key.megolmV1PublicKey;try{return{matchesDecryptionKey:pub.publicKeyBase64===backup.auth_data.public_key};}finally{pub.free();key.free();}},checkKeyBackupAndEnable:async()=>{},restoreKeyBackup:async()=>{f.restores++;}};
  const client={getCrypto:()=>crypto,getUserId:()=>user,getDeviceId:()=> 'D1',getHomeserverUrl:()=>location.origin+'/api/matrix',http:{authedRequest:async(method,path,query,body)=>{assert.equal(method,Method.Post);assert.equal(path,'/room_keys/version');f.posts++;if(f.uncertain)throw Error('Fixture request failed before acceptance');f.backup={version:String(f.posts),...body};return{version:f.backup.version};}}};f.active=client;
  const api={accountArtworkOwner:()=>f.account,isManagedAccount:()=>true,requestApi:async(path,body)=>{
  f.requests.push({path,body});
+ if(path==='/account/history/factor/start')return{challengeId:'challenge'};
+ if(path==='/account/history/factor/save'){assert.equal(body.code,'123456');f.factors[body.method]={package:body.package,wrappingSecret:body.wrappingSecret};return{revision:'factor-revision'};}
+ if(path==='/account/history/factor/complete'){assert.equal(body.code,'123456');return{...f.factors[body.method]};}
  if(path==='/account/history/passphrase'&&!body)return{package:f.phrase};
  if(path==='/account/history/passphrase'){f.phrase=body.package;f.phraseRevision='phrase-revision';f.mode='passphrase';return{revision:f.phraseRevision};}
  if(path==='/account/history/options'){f.mode=body.mode;return{mode:f.mode};}
@@ -85,4 +88,31 @@ test('short passphrases fail before writing a package and off retains encrypted 
  await t.prepareCurrentHistoryBackup();await t.enablePassphraseHistory('Separate history secret 123!');
  const saved=t.f.phrase;await t.setHistoryRecoveryMode('off');
  assert.equal(t.f.mode,'off');assert.equal(t.f.phrase,saved);
+});
+
+test('either factor restores the exact native key without an account password or history passphrase',async()=>{
+ const t=fixture();await t.prepareCurrentHistoryBackup();
+ const original=new Uint8Array(t.f.cache);
+ await t.enablePassphraseHistory('Independent history passphrase');
+ for(const method of ['totp','email']){
+  const challenge=await t.startFactorHistory(method,'save');
+  await t.enableFactorHistory(method,challenge,'123456','Current account password');
+  const saved=t.f.factors[method];assert.equal(saved.wrappingSecret.length,44);
+  assert.notEqual(saved.wrappingSecret,encodeBase64(original));
+  t.f.cache=null;
+  await t.recoverFactorHistory(method,await t.startFactorHistory(method,'recover'),'123456');
+  assert.deepEqual(t.f.cache,original);
+ }
+ assert.equal(t.f.posts,1);assert.equal(t.f.restores,2);
+ t.f.cache=null;await t.recoverPassphraseHistory('Independent history passphrase');
+ assert.deepEqual(t.f.cache,original);assert.equal(t.f.restores,3);
+});
+
+test('a mismatched factor package cannot replace native history keys',async()=>{
+ const t=fixture();await t.prepareCurrentHistoryBackup();
+ await t.enableFactorHistory('totp','challenge','123456','Current account password');
+ const before=new Uint8Array(t.f.cache);
+ t.f.factors.totp.wrappingSecret='A'.repeat(43)+'=';
+ await assert.rejects(t.recoverFactorHistory('totp','challenge','123456'),/cannot unlock/);
+ assert.deepEqual(t.f.cache,before);assert.equal(t.f.restores,0);
 });

@@ -27,6 +27,6 @@ export function saveConversationMemory(scope: string, change: { section?: string
 }
 export function rememberedConversation(memory: Memory, sectionId: string, rooms: Room[], servers: Server[]) {
   const server = servers.find(value => value.id === sectionId);
-  const available = rooms.filter(room => sectionId === 'dms' ? room.kind === 'dm' : room.kind !== 'dm' && (!server || server.roomIds.includes(room.id)));
+  const available = rooms.filter(room => sectionId === 'dms' ? room.kind === 'dm' : room.kind !== 'dm' && (server ? server.roomIds.includes(room.id) : !servers.some(parent => parent.roomIds.includes(room.id))));
   return available.find(room => room.id === memory.rooms[sectionId]) || available[0];
 }

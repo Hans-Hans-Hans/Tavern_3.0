@@ -4,6 +4,7 @@ import time
 import unittest
 from aiohttp import web
 from tests.test_api import AccountAPITests
+from api.security import totp
 
 PACKAGE={'version':1,'backupVersion':'1','publicKey':'a'*43,'salt':'A'*22+'==','iv':'A'*16,'ciphertext':'A'*64}
 class EmailHistoryTests(unittest.IsolatedAsyncioTestCase):
@@ -174,3 +175,165 @@ class EmailHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.request('POST', '/api/account/history/options', {'mode': 'passphrase'}, cookie)).status, 200)
         self.assertEqual((await self.request('POST', '/api/account/history/start', {}, cookie)).status, 409)
         self.service.send_email.assert_not_called()
+
+    def authenticator(self):
+        secret = 'JBSWY3DPEHPK3PXP'
+        self.service.store.db.execute("UPDATE accounts SET totp=?,totp_counter=-1 WHERE user_id='@alice:test'", (self.service.store.seal(secret),))
+        return totp(secret, int(time.time() // 30))
+
+    async def factor_challenge(self, cookie, method, purpose):
+        response = await self.request('POST', '/api/account/history/factor/start', {'method': method, 'purpose': purpose}, cookie)
+        self.assertEqual(response.status, 200, await response.text())
+        code = self.authenticator() if method == 'totp' else re.search(r'code is (\d{6})', self.service.send_email.call_args.args[2]).group(1)
+        return {'method': method, 'challengeId': (await response.json())['challengeId'], 'code': code}
+
+    async def factor_enrolled(self, method='totp'):
+        cookie, _, _ = await self.login()
+        if method == 'totp':
+            self.authenticator()
+            self.service.store.set('smtp', {'enabled': False})
+        else:
+            self.service.store.db.execute("UPDATE accounts SET email='alice@example.com',verified=1 WHERE user_id='@alice:test'")
+        challenge = await self.factor_challenge(cookie, method, 'save')
+        response = await self.request('POST', '/api/account/history/factor/save', {
+            **challenge, 'password': 'Correct password!', 'package': PACKAGE, 'wrappingSecret': 'A'*43+'=', 'revision': None}, cookie)
+        self.assertEqual(response.status, 200, await response.text())
+        return cookie, (await response.json())['revision']
+
+    async def test_authenticator_without_email_unlocks_same_history_on_new_device_and_rejects_replay(self):
+        cookie, revision = await self.factor_enrolled()
+        login = await (await self.request('POST', '/api/auth/login', {'username': 'alice', 'password': 'Correct password!'})).json()
+        from api.server import COOKIE
+        self.service.store.db.execute("UPDATE accounts SET totp_counter=-1 WHERE user_id='@alice:test'")
+        response = await self.request('POST', '/api/auth/mfa', {'challengeId': login['challengeId'], 'method': 'totp', 'code': self.authenticator()})
+        self.assertEqual(response.status, 200, await response.text())
+        other = response.cookies[COOKIE].value
+        status = await (await self.request('GET', '/api/account/history', cookie=other)).json()
+        self.assertEqual(status['methods'], ['totp'])
+        self.assertTrue(status['factorConfigured']['totp'])
+        self.assertNotIn('wrappingSecret', str(status))
+        self.assertNotIn('ciphertext', str(status))
+        code = await self.factor_challenge(other, 'totp', 'recover')
+        # Simulate advancing to a fresh OTP after enrollment.
+        self.service.store.db.execute("UPDATE accounts SET totp_counter=-1 WHERE user_id='@alice:test'")
+        response = await self.request('POST', '/api/account/history/factor/complete', code, other)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())['package'], PACKAGE)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, other)).status, 400)
+        next_code = await self.request('POST', '/api/account/history/factor/start', {'method': 'totp', 'purpose': 'recover'}, other)
+        challenge = (await next_code.json())['challengeId']
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', {**code, 'challengeId': challenge}, other)).status, 400)
+        self.service.send_email.assert_not_called()
+
+    async def test_email_factor_releases_without_history_or_old_account_password(self):
+        cookie, _ = await self.factor_enrolled('email')
+        self.service.store.db.execute("UPDATE accounts SET credential_epoch=123 WHERE user_id='@alice:test'")
+        code = await self.factor_challenge(cookie, 'email', 'recover')
+        response = await self.request('POST', '/api/account/history/factor/complete', code, cookie)
+        self.assertEqual(response.status, 200, await response.text())
+        self.assertEqual((await response.json())['wrappingSecret'], 'A'*43+'=')
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 400)
+
+    async def test_methods_coexist_and_disabling_one_preserves_other_methods_and_packages(self):
+        cookie, _ = await self.factor_enrolled('email')
+        saved = await self.request('POST', '/api/account/history/passphrase', {'package': PACKAGE, 'revision': None}, cookie)
+        self.assertEqual(saved.status, 200)
+        status = await (await self.request('GET', '/api/account/history', cookie=cookie)).json()
+        self.assertEqual(set(status['methods']), {'email', 'passphrase'})
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=cookie)).status, 200)
+        code = await self.factor_challenge(cookie, 'email', 'recover')
+        await self.request('POST', '/api/account/history/options', {'methods': ['passphrase']}, cookie)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 409)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=cookie)).status, 200)
+        status = await (await self.request('POST', '/api/account/history/options', {'methods': []}, cookie)).json()
+        self.assertTrue(status['factorConfigured']['email'])
+        self.assertTrue(status['passphraseConfigured'])
+        self.assertEqual(status['mode'], 'off')
+
+    async def test_all_three_methods_coexist_and_totp_survives_email_and_passphrase_removal(self):
+        cookie, _ = await self.factor_enrolled('email')
+        self.authenticator()
+        challenge = await self.factor_challenge(cookie, 'totp', 'save')
+        saved = await self.request('POST', '/api/account/history/factor/save', {
+            **challenge, 'password': 'Correct password!', 'package': PACKAGE, 'wrappingSecret': 'A'*43+'=', 'revision': None}, cookie)
+        self.assertEqual(saved.status, 200, await saved.text())
+        await self.request('POST', '/api/account/history/passphrase', {'package': PACKAGE, 'revision': None}, cookie)
+        status = await (await self.request('GET', '/api/account/history', cookie=cookie)).json()
+        self.assertEqual(set(status['methods']), {'email', 'totp', 'passphrase'})
+        self.service.store.set('smtp', {'enabled': False})
+        # A mail outage must not prevent retaining email while managing other methods.
+        self.assertEqual((await self.request('POST', '/api/account/history/options', {'methods': ['totp', 'email', 'passphrase']}, cookie)).status, 200)
+        challenge = await self.factor_challenge(cookie, 'totp', 'recover')
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', challenge, cookie)).status, 200)
+        self.assertEqual((await self.request('POST', '/api/account/history/options', {'methods': ['totp']}, cookie)).status, 200)
+        self.assertEqual((await self.request('GET', '/api/account/history/passphrase', cookie=cookie)).status, 409)
+        challenge = await self.factor_challenge(cookie, 'totp', 'recover')
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', challenge, cookie)).status, 200)
+        status = await (await self.request('GET', '/api/account/history', cookie=cookie)).json()
+        self.assertTrue(status['factorConfigured']['email'])
+        self.assertTrue(status['passphraseConfigured'])
+
+    async def test_fifth_correct_email_code_is_accepted_but_a_replaced_authenticator_is_not(self):
+        cookie, _ = await self.factor_enrolled('email')
+        code = await self.factor_challenge(cookie, 'email', 'recover')
+        for _ in range(4):
+            self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', {**code, 'code': 'invalid'}, cookie)).status, 400)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 200)
+        self.authenticator()
+        challenge = await self.factor_challenge(cookie, 'totp', 'save')
+        saved = await self.request('POST', '/api/account/history/factor/save', {
+            **challenge, 'password': 'Correct password!', 'package': PACKAGE, 'wrappingSecret': 'A'*43+'=', 'revision': None}, cookie)
+        self.assertEqual(saved.status, 200, await saved.text())
+        self.service.store.db.execute("UPDATE accounts SET totp=? WHERE user_id='@alice:test'", (self.service.store.seal('KRSXG5DSNFXGOIDB'),))
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/start', {'method': 'totp', 'purpose': 'recover'}, cookie)).status, 409)
+
+    async def test_factor_is_device_bound_and_checks_email_backup_epoch_origin_and_session(self):
+        cookie, _ = await self.factor_enrolled('email')
+        code = await self.factor_challenge(cookie, 'email', 'recover')
+        other, _, _ = await self.login()
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, other)).status, 409)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie, origin='https://attacker.test')).status, 403)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code)).status, 401)
+        self.backup['version'] = '2'
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 409)
+        self.backup['version'] = '1'
+        self.service.store.db.execute("UPDATE accounts SET credential_epoch=123 WHERE user_id='@alice:test'")
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 409)
+        self.service.store.db.execute("UPDATE accounts SET email='changed@example.com' WHERE user_id='@alice:test'")
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/start', {'method': 'email', 'purpose': 'recover'}, cookie)).status, 409)
+
+    async def test_factor_save_requires_password_code_valid_revision_and_matching_native_backup(self):
+        cookie, _, _ = await self.login()
+        self.authenticator()
+        code = await self.factor_challenge(cookie, 'totp', 'save')
+        body = {**code, 'password': 'wrong', 'package': PACKAGE, 'wrappingSecret': 'A'*43+'=', 'revision': None}
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/save', body, cookie)).status, 403)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/save', {**body, 'password': 'Correct password!', 'code': 'invalid'}, cookie)).status, 400)
+        self.backup['version'] = '2'
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/save', {**body, 'password': 'Correct password!'}, cookie)).status, 409)
+        status = await (await self.request('GET', '/api/account/history', cookie=cookie)).json()
+        self.assertFalse(status['factorConfigured']['totp'])
+
+    async def test_wrong_expired_codes_and_removed_authenticator_cannot_release_history(self):
+        cookie, _ = await self.factor_enrolled()
+        code = await self.factor_challenge(cookie, 'totp', 'recover')
+        for _ in range(5):
+            self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', {**code, 'code': 'invalid'}, cookie)).status, 400)
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 400)
+        code = await self.factor_challenge(cookie, 'totp', 'recover')
+        self.service.store.db.execute('UPDATE challenges SET expires=? WHERE id=?', (time.time()-1, code['challengeId']))
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 400)
+        self.service.store.db.execute("UPDATE accounts SET totp=NULL WHERE user_id='@alice:test'")
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/start', {'method': 'totp', 'purpose': 'recover'}, cookie)).status, 409)
+
+    async def test_revocation_during_factor_native_lookup_prevents_key_release(self):
+        cookie, _ = await self.factor_enrolled('email')
+        code = await self.factor_challenge(cookie, 'email', 'recover')
+        original = self.service.matrix
+        async def revoke(method, path, *args, **kwargs):
+            result = await original(method, path, *args, **kwargs)
+            if path == '/_matrix/client/v3/room_keys/version':
+                self.service.store.db.execute("DELETE FROM sessions WHERE user_id='@alice:test'")
+            return result
+        self.service.matrix = revoke
+        self.assertEqual((await self.request('POST', '/api/account/history/factor/complete', code, cookie)).status, 401)

@@ -49,7 +49,7 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
   // or flash a warning while the automatic local recovery is still running.
   const needsAttention = (!isManagedAccount() || emailChecked) && !emailConfigured && !!status && history.checked && !history.busy && !status.canRestoreBackup && dismissed !== reminderVersion;
   const setupHelp = isManagedAccount()
-    ? status?.serverBackupVersion ? 'Recover any available history keys, then enable email recovery for future sign-ins.' : 'Enable email recovery once so new devices can unlock saved history with a code.'
+    ? status?.serverBackupVersion ? 'Recover available history keys, then choose passphrase, authenticator or email recovery for future sign-ins.' : 'Choose passphrase, authenticator or email recovery so new devices can unlock saved history.'
     : status?.serverBackupVersion ? 'Use your recovery key or verify this device if older messages are locked.' : 'Set up a recovery key once to protect history when you change devices.';
   const remindLater = () => {
     if (getMatrixClient() !== client || !reminderVersion) return;
@@ -64,7 +64,7 @@ function ConnectedHistoryRecovery({ client }: { client: MatrixClient }) {
         <p>{error || history.error || (history.local?.keys ? `Recovered ${history.local.keys} saved message keys in this browser.` : setupHelp)} You can continue messaging. Recovery is always available in Settings → Privacy.</p>
       </div><div className='history-recovery-actions'><button className='secondary-button' onClick={() => setOpen(true)}>History recovery</button><button className='text-button' onClick={remindLater}>Dismiss reminder</button></div>
     </aside>}
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent className='tavern-dialog settings-dialog'><DialogHeader><DialogTitle>Recover and protect your messages</DialogTitle><DialogDescription>Message history is encrypted. Known browsers use saved keys. New devices can unlock a password-protected history package with an email code after recovery is enabled.</DialogDescription></DialogHeader>
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className='tavern-dialog settings-dialog'><DialogHeader><DialogTitle>Recover and protect your messages</DialogTitle><DialogDescription>Known browsers use saved keys. Enable a history passphrase, authenticator app, email code, or a combination to recover history on other devices.</DialogDescription></DialogHeader>
       <SecurityCenter/><DeviceManager/>
     </DialogContent></Dialog>
   </>;

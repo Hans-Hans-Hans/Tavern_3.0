@@ -33,7 +33,7 @@ verification status; preview/disconnected/unknown states will be explicit.
 
 ## Implementation
 
-1. The rail keeps Home, All channels, DMs, servers and folders. Server selection
+1. The rail keeps Home, DMs, actual servers and folders. Server selection
    exposes its current state; global/server controls have named tooltips and
    keyboard focus styling. Redundant personal gears and the duplicate mobile
    server-picker entry were removed; the mobile navigation drawer retains the
@@ -146,3 +146,23 @@ Before release, use two test accounts on the actual deployment:
 A dedicated screen-reader and contrast audit of all existing dialogs/metadata,
 plus live browser/device coverage for voice/video, remains a separate validation
 effort. These changes improve accessibility but do not claim WCAG certification.
+
+## Follow-up: remove the synthetic default server
+
+The `T` rail button previously represented a combined inventory of all servers'
+channels. It was not a separate Matrix server. That button and the **All channels**
+menu destinations have now been removed, including the optional mobile switcher.
+Startup restores an actual joined server (and its last channel), or chooses the
+first joined server when the old saved selection was the synthetic aggregate.
+Legacy aggregate links resolve to a real server rather than reintroducing it.
+
+Standalone rooms remain individual entries under **Home > Other conversations**.
+The internal legacy `all` navigation key is retained for compatibility with saved
+links/preferences, but its inventory is limited to rooms outside every joined
+server. It no longer combines channels from other servers. No Matrix server,
+room, membership, message or encryption key is deleted by this navigation change.
+
+Home refreshes its room inventory on entry so newly joined standalone rooms are
+available even when navigation cancels a pending room-sync debounce callback.
+Validation: 758 unit tests and 47 targeted browser tests passed; TypeScript and
+the production Vite build passed.

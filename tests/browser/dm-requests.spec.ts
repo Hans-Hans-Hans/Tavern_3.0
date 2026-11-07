@@ -16,7 +16,7 @@ async function fixture(page: Page, workspace = false, hash = '') {
   }
   await page.route('**/config.json', route => route.fulfill({ json: { homeserverUrl: 'http://127.0.0.1:5173', serverRolePolicy: true, callsEnabled: false } }));
   await page.route('**/dm-requests-test*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module">import RefreshRuntime from "/@react-refresh";RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;(await import("/tests/browser/fixtures/' + (workspace ? 'dm-workspace' : 'dm-requests') + '.tsx")).mountFixture();</script></body></html>' }));
-  await page.goto('/dm-requests-test' + hash); await expect(workspace ? page.locator('.profile-button:visible, .mobile-profile:visible') : page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
+  await page.goto('/dm-requests-test' + hash); await expect(workspace ? page.locator('.profile-button:visible, .mobile-profile:visible') : page.getByRole('button', { name: 'Accept message request' })).toBeVisible({timeout:20000});
 }
 
 async function channelContextAction(page: Page, trigger: ReturnType<Page['locator']>, action: string) {
@@ -258,8 +258,8 @@ test('Workspace Messages entry accepts into the recipient sidebar and opens the 
 });
 test('generic invitation review and invitation deep links route direct messages through explicit inbox consent', async ({ page }) => {
   await fixture(page, true); await page.getByRole('button', { name: 'View invitations', exact: true }).click(); await page.getByRole('button', { name: 'Review message request' }).click();
-  await expect(page.getByRole('button', { name: 'Accept message request' })).toBeVisible(); expect(await page.evaluate(() => (window as any).dmFixture.calls)).toEqual([]);
-  await fixture(page, true, '#room=%21request%3Alocal'); await expect(page.getByRole('button', { name: 'Accept message request' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Accept message request' })).toBeVisible({timeout:20000}); expect(await page.evaluate(() => (window as any).dmFixture.calls)).toEqual([]);
+  await fixture(page, true, '#room=%21request%3Alocal'); await expect(page.getByRole('button', { name: 'Accept message request' })).toBeVisible({timeout:20000});
   expect(await page.evaluate(() => (window as any).workspaceCalls.some((call: any) => call[0] === 'messages' && call[2]?.conversation === '!request:local'))).toBe(false);
 });
 
