@@ -295,7 +295,7 @@ class Operator:
         release = read_json(f'https://api.github.com/repos/{REPOSITORY}/releases/tags/v{version}')
         if release.get('draft') or release.get('tag_name') != 'v' + version:
             raise ValueError('Only published Tavern releases may be installed.')
-        current_minor = tuple(os.environ.get('TAVERN_VERSION', '0.4.0').split('.')[:2])
+        current_minor = tuple(os.environ.get('TAVERN_VERSION', '0.4.1-dev').split('.')[:2])
         if tuple(version.split('.')[:2]) != current_minor:
             raise ValueError('Automatic updates are limited to the current major/minor release line. Review schema changes and upgrade other releases manually.')
         return version
@@ -380,7 +380,7 @@ class Operator:
         if self.lock.locked() or (self.task and not self.task.done()):
             raise ValueError('An operation is already running. Wait for it to finish.')
         if kind == 'update':
-            current = self.get('installed_version', os.environ.get('TAVERN_VERSION', '0.4.0'))
+            current = self.get('installed_version', os.environ.get('TAVERN_VERSION', '0.4.1-dev'))
             if version_order(payload['version']) <= version_order(current):
                 raise ValueError('Choose a newer release. Downgrades require a reviewed restore and are not performed automatically.')
         identity = secrets.token_hex(16)
@@ -427,7 +427,7 @@ class Operator:
                         payload = {}
                         if kind == 'update':
                             releases = await asyncio.to_thread(read_json, f'https://api.github.com/repos/{REPOSITORY}/releases?per_page=30')
-                            current = self.get('installed_version', os.environ.get('TAVERN_VERSION', '0.4.0'))
+                            current = self.get('installed_version', os.environ.get('TAVERN_VERSION', '0.4.1-dev'))
                             candidates = [row for row in releases if not row.get('draft') and (settings['channel'] == 'prerelease' or not row.get('prerelease')) and re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', row.get('tag_name', '')) and row['tag_name'][1:].split('.')[:2] == current.split('.')[:2]]
                             if not candidates:
                                 raise ValueError('No matching published release exists.')

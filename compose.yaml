@@ -12,7 +12,7 @@ x-hardening: &hardening
   logging: *logging
 services:
   init:
-    image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.0}
+    image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.1-dev}
     build:
       context: ${TAVERN_SOURCE_DIR:-.}
       dockerfile: docker/init/Dockerfile
@@ -49,7 +49,7 @@ services:
       io.tavern.managed: "true"
   tavern-web:
     <<: *hardening
-    image: ${TAVERN_WEB_IMAGE:-tavern:0.4.0}
+    image: ${TAVERN_WEB_IMAGE:-tavern:0.4.1-dev}
     build:
       context: ${TAVERN_SOURCE_DIR:-.}
       dockerfile: Dockerfile
@@ -82,7 +82,7 @@ services:
       retries: 5
   tavern-api:
     <<: *hardening
-    image: ${TAVERN_API_IMAGE:-tavern-api:0.4.0}
+    image: ${TAVERN_API_IMAGE:-tavern-api:0.4.1-dev}
     build:
       context: ${TAVERN_API_SOURCE_DIR:-./api}
       dockerfile: Dockerfile
@@ -189,7 +189,7 @@ services:
   operations:
     <<: *hardening
     profiles: [operations]
-    image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.0}
+    image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.1-dev}
     build:
       context: ${TAVERN_SOURCE_DIR:-.}
       dockerfile: ops/Dockerfile
@@ -268,7 +268,7 @@ services:
     <<: *hardening
     profiles: [calls]
     group_add: ["10002"]
-    image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.0}
+    image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.1-dev}
     build:
       context: ${TAVERN_SFU_SOURCE_DIR:-./docker/sfu}
       dockerfile: Dockerfile
@@ -313,7 +313,7 @@ services:
   integrations:
     <<: *hardening
     profiles: [integrations]
-    image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.0}
+    image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.1-dev}
     build:
       context: ${TAVERN_INTEGRATIONS_SOURCE_DIR:-./integrations}
     volumes:

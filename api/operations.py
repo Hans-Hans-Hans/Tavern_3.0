@@ -30,7 +30,7 @@ async def bounded_json(response):
 
 
 def version_info():
-    return {'version': os.environ.get('TAVERN_VERSION', '0.4.0'),
+    return {'version': os.environ.get('TAVERN_VERSION', '0.4.1-dev'),
             'commit': os.environ.get('TAVERN_COMMIT') or None,
             'buildDate': os.environ.get('TAVERN_BUILD_DATE') or None,
             'channel': os.environ.get('TAVERN_CHANNEL', 'development'),

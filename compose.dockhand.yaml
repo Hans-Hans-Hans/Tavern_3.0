@@ -16,7 +16,7 @@ x-hardening:
   logging: *id001
 services:
   init:
-    image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.0}
+    image: ${TAVERN_INIT_IMAGE:-tavern-init:0.4.1-dev}
     restart: 'no'
     logging: *id001
     network_mode: none
@@ -63,7 +63,7 @@ services:
       io.tavern.managed: 'true'
       io.tavern.component: web
     logging: *id001
-    image: ${TAVERN_WEB_IMAGE:-tavern:0.4.0}
+    image: ${TAVERN_WEB_IMAGE:-tavern:0.4.1-dev}
     environment:
       TAVERN_DOMAIN: ${TAVERN_DOMAIN:?Set the public Tavern hostname}
       CALLS_ENABLED: ${CALLS_ENABLED:-false}
@@ -105,7 +105,7 @@ services:
       io.tavern.managed: 'true'
       io.tavern.component: api
     logging: *id001
-    image: ${TAVERN_API_IMAGE:-tavern-api:0.4.0}
+    image: ${TAVERN_API_IMAGE:-tavern-api:0.4.1-dev}
     user: 10001:10001
     group_add:
     - '991'
@@ -241,7 +241,7 @@ services:
     logging: *id001
     profiles:
     - operations
-    image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.0}
+    image: ${TAVERN_OPERATIONS_IMAGE:-tavern-operations:0.4.1-dev}
     user: 0:0
     environment:
       TAVERN_PROJECT: ${COMPOSE_PROJECT_NAME:-tavern}
@@ -333,7 +333,7 @@ services:
     - calls
     group_add:
     - '10002'
-    image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.0}
+    image: ${LIVEKIT_IMAGE:-tavern-sfu-audio:0.4.1-dev}
     user: 10001:10001
     command:
     - --config
@@ -400,7 +400,7 @@ services:
     logging: *id001
     profiles:
     - integrations
-    image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.0}
+    image: ${TAVERN_INTEGRATIONS_IMAGE:-tavern-integrations:0.4.1-dev}
     volumes:
     - ${TAVERN_INTEGRATIONS_CONFIG:-integrations_config}:/config:ro
     - ${TAVERN_INTEGRATIONS_DATA:-integrations_data}:/data

@@ -2,6 +2,11 @@
 
 `V3` contains the 0.4 development checkpoints. Further test updates are pushed
 to `V3`; no 0.4 release images have been published yet.
+The current source identifies itself as `0.4.1-dev`. The sidebar and About screen
+read the frontend version from `package.json`; About also shows the frontend
+build timestamp. Rebuild and recreate the web and API containers to update the
+displayed client and server versions. A version bump alone is not a published
+release or proof that a browser has loaded the latest frontend build.
 Use [Installation and operations](INSTALLATION.md) for the complete setup and
 [V3 migration](V3_MIGRATION.md) before upgrading an existing deployment.
 For `OPEN_ID_ERROR` or HTTP 503 when joining a conference, see

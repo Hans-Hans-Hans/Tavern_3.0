@@ -17,6 +17,7 @@ function offlineShell(): Plugin {
 }
 
 export default defineConfig({
+  define: { 'import.meta.env.VITE_TAVERN_BUILD_DATE': JSON.stringify(new Date().toISOString()) },
   plugins: [react(), offlineShell()],
   resolve: { alias: { '@': fileURLToPath(new URL('.', import.meta.url)) } },
   build: { outDir: 'dist', target: 'es2022' },

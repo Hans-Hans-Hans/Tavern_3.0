@@ -40,7 +40,7 @@ except ImportError:
 
 LOG = logging.getLogger("tavern.api")
 COOKIE = "__Host-tavern-session"
-API_VERSION = "0.4.0"
+API_VERSION = "0.4.1-dev"
 
 
 class APIError(Exception):

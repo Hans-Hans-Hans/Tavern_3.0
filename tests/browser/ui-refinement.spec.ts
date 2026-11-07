@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { workspaceFixture } from './support/workspace-fixture';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+const packageInfo = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 
 test('startup opens a real server without a synthetic Tavern or All channels destination',async({page})=>{
   await workspaceFixture(page,true,'?management=1');
@@ -70,6 +71,7 @@ test('an existing explicit information-panel preference is honored',async({page}
 
 test('profile menu separates personal settings from server controls and hides unauthorized administration', async ({page})=>{
   await workspaceFixture(page,true,'?management=1');
+  await expect(page.locator('.connection .version')).toHaveText('v'+packageInfo.version);
   await page.getByRole('button',{name:'Games server',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Channels',exact:true})).toHaveCount(1);
   await expect(page.getByText('Categories',{exact:true})).toHaveCount(0);
@@ -79,6 +81,11 @@ test('profile menu separates personal settings from server controls and hides un
   await expect(page.getByRole('menuitem',{name:'Administration',exact:true})).toHaveCount(0);
   await page.getByRole('menuitem',{name:'Personal settings',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Make Tavern yours'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Your profile',exact:true}).click();
+  await page.getByRole('menuitem',{name:'About Tavern',exact:true}).click();
+  await expect(page.locator('.about-tavern h2')).toContainText(packageInfo.version);
+  await expect(page.locator('.about-tavern time')).toHaveAttribute('datetime', /^\d{4}-\d{2}-\d{2}T/);
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'Channel actions',exact:true}).click();
   await expect(page.getByRole('menuitem',{name:'Create channel',exact:true})).toBeVisible();
