@@ -1,0 +1,89 @@
+/* Scoped additions retain Tavern's existing palette and component primitives. */
+.tavern-root .workspace-rail { gap:12px; }
+.tavern-root .workspace-rail > button,.tavern-root .workspace-icon { flex-shrink:0; }
+.tavern-root .workspace-icon { width:44px; height:44px; border-radius:14px; font-size:15px; font-weight:650; }
+.tavern-root .workspace-icon[aria-current=page] { background:var(--primary); color:var(--primary-foreground); }
+.tavern-root .workspace-rail :is(button,a):focus-visible { outline:2px solid var(--sidebar-accent-foreground); outline-offset:3px; }
+.tavern-root .workspace-select { min-width:0; }
+.tavern-root .nav-group-label { font-size:11px; font-weight:650; padding:10px 10px 5px; color:var(--muted-foreground); letter-spacing:.025em; }
+.tavern-root .contextual-nav { border-top:1px solid var(--sidebar-border); padding-top:4px; }
+.tavern-root .quick-nav button { min-height:36px; gap:10px; border-radius:7px; }
+.tavern-root .quick-nav button svg { width:18px; height:18px; flex-shrink:0; }
+.tavern-root .channel-navigation-tools { padding:12px 8px 5px; min-height:40px; letter-spacing:.035em; }
+.tavern-root .channel-navigation-tools h2 { font-size:12px; font-weight:700; margin:0; text-transform:uppercase; }
+.tavern-root .channel-navigation-tools .channel-row-action { width:32px; height:32px; }
+.tavern-root .channel-link.active { box-shadow:inset 3px 0 var(--sidebar-accent-foreground); }
+.tavern-root :is(.channel-link,.quick-nav button):focus-visible { outline:2px solid var(--sidebar-accent-foreground); outline-offset:-2px; }
+.tavern-root .channel-category { margin-bottom:6px; }
+.tavern-root .profile-button { min-height:48px; }
+.personal-menu { min-width:220px; max-width:calc(100vw - 24px); }
+.tavern-root .channel-header { padding:16px 24px 12px; gap:12px; }
+.tavern-root .channel-heading { min-width:0; }
+.tavern-root .channel-heading > div { min-width:0; }
+.tavern-root .channel-heading h1 { font-size:21px; line-height:1.3; overflow:hidden; text-overflow:ellipsis; }
+.tavern-root .channel-heading p { max-width:60ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.tavern-root .channel-controls { flex-shrink:0; gap:5px; }
+.tavern-root .channel-controls .icon-button { min-width:36px; min-height:36px; }
+.tavern-root .channel-tabs { padding-inline:24px; flex-shrink:0; }
+.tavern-root .channel-tabs [data-slot=tabs-trigger] { min-height:40px; font-size:13px; }
+.room-security-button { display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:6px 9px; border:1px solid var(--border); border-radius:7px; color:var(--foreground); background:var(--subtle); font-size:11px; white-space:nowrap; }
+.room-security-button svg { flex-shrink:0; }
+.room-security-button[data-warning] { color:var(--foreground); border-style:dashed; }
+.room-security-button:hover { background:var(--accent); }
+.room-security-button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.room-security-popover { width:340px; max-width:calc(100vw - 24px); line-height:1.6; }
+.room-security-popover h2 { font-size:15px; font-weight:650; margin:0 0 10px; }
+.room-security-popover p { font-size:12px; margin:8px 0; }
+.room-security-popover dl { padding:10px 0; border-block:1px solid var(--border); font-size:12px; }
+.room-security-popover dt { font-weight:650; }
+.room-security-popover .secondary-button { margin-top:12px; }
+.tavern-root .conversation-main { position:relative; min-width:0; }
+.tavern-root .timeline-scroll { display:flex; flex-direction:column; }
+.tavern-root .timeline-scroll > * { flex-shrink:0; }
+.tavern-root .new-messages-button { position:absolute; z-index:5; top:12px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:7px; min-height:40px; padding:9px 15px; border:1px solid var(--border); border-radius:24px; background:var(--primary); color:var(--primary-foreground); box-shadow:var(--shadow); font-size:12px; max-width:calc(100% - 24px); white-space:nowrap; }
+.tavern-root .composer textarea { box-sizing:border-box; min-height:42px; max-height:180px; resize:none; padding:10px 12px; line-height:1.5; font-size:var(--chat-font-size,15px); }
+.tavern-root .composer-wrap { padding-inline:20px; }
+.tavern-root .composer-toolbar { padding:2px 6px 6px; gap:8px; align-items:center; }
+.tavern-root .composer-tools { gap:2px; min-width:0; }
+.tavern-root .composer-tools .icon-button { width:32px; height:32px; }
+.tavern-root .send-controls { align-self:flex-end; flex-shrink:0; }
+.tavern-root .send-button { min-height:36px; }
+.tavern-root .composer-footnote { min-height:26px; padding:5px 24px 8px; font-size:10px; justify-content:flex-end; }
+.tavern-root .channel-overview { width:280px; flex:0 0 280px; padding:12px 18px 20px; gap:8px; }
+.tavern-root .channel-overview .overview-title { margin:0; min-height:36px; }
+.tavern-root .channel-overview .overview-title .icon-button { width:32px; height:32px; }
+.tavern-root .channel-overview .overview-section { margin-top:10px; padding-top:14px; }
+.channel-info-drawer { width:min(380px,100vw)!important; max-width:100vw!important; gap:0; }
+.channel-info-content { padding:0 20px 24px; overflow:auto; }
+.channel-info-content .overview-section { margin-top:16px; padding-top:16px; }
+.channel-info-content > .secondary-button { margin-top:20px; width:100%; }
+@media(hover:hover) {
+  .tavern-root .channel-row-actions { position:absolute; right:0; height:100%; background:var(--sidebar); pointer-events:none; }
+  .tavern-root .channel-navigation-row:is(:hover,:focus-within) .channel-row-actions { pointer-events:auto; }
+  .tavern-root .channel-navigation-row:is(:hover,:focus-within) .channel-link { padding-right:84px; }
+}
+@media(max-width:1250px) and (min-width:1101px) {
+  .tavern-root .room-security-button span { display:none; }
+  .tavern-root .channel-overview { width:250px; flex-basis:250px; }
+}
+@media(max-width:767px) {
+  .tavern-root .channel-header { padding:10px 12px; flex-wrap:wrap; }
+  .tavern-root .channel-heading h1 { font-size:18px; }
+  .tavern-root .channel-controls { gap:1px; }
+  .tavern-root .room-security-button { min-height:44px; min-width:44px; justify-content:center; padding:7px; }
+  .tavern-root .room-security-button span { display:none; }
+  .tavern-root .channel-tabs { padding-inline:12px; }
+  .tavern-root .channel-tabs [data-slot=tabs-list] { gap:14px; }
+  .tavern-root .channel-tabs [data-slot=tabs-trigger] { min-height:44px; }
+  .tavern-root .composer-wrap { padding-inline:10px; }
+  .tavern-root .composer textarea { font-size:16px; }
+  .tavern-root .composer-tools { overflow-x:auto; }
+  .tavern-root .composer-tools .icon-button,.tavern-root .send-controls .icon-button { min-width:44px; min-height:44px; }
+  .tavern-root .send-button { min-height:44px; }
+  .tavern-root .mobile-nav-action { flex:1; }
+  .tavern-root .mobile-profile { flex:1; }
+  .tavern-root .channel-row-action { min-width:36px; min-height:36px; }
+}
+@media(pointer:coarse) {
+  .tavern-root :is(.channel-row-action,.quick-nav button,.community-category-heading,.channel-link) { min-height:44px; }
+}

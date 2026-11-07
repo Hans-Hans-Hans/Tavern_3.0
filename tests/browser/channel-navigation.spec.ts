@@ -126,7 +126,7 @@ test('full-row drag supports before/after, category order, root moves and suppre
 });
 
 test('category create, rename and deletion keep channels; callbacks and actual kind icons stay available', async ({ page }) => {
-  await setup(page); await page.getByRole('button', { name: 'Create category', exact: true }).click(); await page.getByLabel('Category name').fill('Projects'); await page.getByRole('button', { name: 'Save category' }).click();
+  await setup(page); await page.getByRole('button', { name: 'Channel actions', exact: true }).click(); await page.getByRole('menuitem', { name: 'Create category', exact: true }).click(); await page.getByLabel('Category name').fill('Projects'); await page.getByRole('button', { name: 'Save category' }).click();
   await page.getByRole('button', { name: 'Category actions for Projects' }).click(); await page.getByRole('menuitem', { name: 'Edit category', exact: true }).click(); await page.getByLabel('Category name').fill('Work'); await page.getByRole('button', { name: 'Save category' }).click();
   await page.getByRole('button', { name: 'Create channel in Work' }).click(); await page.getByRole('button', { name: 'Edit General', exact: true }).click(); await page.getByRole('button', { name: 'Invite to General', exact: true }).click();
   expect(await page.evaluate(() => (window as any).callbacks.map((v: any) => v[0]))).toEqual(['create', 'edit', 'invite']);
@@ -138,7 +138,7 @@ test('category create, rename and deletion keep channels; callbacks and actual k
 test('collapse shows aggregate unmuted badges, personal category notifications remain accessible without edit authority', async ({ page }) => {
   await setup(page); await page.getByRole('button', { name: 'Chat', exact: true }).click();
   await expect(channel(page, 'general')).toHaveCount(0); await expect(category(page, 'chat').getByRole('img', { name: '3 unread notifications' })).toBeVisible(); await expect(category(page, 'chat').getByRole('img', { name: '2 unread mentions and highlights' })).toBeVisible();
-  await page.evaluate(() => { (window as any).allowed = false; (window as any).emit(); }); await expect(page.getByRole('button', { name: 'Create category', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { (window as any).allowed = false; (window as any).emit(); }); await expect(page.getByRole('button', { name: 'Channel actions', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Category actions for Chat' }).click(); await page.getByRole('menuitem', { name: 'Mute category notifications' }).click();
   expect(await page.evaluate(() => (window as any).notifications)).toEqual([['!general:local', 'mute'], ['!rules:local', 'mute']]);
 });
@@ -184,8 +184,8 @@ test('A to B to A generation change during native state read sends nothing and d
   await setup(page); await moveDialog(page, 'Lounge'); await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('chat'); await page.evaluate(() => { (window as any).holdRead = true; }); await page.getByRole('button', { name: 'Save position' }).click();
   await expect.poll(() => page.evaluate(() => !!(window as any).releaseRead)).toBe(true);
   await page.evaluate(() => { const w = window as any; w.account = 'B:2'; w.actor = '@other:local'; w.emit(); }); await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.evaluate(() => { const w = window as any; w.account = 'A:3'; w.actor = '@owner:local'; w.emit(); w.releaseRead(); }); await expect(page.getByRole('button', { name: 'Create category', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Create category', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible(); expect(await page.evaluate(() => (window as any).saves.length)).toBe(0);
+  await page.evaluate(() => { const w = window as any; w.account = 'A:3'; w.actor = '@owner:local'; w.emit(); w.releaseRead(); }); await expect(page.getByRole('button', { name: 'Channel actions', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Channel actions', exact: true }).click(); await page.getByRole('menuitem', { name: 'Create category', exact: true }).click(); await expect(page.getByRole('dialog')).toBeVisible(); expect(await page.evaluate(() => (window as any).saves.length)).toBe(0);
 });
 
 test('hovering a collapsed category exposes a destination, and a stale permission cannot commit a drop', async ({ page }) => {
@@ -209,7 +209,7 @@ test('a failed old-server save cannot publish its error in the replacement serve
   await moveDialog(page, 'Lounge'); await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('chat'); await page.getByRole('button', { name: 'Save position' }).click();
   await expect.poll(() => page.evaluate(() => !!(window as any).releaseSave)).toBe(true);
   await page.evaluate(() => { const w = window as any; const original = w.rooms.get('!server:local'); w.rooms.set('!second:local', { ...original, roomId: '!second:local' }); w.serverId = '!second:local'; w.redraw(); });
-  await expect(page.getByRole('dialog')).toHaveCount(0); await page.getByRole('button', { name: 'Create category', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0); await page.getByRole('button', { name: 'Channel actions', exact: true }).click(); await page.getByRole('menuitem', { name: 'Create category', exact: true }).click();
   await page.evaluate(async () => { (window as any).releaseSave(); await new Promise(resolve => setTimeout(resolve, 0)); });
   await expect(page.getByRole('dialog', { name: 'Create category' })).toBeVisible(); await expect(page.getByRole('alert')).toHaveCount(0); await expect(page.locator('.channel-navigation-error')).toHaveCount(0);
 });

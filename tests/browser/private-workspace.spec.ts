@@ -15,7 +15,8 @@ const panel=(page:Page)=>page.getByRole('complementary',{name:'Private discussio
 
 test('channel launcher opens private Sheet with real composer and a gallery scoped to the private message',async({page})=>{
   await fixture(page);
-  await page.getByRole('button',{name:'Channel details',exact:true}).click();
+  await page.getByRole('button',{name:'Show channel information',exact:true}).click();
+  await page.getByRole('button',{name:'Channel details & settings',exact:true}).click();
   await page.getByText('Private discussions (1)',{exact:true}).click();
   await page.getByRole('button',{name:'Private One',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
@@ -94,7 +95,8 @@ test('closed optional panels load on demand and a slow import preserves the conv
   expect(requests).toBe(0);
   const composer=page.getByRole('textbox',{name:'Message Source',exact:true});
   await composer.fill('Keep this unsent draft');
-  await page.getByRole('button',{name:'Search conversations',exact:true}).click();
+  if(await page.getByRole('button',{name:'Show channel information',exact:true}).count())await page.getByRole('button',{name:'Show channel information',exact:true}).click();
+  await page.getByRole('button',{name:'Search this channel',exact:true}).click();
   await expect(page.getByRole('status').filter({hasText:'Loading message search'})).toBeVisible();
   expect(requests).toBe(1);
   await page.keyboard.press('Escape');
@@ -103,7 +105,8 @@ test('closed optional panels load on demand and a slow import preserves the conv
   const response=page.waitForResponse(url=>new URL(url.url()).pathname==='/app/message-search.tsx');
   release();await response;
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button',{name:'Search conversations',exact:true}).click();
+  if(await page.getByRole('button',{name:'Show channel information',exact:true}).count())await page.getByRole('button',{name:'Show channel information',exact:true}).click();
+  await page.getByRole('button',{name:'Search this channel',exact:true}).click();
   await expect(page.getByRole('textbox',{name:'Search Tavern',exact:true})).toBeVisible();
   expect(requests).toBe(1);
   await page.keyboard.press('Escape');

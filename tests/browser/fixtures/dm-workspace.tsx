@@ -47,8 +47,8 @@ export function mountFixture() {
       return request(method, path, query, body);
     };
   }
-  f.accountData('io.tavern.onboarding', { completed: true }); f.accountData('io.tavern.appearance', { mode: 'light' });
-  const bootstrap = () => ({ me: { id: f.actor, name: 'Bob', role: 'member' }, workspace: { name: 'Tavern' }, members: [{ id: f.actor, name: 'Bob', role: 'member' }, { id: '@alice:local', name: 'Alice', role: 'member' }], memberships: f.client.getRooms().filter(room => room.getMyMembership() === 'join').flatMap(room => room.getJoinedMembers().map(member => ({ conversation_id: room.roomId, user_id: member.userId }))), preferences: {}, preview: false, servers,
+  f.accountData('io.tavern.onboarding', { completed: true }); f.accountData('io.tavern.appearance', { theme: 'light', ...(w.initialAppearance || {}) });
+  const bootstrap = () => ({ me: { id: f.actor, name: 'Bob', role: 'member' }, workspace: { name: 'Tavern' }, members: [{ id: f.actor, name: 'Bob', role: 'member' }, { id: '@alice:local', name: 'Alice', role: 'member' }], memberships: f.client.getRooms().filter(room => room.getMyMembership() === 'join').flatMap(room => room.getJoinedMembers().map(member => ({ conversation_id: room.roomId, user_id: member.userId }))), preferences: f.client.getAccountData('io.harbor.preferences' as any)?.getContent() || {}, preview: false, servers,
     conversations: f.client.getRooms().filter(room => room.getMyMembership() === 'join' && !room.isSpaceRoom()).map(room => ({ id: room.roomId, name: room.name, kind: Object.values(f.mapping).some((ids: any) => ids.includes(room.roomId)) ? 'dm' : 'channel', encrypted: true, unread: 0 })),
     invitations: f.client.getRooms().filter(room => room.getMyMembership() === 'invite').map(room => ({ id: room.roomId, name: room.name })) });
   w.matrixBoundary = (name: string, args: any[]) => {
@@ -57,6 +57,8 @@ export function mountFixture() {
     if (name === 'matrixApi') {
       const [action, p, params] = args; w.workspaceCalls.push([action, p, params]);
       if (action === 'bootstrap') return Promise.resolve(bootstrap());
+      if (action === 'preferences') { f.accountData('io.harbor.preferences', p); return Promise.resolve({preferences:p}); }
+      if (action === 'messages' && Array.isArray(w.workspaceTestMessages)) return Promise.resolve({messages:w.workspaceTestMessages.filter((message:any)=>message.conversation_id===params?.conversation),hasMore:false});
       if (action === 'messages' && params?.conversation === f.room.roomId && f.room.getMyMembership() !== 'join') throw new Error('Invitation messages must not be fetched before acceptance.');
       if (action === 'read') return Promise.resolve({ ok: true });
       return Promise.resolve({ messages: [], hasMore: false });

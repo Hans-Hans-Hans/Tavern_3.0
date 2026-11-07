@@ -199,7 +199,10 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
   const editModal = (patch: Partial<Editor>) => setEditor(previous => previous?.owner === owner ? { owner, value: { ...previous.value, ...patch } } : previous);
 
   return <><nav onDragLeave={event => { const next = event.relatedTarget; if (!(next instanceof Node) || !event.currentTarget.contains(next)) clearDragTarget(); }} ref={nav} aria-label='Channels' className='community-channel-navigation channel-navigation' aria-busy={busy}>
-    {canMove && <div className='channel-navigation-tools'><span>Categories</span><button type='button' className='channel-row-action' disabled={busy || shown.categories.length >= 100} aria-label='Create category' onClick={() => openEditor('create')}><Plus size={16}/></button></div>}
+    <div className='channel-navigation-tools'><h2>Channels</h2>{(canMove||!serverId&&onCreateChannel)&&<DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='channel-row-action' aria-label='Channel actions' disabled={busy}><MoreHorizontal size={18}/></button></DropdownMenuTrigger><DropdownMenuContent align='end'>
+      {onCreateChannel&&<DropdownMenuItem onSelect={()=>{if(owner.current()&&(!serverId||canEditCommunity(serverId,'layout')))onCreateChannel({category:''});}}><Plus size={16}/>Create channel</DropdownMenuItem>}
+      {canMove&&<DropdownMenuItem disabled={shown.categories.length>=100} onSelect={()=>openEditor('create')}>Create category</DropdownMenuItem>}
+    </DropdownMenuContent></DropdownMenu>}</div>
     {awaitingSync && !saving && <p className='muted-copy' role='status'>Waiting for server updates…</p>}
     {groups.map(group => {
       const ordered = serverId ? shown.channels.filter(channel => channel.category === group.id).flatMap(channel => displayChannels.get(channel.id) || []) : [...displayChannels.values()];
@@ -222,7 +225,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
         {group.id ? <button type='button' className='community-category-heading' aria-expanded={!hidden} onClick={event => { if (performance.now() < suppressClick.current) { event.preventDefault(); return; } report(toggleCategory(group.id)); }}>{hidden ? <ChevronRight size={14}/> : <ChevronDown size={14}/>}<span>{group.icon} {group.name}</span>{hidden && <ReadStateBadges unread={readable.reduce((sum, channel) => sum + channel.unread, 0)} mentions={readable.reduce((sum, channel) => sum + (channel.mentions || 0), 0)} manual={readable.some(channel => channel.manualUnread)} focus={focus}/>}</button> : <span className='channel-root-heading'>{group.name}</span>}
         {group.id && <>{canMove && <><button type='button' className='channel-row-action' data-no-drag aria-label={'Move category ' + group.name} onClick={() => openEditor('move', { kind: 'category', id: group.id })}><Move size={14}/></button>{onCreateChannel && <button type='button' className='channel-row-action' data-no-drag aria-label={'Create channel in ' + group.name} onClick={() => { if (owner.current() && canEditCommunity(serverId!, 'layout')) onCreateChannel({ category: group.id }); }}><Plus size={15}/></button>}</>}<RowActions label={'Category actions for ' + group.name} actions={actions}/></>}
       </div>;
-      return <div className='channel-category' key={group.id}>{(group.id || canMove) && (group.id ? <ActionMenu actions={actions}>{header}</ActionMenu> : header)}
+      return <div className='channel-category' key={group.id}>{(group.id || shown.categories.length>0&&ordered.length>0) && (group.id ? <ActionMenu actions={actions}>{header}</ActionMenu> : header)}
         {!hidden && ordered.map(channel => {
           const appearance = readChannelAppearance(channel.id), state = readChannelPolicy(channel.id), Icon = icons[state.kind], extra: ContextAction[] = [{ label: 'Move channel', visible: canMove, run: () => openEditor('move', { kind: 'channel', id: channel.id }) }];
           const edit = !!onEditChannel && canEditConversationDetails(channel.id), invite = !!onInviteChannel && canInviteToRoom(channel.id);
@@ -236,7 +239,7 @@ export function ChannelNavigation(props: ChannelNavigationProps) {
             </div>{state.kind === 'voice' && renderParticipants?.(channel.id)}
           </div>;
         })}
-        {!hidden && !ordered.length && (group.id || canMove) && <div className='channel-empty-drop' data-drop={indicator(group.id ? 'category' : 'root', group.id)} onDragOver={event => over(event, { kind: group.id ? 'category' : 'root', id: group.id, edge: 'inside' } as NavigationDrop)} onDrop={event => dropItem(event, { kind: group.id ? 'category' : 'root', id: group.id, edge: 'inside' } as NavigationDrop)}>{canMove ? 'Drop a channel here' : 'No channels available'}</div>}
+        {!hidden && !ordered.length && (group.id || canMove || !displayChannels.size) && <div className='channel-empty-drop' data-drop={indicator(group.id ? 'category' : 'root', group.id)} onDragOver={event => over(event, { kind: group.id ? 'category' : 'root', id: group.id, edge: 'inside' } as NavigationDrop)} onDrop={event => dropItem(event, { kind: group.id ? 'category' : 'root', id: group.id, edge: 'inside' } as NavigationDrop)}>{!displayChannels.size&&!shown.categories.length?'No channels yet.':canMove ? 'Drop a channel here' : 'No channels available'}</div>}
       </div>;
     })}{error && !modal && <p className='channel-navigation-error' role='status'>{error}</p>}
   </nav>
